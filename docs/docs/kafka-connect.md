@@ -20,8 +20,8 @@ title: "Kafka Connect"
 
 # Kafka Connect
 
-[Kafka Connect](https://kafka.apache.org/documentation/#connect) is a popular framework for moving data
-in and out of Apache Kafka via connectors. There are many different connectors available, such as the S3 sink
+[Kafka Connect](https://docs.confluent.io/platform/current/connect/index.html) is a popular framework for moving data
+in and out of Kafka via connectors. There are many different connectors available, such as the S3 sink
 for writing data from Kafka to S3 and Debezium source connectors for writing change data capture records from relational
 databases to Kafka.
 
@@ -38,6 +38,7 @@ The Apache Iceberg Sink Connector for Kafka Connect is a sink connector for writ
 * Commit coordination for centralized Iceberg commits
 * Exactly-once delivery semantics
 * Multi-table fan-out
+* Change data capture
 * Automatic table creation and schema evolution
 * Field name mapping via Iceberg’s column mapping functionality
 
@@ -58,35 +59,37 @@ for exactly-once semantics. This requires Kafka 2.5 or later.
 
 ## Configuration
 
-| Property                                   | Description                                                                                                      |
-|--------------------------------------------|------------------------------------------------------------------------------------------------------------------|
-| iceberg.tables                             | Comma-separated list of destination tables                                                                       |
-| iceberg.tables.dynamic-enabled             | Set to `true` to route to a table specified in `routeField` instead of using `routeRegex`, default is `false`    |
-| iceberg.tables.route-field                 | For multi-table fan-out, the name of the field used to route records to tables                                   |
-| iceberg.tables.default-commit-branch       | Default branch for commits, main is used if not specified                                                        |
-| iceberg.tables.default-id-columns          | Default comma-separated list of columns that identify a row in tables (primary key)                              |
-| iceberg.tables.default-partition-by        | Default comma-separated list of partition field names to use when creating tables                                |
-| iceberg.tables.auto-create-enabled         | Set to `true` to automatically create destination tables, default is `false`                                     |
-| iceberg.tables.evolve-schema-enabled       | Set to `true` to add any missing record fields to the table schema, default is `false`                           |
-| iceberg.tables.schema-force-optional       | Set to `true` to set columns as optional during table create and evolution, default is `false` to respect schema |
-| iceberg.tables.schema-case-insensitive     | Set to `true` to look up table columns by case-insensitive name, default is `false` for case-sensitive           |
-| iceberg.tables.auto-create-props.*         | Properties set on new tables during auto-create                                                                  |
-| iceberg.tables.write-props.*               | Properties passed through to Iceberg writer initialization, these take precedence                                |
-| iceberg.table.\<table name\>.commit-branch | Table-specific branch for commits, use `iceberg.tables.default-commit-branch` if not specified                   |
-| iceberg.table.\<table name\>.id-columns    | Comma-separated list of columns that identify a row in the table (primary key)                                   |
-| iceberg.table.\<table name\>.partition-by  | Comma-separated list of partition fields to use when creating the table                                          |
-| iceberg.table.\<table name\>.route-regex   | The regex used to match a record's `routeField` to a table                                                       |
-| iceberg.control.topic                      | Name of the control topic, default is `control-iceberg`                                                          |
-| iceberg.control.group-id-prefix            | Prefix for the control consumer group, default is `cg-control`                                                   |
-| iceberg.control.commit.interval-ms         | Commit interval in msec, default is 300,000 (5 min)                                                              |
-| iceberg.control.commit.timeout-ms          | Commit timeout interval in msec, default is 30,000 (30 sec)                                                      |
-| iceberg.control.commit.threads             | Number of threads to use for commits, default is (cores * 2)                                                     |
-| iceberg.coordinator.transactional.prefix   | Prefix for the transactional id to use for the coordinator producer, default is to use no/empty prefix           |
-| iceberg.catalog                            | Name of the catalog, default is `iceberg`                                                                        |
-| iceberg.catalog.*                          | Properties passed through to Iceberg catalog initialization                                                      |
-| iceberg.hadoop-conf-dir                    | If specified, Hadoop config files in this directory will be loaded                                               |
-| iceberg.hadoop.*                           | Properties passed through to the Hadoop configuration                                                            |
-| iceberg.kafka.*                            | Properties passed through to control topic Kafka client initialization                                           |
+| Property                                          | Description                                                                                                      |
+|---------------------------------------------------|------------------------------------------------------------------------------------------------------------------|
+| iceberg.tables                                    | Comma-separated list of destination tables                                                                       |
+| iceberg.tables.dynamic-enabled                    | Set to `true` to route to a table specified in `routeField` instead of using `routeRegex`, default is `false`    |
+| iceberg.tables.route-field                        | For multi-table fan-out, the name of the field used to route records to tables                                   |
+| iceberg.tables.default-commit-branch              | Default branch for commits, main is used if not specified                                                        |
+| iceberg.tables.default-id-columns                 | Default comma-separated list of columns that identify a row in tables (primary key)                              |
+| iceberg.tables.default-partition-by               | Default comma-separated list of partition field names to use when creating tables                                |
+| iceberg.tables.auto-create-enabled                | Set to `true` to automatically create destination tables, default is `false`                                     |
+| iceberg.tables.evolve-schema-enabled              | Set to `true` to add any missing record fields to the table schema, default is `false`                           |
+| iceberg.tables.schema-force-optional              | Set to `true` to set columns as optional during table create and evolution, default is `false` to respect schema |
+| iceberg.tables.schema-case-insensitive            | Set to `true` to look up table columns by case-insensitive name, default is `false` for case-sensitive           |
+| iceberg.tables.cdc-field                          | Source record field that identifies the type of operation (insert, update, or delete)                            |
+| iceberg.tables.iceberg.tables.upsert-mode-enabled | Set to true to treat all appends as upserts, false otherwise                                                     |
+| iceberg.tables.auto-create-props.*                | Properties set on new tables during auto-create                                                                  |
+| iceberg.tables.write-props.*                      | Properties passed through to Iceberg writer initialization, these take precedence                                |
+| iceberg.table.\<table name\>.commit-branch        | Table-specific branch for commits, use `iceberg.tables.default-commit-branch` if not specified                   |
+| iceberg.table.\<table name\>.id-columns           | Comma-separated list of columns that identify a row in the table (primary key)                                   |
+| iceberg.table.\<table name\>.partition-by         | Comma-separated list of partition fields to use when creating the table                                          |
+| iceberg.table.\<table name\>.route-regex          | The regex used to match a record's `routeField` to a table                                                       |
+| iceberg.control.topic                             | Name of the control topic, default is `control-iceberg`                                                          |
+| iceberg.control.group-id-prefix                   | Prefix for the control consumer group, default is `cg-control`                                                   |
+| iceberg.control.commit.interval-ms                | Commit interval in msec, default is 300,000 (5 min)                                                              |
+| iceberg.control.commit.timeout-ms                 | Commit timeout interval in msec, default is 30,000 (30 sec)                                                      |
+| iceberg.control.commit.threads                    | Number of threads to use for commits, default is (cores * 2)                                                     |
+| iceberg.coordinator.transactional.prefix          | Prefix for the transactional id to use for the coordinator producer, default is to use no/empty prefix           |
+| iceberg.catalog                                   | Name of the catalog, default is `iceberg`                                                                        |
+| iceberg.catalog.*                                 | Properties passed through to Iceberg catalog initialization                                                      |
+| iceberg.hadoop-conf-dir                           | If specified, Hadoop config files in this directory will be loaded                                               |
+| iceberg.hadoop.*                                  | Properties passed through to the Hadoop configuration                                                            |
+| iceberg.kafka.*                                   | Properties passed through to control topic Kafka client initialization                                           |
 
 If `iceberg.tables.dynamic-enabled` is `false` (the default) then you must specify `iceberg.tables`. If
 `iceberg.tables.dynamic-enabled` is `true` then you must specify `iceberg.tables.route-field` which will
@@ -276,8 +279,8 @@ PARTITIONED BY (hours(ts))
 This example config connects to a Iceberg REST catalog.
 ```json
 {
-  "name": "events-sink",
-  "config": {
+"name": "events-sink",
+"config": {
     "connector.class": "org.apache.iceberg.connect.IcebergSinkConnector",
     "tasks.max": "2",
     "topics": "events",
@@ -286,7 +289,7 @@ This example config connects to a Iceberg REST catalog.
     "iceberg.catalog.uri": "https://localhost",
     "iceberg.catalog.credential": "<credential>",
     "iceberg.catalog.warehouse": "<warehouse name>"
-  }
+    }
 }
 ```
 
@@ -318,8 +321,8 @@ PARTITIONED BY (hours(ts));
 
 ```json
 {
-  "name": "events-sink",
-  "config": {
+"name": "events-sink",
+"config": {
     "connector.class": "org.apache.iceberg.connect.IcebergSinkConnector",
     "tasks.max": "2",
     "topics": "events",
@@ -331,7 +334,7 @@ PARTITIONED BY (hours(ts));
     "iceberg.catalog.uri": "https://localhost",
     "iceberg.catalog.credential": "<credential>",
     "iceberg.catalog.warehouse": "<warehouse name>"
-  }
+    }
 }
 ```
 
@@ -349,8 +352,8 @@ See above for creating two tables.
 
 ```json
 {
-  "name": "events-sink",
-  "config": {
+"name": "events-sink",
+"config": {
     "connector.class": "org.apache.iceberg.connect.IcebergSinkConnector",
     "tasks.max": "2",
     "topics": "events",
@@ -360,7 +363,36 @@ See above for creating two tables.
     "iceberg.catalog.uri": "https://localhost",
     "iceberg.catalog.credential": "<credential>",
     "iceberg.catalog.warehouse": "<warehouse name>"
-  }
+    }
+}
+```
+
+### Change data capture
+This example applies inserts, updates, and deletes based on the value of a field in the record.
+For example, if the `_cdc_op` field is set to `I` then the record is inserted, if `U` then it is
+upserted, and if `D` then it is deleted. This requires that the table be in Iceberg v2 format.
+The Iceberg identifier field(s) are used to identify a row, if that is not set for the table,
+then the `iceberg.tables.default-id-columns` or `iceberg.table.\<table name\>.id-columns`configuration
+can be set instead. CDC can be combined with multi-table fan-out.
+
+#### Create the destination table
+See above for creating the table
+
+#### Connector config
+```json
+{
+"name": "events-sink",
+"config": {
+    "connector.class": "io.tabular.iceberg.connect.IcebergSinkConnector",
+    "tasks.max": "2",
+    "topics": "events",
+    "iceberg.tables": "default.events",
+    "iceberg.tables.cdc-field": "_cdc_op",
+    "iceberg.catalog.type": "rest",
+    "iceberg.catalog.uri": "https://localhost",
+    "iceberg.catalog.credential": "<credential>",
+    "iceberg.catalog.warehouse": "<warehouse name>"
+    }
 }
 ```
 
@@ -452,7 +484,7 @@ Example json:
 
 ```json
 {
-  "key": 1,
+  "key": 1, 
   "array": [1,"two",3],
   "empty_obj": {},
   "nested_obj": {"some_key": ["one", "two"]}
@@ -483,9 +515,9 @@ SinkRecord.schema:
   "nested_object": (Optional) Map<string, String>
   
 SinkRecord.value (Struct):
-  "key" 1, 
-  "array" ["1", "two", "3"] 
-  "nested_object" Map ("some_key" : "["one", "two"]") 
+ "key" 1, 
+ "array" ["1", "two", "3"] 
+ "nested_object" Map ("some_key" : "["one", "two"]") 
 ```
 
 ### KafkaMetadataTransform
