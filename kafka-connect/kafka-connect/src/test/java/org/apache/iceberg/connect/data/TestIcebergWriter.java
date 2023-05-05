@@ -18,7 +18,7 @@
  */
 package org.apache.iceberg.connect.data;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -47,7 +47,7 @@ import org.apache.kafka.connect.sink.SinkRecord;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-public class IcebergWriterTest {
+public class TestIcebergWriter {
   private static final Schema SCHEMA =
       new Schema(
           ImmutableList.of(
@@ -165,7 +165,7 @@ public class IcebergWriterTest {
 
   private void assertResults(Record... expectedRecords) {
     List<Record> records = Arrays.asList(expectedRecords);
-    assertEquals(records, actualIdAndOps());
+    assertThat(records).isEqualTo(actualIdAndOps());
   }
 
   private List<Record> actualIdAndOps() {

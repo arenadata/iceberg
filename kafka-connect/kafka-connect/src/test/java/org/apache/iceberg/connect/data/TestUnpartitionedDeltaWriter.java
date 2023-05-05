@@ -33,7 +33,7 @@ import org.apache.iceberg.io.WriteResult;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.junit.jupiter.api.Test;
 
-public class UnpartitionedDeltaWriterTest extends BaseWriterTest {
+public class TestUnpartitionedDeltaWriter extends TestBaseWriter {
 
   @Test
   public void testUnpartitionedDeltaWriter() {

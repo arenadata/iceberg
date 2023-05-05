@@ -42,7 +42,7 @@ import org.apache.iceberg.relocated.com.google.common.collect.ImmutableSet;
 import org.apache.iceberg.types.Types;
 import org.junit.jupiter.api.BeforeEach;
 
-public class WriterTestBase {
+public class TestBaseWriter {
 
   protected InMemoryFileIO fileIO;
   protected Table table;

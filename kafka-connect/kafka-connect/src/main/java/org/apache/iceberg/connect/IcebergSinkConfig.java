@@ -236,30 +236,6 @@ public class IcebergSinkConfig extends AbstractConfig {
         Importance.LOW,
         "Name of the Connect consumer group, should not be set under normal conditions");
     configDef.define(
-        HDFS_AUTHENTICATION_KERBEROS_PROP,
-        ConfigDef.Type.BOOLEAN,
-        HDFS_AUTHENTICATION_KERBEROS_DEFAULT,
-        Importance.HIGH,
-        "Configuration indicating whether HDFS is using Kerberos for authentication");
-    configDef.define(
-        CONNECT_HDFS_PRINCIPAL_PROP,
-        ConfigDef.Type.STRING,
-        CONNECT_HDFS_PRINCIPAL_DEFAULT,
-        Importance.HIGH,
-        "The principal name to load from the keytab for Kerberos authentication");
-    configDef.define(
-        CONNECT_HDFS_KEYTAB_PROP,
-        ConfigDef.Type.STRING,
-        CONNECT_HDFS_KEYTAB_DEFAULT,
-        Importance.HIGH,
-        "The path to the keytab file for the HDFS connector principal. This keytab file should only be readable by the connector user");
-    configDef.define(
-        KERBEROS_TICKET_RENEW_PERIOD_MS_PROP,
-        ConfigDef.Type.LONG,
-        KERBEROS_TICKET_RENEW_PERIOD_MS_DEFAULT,
-        Importance.LOW,
-        "The period in milliseconds to renew the Kerberos ticket");
-    configDef.define(
         COMMIT_INTERVAL_MS_PROP,
         ConfigDef.Type.INT,
         COMMIT_INTERVAL_MS_DEFAULT,
@@ -295,6 +271,40 @@ public class IcebergSinkConfig extends AbstractConfig {
         120000L,
         Importance.LOW,
         "config to control coordinator executor keep alive time");
+    defineHdfsKerberosProps(configDef);
+    defineV3NewTypesSupportProps(configDef);
+    defineCdcProps(configDef);
+    return configDef;
+  }
+
+  private static void defineHdfsKerberosProps(ConfigDef configDef) {
+    configDef.define(
+        HDFS_AUTHENTICATION_KERBEROS_PROP,
+        ConfigDef.Type.BOOLEAN,
+        HDFS_AUTHENTICATION_KERBEROS_DEFAULT,
+        Importance.HIGH,
+        "Configuration indicating whether HDFS is using Kerberos for authentication");
+    configDef.define(
+        CONNECT_HDFS_PRINCIPAL_PROP,
+        ConfigDef.Type.STRING,
+        CONNECT_HDFS_PRINCIPAL_DEFAULT,
+        Importance.HIGH,
+        "The principal name to load from the keytab for Kerberos authentication");
+    configDef.define(
+        CONNECT_HDFS_KEYTAB_PROP,
+        ConfigDef.Type.STRING,
+        CONNECT_HDFS_KEYTAB_DEFAULT,
+        Importance.HIGH,
+        "The path to the keytab file for the HDFS connector principal. This keytab file should only be readable by the connector user");
+    configDef.define(
+        KERBEROS_TICKET_RENEW_PERIOD_MS_PROP,
+        ConfigDef.Type.LONG,
+        KERBEROS_TICKET_RENEW_PERIOD_MS_DEFAULT,
+        Importance.LOW,
+        "The period in milliseconds to renew the Kerberos ticket");
+  }
+
+  private static void defineV3NewTypesSupportProps(ConfigDef configDef) {
     configDef.define(
         TABLES_SCHEMA_VARIANT_FIELDS_PROP,
         ConfigDef.Type.STRING,
@@ -315,8 +325,6 @@ public class IcebergSinkConfig extends AbstractConfig {
         false,
         Importance.MEDIUM,
         "Enable mapping Kafka Connect schema default values to Iceberg write-default/initial-default");
-    defineCdcProps(configDef);
-    return configDef;
   }
 
   private static void defineCdcProps(ConfigDef configDef) {

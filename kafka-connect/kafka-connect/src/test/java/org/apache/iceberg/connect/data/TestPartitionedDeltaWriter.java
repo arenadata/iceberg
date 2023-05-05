@@ -33,14 +33,14 @@ import org.apache.iceberg.io.WriteResult;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.junit.jupiter.api.Test;
 
-public class PartitionedDeltaWriterTest extends BaseWriterTest {
+public class TestPartitionedDeltaWriter extends TestBaseWriter {
 
   @Test
   public void testPartitionedDeltaWriter() {
     IcebergSinkConfig config = mock(IcebergSinkConfig.class);
     when(config.isUpsertMode()).thenReturn(true);
     when(config.tableConfig(table.name()))
-        .thenReturn(new TableSinkConfig(Pattern.compile(""), Arrays.asList(), Arrays.asList(), ""));
+        .thenReturn(new TableSinkConfig(Pattern.compile(""), List.of(), List.of(), ""));
 
     when(table.spec()).thenReturn(SPEC);
 
