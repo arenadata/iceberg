@@ -172,6 +172,13 @@ public class TestRoundTrip extends ExtensionsTestBase {
     sql("DROP VIEW %s", "test");
   }
 
+  @TestTemplate
+  public void showView() {
+    sql("DROP VIEW IF EXISTS %s", "test");
+    sql("CREATE VIEW %s AS SELECT 1 AS id", "test");
+    assertThat(sql("SHOW VIEWS")).contains(row("default", "test", false));
+  }
+
   private Table getTable(String name) {
     return validationCatalog.loadTable(TableIdentifier.of("default", name));
   }
