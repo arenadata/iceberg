@@ -18,6 +18,8 @@
  */
 package org.apache.iceberg.spark;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import java.io.IOException;
 import java.nio.file.Files;
 import org.apache.iceberg.ParameterizedTestExtension;
@@ -168,13 +170,6 @@ public class SmokeTest extends ExtensionsTestBase {
     sql("DROP VIEW IF EXISTS %s", "test");
     sql("CREATE VIEW %s AS SELECT 1 AS id", "test");
     assertThat(sql("SHOW VIEWS")).contains(row("default", "test", false));
-  }
-
-  @TestTemplate
-  public void showView() {
-    sql("DROP VIEW IF EXISTS %s", "test");
-    sql("CREATE VIEW %s AS SELECT 1 AS id", "test");
-    Assertions.assertThat(sql("SHOW VIEWS")).contains(row("default", "test", false));
   }
 
   private Table getTable(String name) {
