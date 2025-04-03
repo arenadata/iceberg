@@ -375,4 +375,7 @@ public class TableProperties {
   public static final int ENCRYPTION_DEK_LENGTH_DEFAULT = 16;
 
   public static final int ENCRYPTION_AAD_LENGTH_DEFAULT = 16;
+
+  public static final String DROP_BASE_DIR_ENABLED = "drop.base-directory.enabled";
+  public static final boolean DROP_BASE_DIR_ENABLED_DEFAULT = false;
 }
