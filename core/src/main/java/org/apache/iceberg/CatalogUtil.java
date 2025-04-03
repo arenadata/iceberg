@@ -18,6 +18,8 @@
  */
 package org.apache.iceberg;
 
+import static org.apache.iceberg.TableProperties.DROP_BASE_DIR_ENABLED;
+import static org.apache.iceberg.TableProperties.DROP_BASE_DIR_ENABLED_DEFAULT;
 import static org.apache.iceberg.TableProperties.GC_ENABLED;
 import static org.apache.iceberg.TableProperties.GC_ENABLED_DEFAULT;
 
@@ -36,6 +38,7 @@ import org.apache.iceberg.exceptions.ValidationException;
 import org.apache.iceberg.hadoop.Configurable;
 import org.apache.iceberg.io.FileIO;
 import org.apache.iceberg.io.SupportsBulkOperations;
+import org.apache.iceberg.io.SupportsPrefixOperations;
 import org.apache.iceberg.metrics.LoggingMetricsReporter;
 import org.apache.iceberg.metrics.MetricsReporter;
 import org.apache.iceberg.relocated.com.google.common.base.Joiner;
@@ -91,6 +94,18 @@ public class CatalogUtil {
    * @param metadata the last valid TableMetadata instance for a dropped table.
    */
   public static void dropTableData(FileIO io, TableMetadata metadata) {
+    if (supportsDirectoryDelete(io, metadata)) {
+      deleteTableDirectory((SupportsPrefixOperations) io, metadata);
+    } else {
+      deleteTableFiles(io, metadata);
+    }
+  }
+
+  public static void deleteTableDirectory(SupportsPrefixOperations io, TableMetadata metadata) {
+    io.deletePrefix(metadata.location());
+  }
+
+  private static void deleteTableFiles(FileIO io, TableMetadata metadata) {
     // Reads and deletes are done using Tasks.foreach(...).suppressFailureWhenFinished to complete
     // as much of the delete work as possible and avoid orphaned data or manifest files.
 
@@ -135,6 +150,35 @@ public class CatalogUtil {
         "partition statistics",
         true);
     deleteFile(io, metadata.metadataFileLocation(), "metadata");
+  }
+
+  /**
+   * Returns whether the table supports base directory removal.
+   *
+   * @param io a FileIO that will be used for deletes
+   * @param metadata the last valid TableMetadata instance for a table.
+   */
+  public static boolean supportsDirectoryDelete(FileIO io, TableMetadata metadata) {
+    if (!metadata.propertyAsBoolean(DROP_BASE_DIR_ENABLED, DROP_BASE_DIR_ENABLED_DEFAULT)) {
+      return false;
+    }
+
+    if (!metadata.propertyAsBoolean(GC_ENABLED, GC_ENABLED_DEFAULT)) {
+      LOG.warn(
+          "Table directory removal is enabled, but GC is disabled,"
+              + " removing only table metadata files");
+      return false;
+    }
+
+    if (!(io instanceof SupportsPrefixOperations)) {
+      LOG.warn(
+          "Table directory removal is enabled, "
+              + "but IO {} doesn't support it, removing only table files",
+          io.getClass());
+      return false;
+    }
+
+    return true;
   }
 
   @SuppressWarnings("DangerousStringInternUsage")

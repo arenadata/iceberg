@@ -41,6 +41,7 @@ import org.apache.iceberg.MetadataTableType;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.Snapshot;
 import org.apache.iceberg.SnapshotRef;
+import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.Transaction;
 import org.apache.iceberg.catalog.Catalog;
 import org.apache.iceberg.catalog.Namespace;
@@ -51,6 +52,8 @@ import org.apache.iceberg.exceptions.AlreadyExistsException;
 import org.apache.iceberg.exceptions.ValidationException;
 import org.apache.iceberg.hadoop.HadoopCatalog;
 import org.apache.iceberg.hadoop.HadoopTables;
+import org.apache.iceberg.io.FileIO;
+import org.apache.iceberg.io.SupportsPrefixOperations;
 import org.apache.iceberg.relocated.com.google.common.base.Joiner;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.base.Splitter;
@@ -362,8 +365,8 @@ public class SparkCatalog extends BaseCatalog
       ValidationException.check(
           PropertyUtil.propertyAsBoolean(table.properties(), GC_ENABLED, GC_ENABLED_DEFAULT),
           "Cannot purge table: GC is disabled (deleting files may corrupt other tables)");
-      String metadataFileLocation =
-          ((HasTableOperations) table).operations().current().metadataFileLocation();
+      TableMetadata tableMetadata = ((HasTableOperations) table).operations().current();
+      String metadataFileLocation = tableMetadata.metadataFileLocation();
 
       boolean dropped = dropTableWithoutPurging(ident);
 
@@ -373,7 +376,7 @@ public class SparkCatalog extends BaseCatalog
         boolean metadataFileExists = table.io().newInputFile(metadataFileLocation).exists();
 
         if (metadataFileExists) {
-          SparkActions.get().deleteReachableFiles(metadataFileLocation).io(table.io()).execute();
+          deleteTableFiles(table.io(), tableMetadata);
         }
       }
 
@@ -381,6 +384,15 @@ public class SparkCatalog extends BaseCatalog
     } catch (org.apache.iceberg.exceptions.NoSuchTableException e) {
       return false;
     }
+  }
+
+  private void deleteTableFiles(FileIO io, TableMetadata tableMetadata) {
+    if (CatalogUtil.supportsDirectoryDelete(io, tableMetadata)) {
+      CatalogUtil.deleteTableDirectory((SupportsPrefixOperations) io, tableMetadata);
+      return;
+    }
+
+    SparkActions.get().deleteReachableFiles(tableMetadata.metadataFileLocation()).io(io).execute();
   }
 
   private boolean dropTableWithoutPurging(Identifier ident) {
