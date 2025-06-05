@@ -22,7 +22,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import java.util.List;
+import java.util.Arrays;
 import java.util.regex.Pattern;
 import org.apache.iceberg.connect.IcebergSinkConfig;
 import org.apache.iceberg.connect.TableSinkConfig;
@@ -39,7 +39,7 @@ public class UnpartitionedDeltaWriterTest extends BaseWriterTest {
     IcebergSinkConfig config = mock(IcebergSinkConfig.class);
     when(config.isUpsertMode()).thenReturn(true);
     when(config.tableConfig(table.name()))
-        .thenReturn(new TableSinkConfig(Pattern.compile(""), List.of(), List.of(), ""));
+        .thenReturn(new TableSinkConfig(Pattern.compile(""), Arrays.asList(), Arrays.asList(), ""));
 
     Record row = GenericRecord.create(SCHEMA);
     row.setField("id", 123L);
