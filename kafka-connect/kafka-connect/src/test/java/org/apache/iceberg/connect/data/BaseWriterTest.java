@@ -30,6 +30,7 @@ import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.connect.IcebergSinkConfig;
+import org.apache.iceberg.data.GenericRecord;
 import org.apache.iceberg.data.Record;
 import org.apache.iceberg.encryption.PlaintextEncryptionManager;
 import org.apache.iceberg.inmemory.InMemoryFileIO;
@@ -90,5 +91,13 @@ public class BaseWriterTest {
     } catch (IOException e) {
       throw new UncheckedIOException(e);
     }
+  }
+
+  protected Record wrappedRecord(long id, String data, Operation op) {
+    Record row = GenericRecord.create(SCHEMA);
+    row.setField("id", id);
+    row.setField("data", data);
+    row.setField("id2", id);
+    return new RecordWrapper(row, op);
   }
 }

@@ -72,6 +72,9 @@ for exactly-once semantics. This requires Kafka 2.5 or later.
 | iceberg.tables.schema-force-optional              | Set to `true` to set columns as optional during table create and evolution, default is `false` to respect schema |
 | iceberg.tables.schema-case-insensitive            | Set to `true` to look up table columns by case-insensitive name, default is `false` for case-sensitive           |
 | iceberg.tables.cdc-field                          | Source record field that identifies the type of operation (insert, update, or delete)                            |
+| iceberg.tables.cdc.op.insert                      | The value of the cdc operation field corresponding to INSERT                                                     |
+| iceberg.tables.cdc.op.update                      | The value of the cdc operation field corresponding to UPDATE                                                     |
+| iceberg.tables.cdc.op.delete                      | The value of the cdc operation field corresponding to DELETE                                                     |
 | iceberg.tables.iceberg.tables.upsert-mode-enabled | Set to true to treat all appends as upserts, false otherwise                                                     |
 | iceberg.tables.auto-create-props.*                | Properties set on new tables during auto-create                                                                  |
 | iceberg.tables.write-props.*                      | Properties passed through to Iceberg writer initialization, these take precedence                                |
@@ -377,6 +380,9 @@ See above for creating the table
     "topics": "events",
     "iceberg.tables": "default.events",
     "iceberg.tables.cdc-field": "_cdc_op",
+    "iceberg.tables.cdc.op.insert": "c",
+    "iceberg.tables.cdc.op.update": "u",
+    "iceberg.tables.cdc.op.delete": "r",
     "iceberg.catalog.type": "rest",
     "iceberg.catalog.uri": "https://localhost",
     "iceberg.catalog.credential": "<credential>",

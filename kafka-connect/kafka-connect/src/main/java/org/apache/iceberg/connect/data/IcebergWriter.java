@@ -22,6 +22,8 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.connect.IcebergSinkConfig;
@@ -29,6 +31,7 @@ import org.apache.iceberg.data.Record;
 import org.apache.iceberg.io.TaskWriter;
 import org.apache.iceberg.io.WriteResult;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
+import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.kafka.connect.errors.DataException;
 import org.apache.kafka.connect.sink.SinkRecord;
 
@@ -37,6 +40,7 @@ class IcebergWriter implements RecordWriter {
   private final String tableName;
   private final IcebergSinkConfig config;
   private final List<IcebergWriterResult> writerResults;
+  private final Map<String, Operation> operationMappings;
 
   private RecordConverter recordConverter;
   private TaskWriter<Record> writer;
@@ -46,7 +50,21 @@ class IcebergWriter implements RecordWriter {
     this.tableName = tableName;
     this.config = config;
     this.writerResults = Lists.newArrayList();
+    this.operationMappings = Maps.newHashMap();
     initNewWriter();
+    initOperationMappings();
+  }
+
+  IcebergWriter(
+      Table table, TaskWriter<Record> writer, String tableName, IcebergSinkConfig config) {
+    this.table = table;
+    this.tableName = tableName;
+    this.config = config;
+    this.writerResults = Lists.newArrayList();
+    this.operationMappings = Maps.newHashMap();
+    this.writer = writer;
+    this.recordConverter = new RecordConverter(table, config);
+    initOperationMappings();
   }
 
   private void initNewWriter() {
@@ -59,7 +77,7 @@ class IcebergWriter implements RecordWriter {
     try {
       // ignore tombstones...
       if (record.value() != null) {
-        Record row = convertToRow(record);
+        Record row = maybeEnrichWithOperation(record, convertToRow(record));
         writer.write(row);
       }
     } catch (Exception e) {
@@ -69,6 +87,23 @@ class IcebergWriter implements RecordWriter {
               record.topic(), record.kafkaPartition(), record.kafkaOffset()),
           e);
     }
+  }
+
+  private Record maybeEnrichWithOperation(SinkRecord record, Record row) {
+    return Optional.ofNullable(config.tablesCdcField())
+        .map(operationField -> extractOperation(record.value(), operationField))
+        .map(operation -> new RecordWrapper(row, operation))
+        .map(Record.class::cast)
+        .orElse(row);
+  }
+
+  private Operation extractOperation(Object recordValue, String cdcField) {
+    return Optional.ofNullable(RecordUtils.extractFromRecordValue(recordValue, cdcField))
+        .map(Object::toString)
+        .map(String::trim)
+        .map(String::toLowerCase)
+        .map(operationMappings::get)
+        .orElse(Operation.INSERT);
   }
 
   private Record convertToRow(SinkRecord record) {
@@ -126,5 +161,17 @@ class IcebergWriter implements RecordWriter {
     } catch (IOException e) {
       throw new UncheckedIOException(e);
     }
+  }
+
+  private void initOperationMappings() {
+    insertOperationMapping(config.tablesCdcOpInsert(), Operation.INSERT);
+    insertOperationMapping(config.tablesCdcOpUpdate(), Operation.UPDATE);
+    insertOperationMapping(config.tablesCdcOpDelete(), Operation.DELETE);
+  }
+
+  private void insertOperationMapping(String cdcOperation, Operation operation) {
+    Optional.ofNullable(cdcOperation)
+        .map(String::toLowerCase)
+        .ifPresent(cdcOp -> operationMappings.put(cdcOp, operation));
   }
 }
