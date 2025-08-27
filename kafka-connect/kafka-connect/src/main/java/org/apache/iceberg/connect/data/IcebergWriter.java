@@ -164,14 +164,18 @@ class IcebergWriter implements RecordWriter {
   }
 
   private void initOperationMappings() {
-    insertOperationMapping(config.tablesCdcOpInsert(), Operation.INSERT);
-    insertOperationMapping(config.tablesCdcOpUpdate(), Operation.UPDATE);
-    insertOperationMapping(config.tablesCdcOpDelete(), Operation.DELETE);
+    insertOperationMappings(config.tablesCdcOpsInsert(), Operation.INSERT);
+    insertOperationMappings(config.tablesCdcOpsUpdate(), Operation.UPDATE);
+    insertOperationMappings(config.tablesCdcOpsDelete(), Operation.DELETE);
   }
 
-  private void insertOperationMapping(String cdcOperation, Operation operation) {
-    Optional.ofNullable(cdcOperation)
+  private void insertOperationMappings(List<String> cdcOperations, Operation operation) {
+    if (cdcOperations == null || cdcOperations.isEmpty()) {
+      return;
+    }
+
+    cdcOperations.stream()
         .map(String::toLowerCase)
-        .ifPresent(cdcOp -> operationMappings.put(cdcOp, operation));
+        .forEach(cdcOp -> operationMappings.put(cdcOp, operation));
   }
 }
