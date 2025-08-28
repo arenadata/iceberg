@@ -75,6 +75,7 @@ for exactly-once semantics. This requires Kafka 2.5 or later.
 | iceberg.tables.cdc.ops.insert                     | The comma-separated values of the cdc operation field corresponding to INSERT                                    |
 | iceberg.tables.cdc.ops.update                     | The comma-separated values of the cdc operation field corresponding to UPDATE                                    |
 | iceberg.tables.cdc.ops.delete                     | The comma-separated values of the cdc operation field corresponding to DELETE                                    |
+| iceberg.tables.cdc.ops.ignored                    | The comma-separated values of the cdc operation field that should be ignored by connector                        |
 | iceberg.tables.iceberg.tables.upsert-mode-enabled | Set to true to treat all appends as upserts, false otherwise                                                     |
 | iceberg.tables.auto-create-props.*                | Properties set on new tables during auto-create                                                                  |
 | iceberg.tables.write-props.*                      | Properties passed through to Iceberg writer initialization, these take precedence                                |
