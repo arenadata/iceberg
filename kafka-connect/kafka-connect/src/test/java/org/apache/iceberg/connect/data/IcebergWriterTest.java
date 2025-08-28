@@ -23,6 +23,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -77,18 +78,19 @@ public class IcebergWriterTest {
   public void testWrapRecordsWithFirstOpField() {
     when(config.tablesCdcField()).thenReturn("__op");
 
-    when(config.tablesCdcOpInsert()).thenReturn("c");
-    when(config.tablesCdcOpUpdate()).thenReturn("u");
-    when(config.tablesCdcOpDelete()).thenReturn("r");
+    when(config.tablesCdcOpsInsert()).thenReturn(ImmutableList.of("c", "r"));
+    when(config.tablesCdcOpsUpdate()).thenReturn(Collections.singletonList("u"));
+    when(config.tablesCdcOpsDelete()).thenReturn(ImmutableList.of("d", "rm"));
 
     IcebergWriter icebergWriter = new IcebergWriter(table, mockTaskWriter, "ignored", config);
 
     Stream.of(
             record(1, "one", "c", ""),
-            record(2, "two", "c", ""),
+            record(2, "two", "r", ""),
             record(2, "three", "u", "c"),
             record(3, "four", "c", "u"),
-            record(1, "one", "r", ""))
+            record(1, "one", "d", ""),
+            record(2, "two", "rm", ""))
         .forEach(icebergWriter::write);
 
     assertResults(
@@ -96,16 +98,17 @@ public class IcebergWriterTest {
         idAndOp(2, Operation.INSERT),
         idAndOp(2, Operation.UPDATE),
         idAndOp(3, Operation.INSERT),
-        idAndOp(1, Operation.DELETE));
+        idAndOp(1, Operation.DELETE),
+        idAndOp(2, Operation.DELETE));
   }
 
   @Test
   public void testWrapRecordsWithSecondOpField() {
     when(config.tablesCdcField()).thenReturn("_op2");
 
-    when(config.tablesCdcOpInsert()).thenReturn("INSERT");
-    when(config.tablesCdcOpUpdate()).thenReturn("UPDATE");
-    when(config.tablesCdcOpDelete()).thenReturn("DELETE");
+    when(config.tablesCdcOpsInsert()).thenReturn(ImmutableList.of("INSERT", "READ"));
+    when(config.tablesCdcOpsUpdate()).thenReturn(Collections.singletonList("UPDATE"));
+    when(config.tablesCdcOpsDelete()).thenReturn(ImmutableList.of("DELETE", "REMOVE"));
 
     IcebergWriter icebergWriter = new IcebergWriter(table, mockTaskWriter, "ignored", config);
 
@@ -113,8 +116,9 @@ public class IcebergWriterTest {
             record(1, "one", "c", "insert"),
             record(2, "two", "c", "insert"),
             record(2, "three", "c", "update"),
-            record(3, "four", "r", "insert"),
-            record(1, "one", "c", "delete"))
+            record(3, "four", "r", "read"),
+            record(1, "one", "c", "delete"),
+            record(2, "two", "r", "remove"))
         .forEach(icebergWriter::write);
 
     assertResults(
@@ -122,16 +126,17 @@ public class IcebergWriterTest {
         idAndOp(2, Operation.INSERT),
         idAndOp(2, Operation.UPDATE),
         idAndOp(3, Operation.INSERT),
-        idAndOp(1, Operation.DELETE));
+        idAndOp(1, Operation.DELETE),
+        idAndOp(2, Operation.DELETE));
   }
 
   @Test
   public void testWrapRecordsWithMissingOpField() {
     when(config.tablesCdcField()).thenReturn("other_op_field");
 
-    when(config.tablesCdcOpInsert()).thenReturn("c");
-    when(config.tablesCdcOpUpdate()).thenReturn("u");
-    when(config.tablesCdcOpDelete()).thenReturn("r");
+    when(config.tablesCdcOpsInsert()).thenReturn(Collections.singletonList("c"));
+    when(config.tablesCdcOpsUpdate()).thenReturn(Collections.singletonList("u"));
+    when(config.tablesCdcOpsDelete()).thenReturn(Collections.singletonList("r"));
 
     IcebergWriter icebergWriter = new IcebergWriter(table, mockTaskWriter, "ignored", config);
 
