@@ -24,6 +24,8 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Stream;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.connect.IcebergSinkConfig;
@@ -32,6 +34,7 @@ import org.apache.iceberg.io.TaskWriter;
 import org.apache.iceberg.io.WriteResult;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
+import org.apache.iceberg.relocated.com.google.common.collect.Sets;
 import org.apache.kafka.connect.errors.DataException;
 import org.apache.kafka.connect.sink.SinkRecord;
 
@@ -41,18 +44,13 @@ class IcebergWriter implements RecordWriter {
   private final IcebergSinkConfig config;
   private final List<IcebergWriterResult> writerResults;
   private final Map<String, Operation> operationMappings;
+  private final Set<String> ignoredOperations;
 
   private RecordConverter recordConverter;
   private TaskWriter<Record> writer;
 
   IcebergWriter(Table table, String tableName, IcebergSinkConfig config) {
-    this.table = table;
-    this.tableName = tableName;
-    this.config = config;
-    this.writerResults = Lists.newArrayList();
-    this.operationMappings = Maps.newHashMap();
-    initNewWriter();
-    initOperationMappings();
+    this(table, RecordUtils.createTableWriter(table, tableName, config), tableName, config);
   }
 
   IcebergWriter(
@@ -62,6 +60,7 @@ class IcebergWriter implements RecordWriter {
     this.config = config;
     this.writerResults = Lists.newArrayList();
     this.operationMappings = Maps.newHashMap();
+    this.ignoredOperations = Sets.newHashSet();
     this.writer = writer;
     this.recordConverter = new RecordConverter(table, config);
     initOperationMappings();
@@ -75,11 +74,25 @@ class IcebergWriter implements RecordWriter {
   @Override
   public void write(SinkRecord record) {
     try {
-      // ignore tombstones...
-      if (record.value() != null) {
-        Record row = maybeEnrichWithOperation(record, convertToRow(record));
-        writer.write(row);
+      if (record.value() == null) {
+        // ignore tombstones...
+        return;
       }
+
+      Optional<String> rawOperation = extractRawOperation(record);
+      if (rawOperation.filter(ignoredOperations::contains).isPresent()) {
+        // skip ignored operation
+        return;
+      }
+
+      // We enrich a record with an operation only if we have a mapping for it.
+      // Otherwise, we send a raw record to the downstream writer, allowing him to decide
+      // what type of operation to generate, based on the mode (upsert/append).
+      Record row =
+          rawOperation
+              .flatMap(operation -> convertToRowWithOp(record, operation))
+              .orElseGet(() -> convertToRow(record));
+      writer.write(row);
     } catch (Exception e) {
       throw new DataException(
           String.format(
@@ -89,21 +102,17 @@ class IcebergWriter implements RecordWriter {
     }
   }
 
-  private Record maybeEnrichWithOperation(SinkRecord record, Record row) {
-    return Optional.ofNullable(config.tablesCdcField())
-        .map(operationField -> extractOperation(record.value(), operationField))
-        .map(operation -> new RecordWrapper(row, operation))
-        .map(Record.class::cast)
-        .orElse(row);
+  private Optional<Record> convertToRowWithOp(SinkRecord record, String rawOperation) {
+    return Optional.ofNullable(operationMappings.get(rawOperation))
+        .map(operation -> new RecordWrapper(convertToRow(record), operation));
   }
 
-  private Operation extractOperation(Object recordValue, String cdcField) {
-    return Optional.ofNullable(RecordUtils.extractFromRecordValue(recordValue, cdcField))
+  private Optional<String> extractRawOperation(SinkRecord record) {
+    return Optional.ofNullable(config.tablesCdcField())
+        .map(operationField -> RecordUtils.extractFromRecordValue(record.value(), operationField))
         .map(Object::toString)
         .map(String::trim)
-        .map(String::toLowerCase)
-        .map(operationMappings::get)
-        .orElse(Operation.INSERT);
+        .map(String::toLowerCase);
   }
 
   private Record convertToRow(SinkRecord record) {
@@ -167,15 +176,19 @@ class IcebergWriter implements RecordWriter {
     insertOperationMappings(config.tablesCdcOpsInsert(), Operation.INSERT);
     insertOperationMappings(config.tablesCdcOpsUpdate(), Operation.UPDATE);
     insertOperationMappings(config.tablesCdcOpsDelete(), Operation.DELETE);
+
+    normalize(config.tablesCdcIgnoredOps()).forEach(ignoredOperations::add);
   }
 
   private void insertOperationMappings(List<String> cdcOperations, Operation operation) {
-    if (cdcOperations == null || cdcOperations.isEmpty()) {
-      return;
+    normalize(cdcOperations).forEach(cdcOp -> operationMappings.put(cdcOp, operation));
+  }
+
+  private Stream<String> normalize(List<String> operations) {
+    if (operations == null || operations.isEmpty()) {
+      return Stream.empty();
     }
 
-    cdcOperations.stream()
-        .map(String::toLowerCase)
-        .forEach(cdcOp -> operationMappings.put(cdcOp, operation));
+    return operations.stream().map(String::toLowerCase);
   }
 }

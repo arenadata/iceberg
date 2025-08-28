@@ -26,6 +26,8 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.apache.iceberg.Schema;
@@ -81,6 +83,7 @@ public class IcebergWriterTest {
     when(config.tablesCdcOpsInsert()).thenReturn(ImmutableList.of("c", "r"));
     when(config.tablesCdcOpsUpdate()).thenReturn(Collections.singletonList("u"));
     when(config.tablesCdcOpsDelete()).thenReturn(ImmutableList.of("d", "rm"));
+    when(config.tablesCdcIgnoredOps()).thenReturn(ImmutableList.of("m", "t"));
 
     IcebergWriter icebergWriter = new IcebergWriter(table, mockTaskWriter, "ignored", config);
 
@@ -88,8 +91,12 @@ public class IcebergWriterTest {
             record(1, "one", "c", ""),
             record(2, "two", "r", ""),
             record(2, "three", "u", "c"),
+            record(143, "three", "m", "message"),
             record(3, "four", "c", "u"),
+            record(111, "13", "t", "truncate"),
+            record(32, "311", "m", "message"),
             record(1, "one", "d", ""),
+            record(77, "unknown_op", "unknown", "unknown_op"),
             record(2, "two", "rm", ""))
         .forEach(icebergWriter::write);
 
@@ -99,6 +106,7 @@ public class IcebergWriterTest {
         idAndOp(2, Operation.UPDATE),
         idAndOp(3, Operation.INSERT),
         idAndOp(1, Operation.DELETE),
+        idAndOp(77, null),
         idAndOp(2, Operation.DELETE));
   }
 
@@ -109,6 +117,7 @@ public class IcebergWriterTest {
     when(config.tablesCdcOpsInsert()).thenReturn(ImmutableList.of("INSERT", "READ"));
     when(config.tablesCdcOpsUpdate()).thenReturn(Collections.singletonList("UPDATE"));
     when(config.tablesCdcOpsDelete()).thenReturn(ImmutableList.of("DELETE", "REMOVE"));
+    when(config.tablesCdcIgnoredOps()).thenReturn(ImmutableList.of("MESSAGE", "truncate"));
 
     IcebergWriter icebergWriter = new IcebergWriter(table, mockTaskWriter, "ignored", config);
 
@@ -116,8 +125,12 @@ public class IcebergWriterTest {
             record(1, "one", "c", "insert"),
             record(2, "two", "c", "insert"),
             record(2, "three", "c", "update"),
+            record(143, "three", "c", "message"),
             record(3, "four", "r", "read"),
+            record(111, "13", "t", "truncate"),
+            record(32, "311", "f", "truncate"),
             record(1, "one", "c", "delete"),
+            record(77, "unknown_op", "w", "unknown_op"),
             record(2, "two", "r", "remove"))
         .forEach(icebergWriter::write);
 
@@ -127,6 +140,7 @@ public class IcebergWriterTest {
         idAndOp(2, Operation.UPDATE),
         idAndOp(3, Operation.INSERT),
         idAndOp(1, Operation.DELETE),
+        idAndOp(77, null),
         idAndOp(2, Operation.DELETE));
   }
 
@@ -146,8 +160,7 @@ public class IcebergWriterTest {
             record(3, "three", "r", "delete"))
         .forEach(icebergWriter::write);
 
-    assertResults(
-        idAndOp(1, Operation.INSERT), idAndOp(2, Operation.INSERT), idAndOp(3, Operation.INSERT));
+    assertResults(idAndOp(1, null), idAndOp(2, null), idAndOp(3, null));
   }
 
   private void assertResults(Record... expectedRecords) {
@@ -156,17 +169,24 @@ public class IcebergWriterTest {
   }
 
   private List<Record> actualIdAndOps() {
-    return mockTaskWriter.records.stream()
-        .filter(RecordWrapper.class::isInstance)
-        .map(RecordWrapper.class::cast)
-        .map(record -> idAndOp((long) record.getField("id"), record.op()))
-        .collect(Collectors.toList());
+    return mockTaskWriter.records.stream().map(this::toIdAndOp).collect(Collectors.toList());
+  }
+
+  private Record toIdAndOp(Record record) {
+    Operation operation =
+        Optional.of(record)
+            .filter(RecordWrapper.class::isInstance)
+            .map(RecordWrapper.class::cast)
+            .map(RecordWrapper::op)
+            .orElse(null);
+
+    return idAndOp((long) record.getField("id"), operation);
   }
 
   private Record idAndOp(long id, Operation op) {
     GenericRecord genericRecord = GenericRecord.create(ID_AND_OP_SCHEMA);
     genericRecord.setField("id", id);
-    genericRecord.setField("operation", op.toString());
+    genericRecord.setField("operation", Objects.toString(op, null));
     return genericRecord;
   }
 

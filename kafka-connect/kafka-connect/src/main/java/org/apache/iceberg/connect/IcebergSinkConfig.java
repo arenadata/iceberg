@@ -75,6 +75,8 @@ public class IcebergSinkConfig extends AbstractConfig {
   private static final String TABLES_CDC_OP_UPDATE_DEFAULT = "u";
   private static final String TABLES_CDC_OPS_DELETE_PROP = "iceberg.tables.cdc.ops.delete";
   private static final String TABLES_CDC_OP_DELETE_DEFAULT = "d";
+  private static final String TABLES_CDC_OPS_IGNORE_PROP = "iceberg.tables.cdc.ops.ignored";
+  private static final String TABLES_CDC_OP_IGNORE_DEFAULT = "t,m";
   private static final String TABLES_UPSERT_MODE_ENABLED_PROP =
       "iceberg.tables.upsert-mode-enabled";
   private static final String TABLES_DEFAULT_COMMIT_BRANCH = "iceberg.tables.default-commit-branch";
@@ -289,6 +291,12 @@ public class IcebergSinkConfig extends AbstractConfig {
         TABLES_CDC_OP_DELETE_DEFAULT,
         Importance.MEDIUM,
         "The comma-separated values of the cdc operation field corresponding to DELETE");
+    configDef.define(
+        TABLES_CDC_OPS_IGNORE_PROP,
+        ConfigDef.Type.LIST,
+        TABLES_CDC_OP_IGNORE_DEFAULT,
+        Importance.MEDIUM,
+        "The comma-separated values of the cdc operation field that should be ignored by connector");
   }
 
   private final Map<String, String> originalProps;
@@ -438,6 +446,10 @@ public class IcebergSinkConfig extends AbstractConfig {
 
   public List<String> tablesCdcOpsDelete() {
     return getList(TABLES_CDC_OPS_DELETE_PROP);
+  }
+
+  public List<String> tablesCdcIgnoredOps() {
+    return getList(TABLES_CDC_OPS_IGNORE_PROP);
   }
 
   @VisibleForTesting
