@@ -23,6 +23,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import java.util.Arrays;
+import java.util.List;
 import java.util.regex.Pattern;
 import org.apache.iceberg.connect.IcebergSinkConfig;
 import org.apache.iceberg.connect.TableSinkConfig;
@@ -60,5 +61,29 @@ public class PartitionedDeltaWriterTest extends BaseWriterTest {
     // and 1 delete file for each partition (2 total)
     assertThat(result.dataFiles()).hasSize(2);
     assertThat(result.deleteFiles()).hasSize(2);
+  }
+
+  @Test
+  public void testPartitionedDeltaWriterWithWrappedRows() {
+    IcebergSinkConfig config = mock(IcebergSinkConfig.class);
+    when(config.isUpsertMode()).thenReturn(true);
+    when(config.tableConfig(table.name()))
+        .thenReturn(new TableSinkConfig(Pattern.compile(""), Arrays.asList(), Arrays.asList(), ""));
+
+    when(table.spec()).thenReturn(SPEC);
+
+    List<Record> records =
+        ImmutableList.of(
+            wrappedRecord(123L, "part1", Operation.INSERT),
+            wrappedRecord(234L, "part1", Operation.UPDATE),
+            wrappedRecord(123L, "part1", Operation.DELETE),
+            wrappedRecord(456L, "part2", Operation.UPDATE));
+
+    WriteResult result = writeTest(records, config, PartitionedDeltaWriter.class);
+
+    // 2 append files because of 2 UPDATES and INSERT (1 for each partition)
+    // 3 delete files because of 2 UPDATES (equality deletes) + 1 positional for DELETE
+    assertThat(result.dataFiles()).hasSize(2);
+    assertThat(result.deleteFiles()).hasSize(3);
   }
 }

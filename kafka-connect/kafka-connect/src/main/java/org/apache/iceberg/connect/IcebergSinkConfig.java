@@ -72,6 +72,14 @@ public class IcebergSinkConfig extends AbstractConfig {
   private static final String TABLES_DYNAMIC_PROP = "iceberg.tables.dynamic-enabled";
   private static final String TABLES_ROUTE_FIELD_PROP = "iceberg.tables.route-field";
   private static final String TABLES_CDC_FIELD_PROP = "iceberg.tables.cdc-field";
+  private static final String TABLES_CDC_OPS_INSERT_PROP = "iceberg.tables.cdc.ops.insert";
+  private static final String TABLES_CDC_OP_INSERT_DEFAULT = "r,c";
+  private static final String TABLES_CDC_OPS_UPDATE_PROP = "iceberg.tables.cdc.ops.update";
+  private static final String TABLES_CDC_OP_UPDATE_DEFAULT = "u";
+  private static final String TABLES_CDC_OPS_DELETE_PROP = "iceberg.tables.cdc.ops.delete";
+  private static final String TABLES_CDC_OP_DELETE_DEFAULT = "d";
+  private static final String TABLES_CDC_OPS_IGNORE_PROP = "iceberg.tables.cdc.ops.ignored";
+  private static final String TABLES_CDC_OP_IGNORE_DEFAULT = "t,m";
   private static final String TABLES_UPSERT_MODE_ENABLED_PROP =
       "iceberg.tables.upsert-mode-enabled";
   private static final String TABLES_DEFAULT_COMMIT_BRANCH = "iceberg.tables.default-commit-branch";
@@ -155,12 +163,6 @@ public class IcebergSinkConfig extends AbstractConfig {
         null,
         Importance.MEDIUM,
         "Source record field for routing records to tables");
-    configDef.define(
-        TABLES_CDC_FIELD_PROP,
-        ConfigDef.Type.STRING,
-        null,
-        Importance.MEDIUM,
-        "Source record field that identifies the type of operation (insert, update, or delete)");
     configDef.define(
         TABLES_DEFAULT_COMMIT_BRANCH,
         ConfigDef.Type.STRING,
@@ -313,7 +315,41 @@ public class IcebergSinkConfig extends AbstractConfig {
         false,
         Importance.MEDIUM,
         "Enable mapping Kafka Connect schema default values to Iceberg write-default/initial-default");
+    defineCdcProps(configDef);
     return configDef;
+  }
+
+  private static void defineCdcProps(ConfigDef configDef) {
+    configDef.define(
+        TABLES_CDC_FIELD_PROP,
+        ConfigDef.Type.STRING,
+        null,
+        Importance.MEDIUM,
+        "Source record field that identifies the type of operation (insert, update, or delete)");
+    configDef.define(
+        TABLES_CDC_OPS_INSERT_PROP,
+        ConfigDef.Type.LIST,
+        TABLES_CDC_OP_INSERT_DEFAULT,
+        Importance.MEDIUM,
+        "The comma-separated values of the cdc operation field corresponding to INSERT");
+    configDef.define(
+        TABLES_CDC_OPS_UPDATE_PROP,
+        ConfigDef.Type.LIST,
+        TABLES_CDC_OP_UPDATE_DEFAULT,
+        Importance.MEDIUM,
+        "The comma-separated values of the cdc operation field corresponding to UPDATE");
+    configDef.define(
+        TABLES_CDC_OPS_DELETE_PROP,
+        ConfigDef.Type.LIST,
+        TABLES_CDC_OP_DELETE_DEFAULT,
+        Importance.MEDIUM,
+        "The comma-separated values of the cdc operation field corresponding to DELETE");
+    configDef.define(
+        TABLES_CDC_OPS_IGNORE_PROP,
+        ConfigDef.Type.LIST,
+        TABLES_CDC_OP_IGNORE_DEFAULT,
+        Importance.MEDIUM,
+        "The comma-separated values of the cdc operation field that should be ignored by connector");
   }
 
   private final Map<String, String> originalProps;
@@ -462,6 +498,22 @@ public class IcebergSinkConfig extends AbstractConfig {
 
   public String tablesCdcField() {
     return getString(TABLES_CDC_FIELD_PROP);
+  }
+
+  public List<String> tablesCdcOpsInsert() {
+    return getList(TABLES_CDC_OPS_INSERT_PROP);
+  }
+
+  public List<String> tablesCdcOpsUpdate() {
+    return getList(TABLES_CDC_OPS_UPDATE_PROP);
+  }
+
+  public List<String> tablesCdcOpsDelete() {
+    return getList(TABLES_CDC_OPS_DELETE_PROP);
+  }
+
+  public List<String> tablesCdcIgnoredOps() {
+    return getList(TABLES_CDC_OPS_IGNORE_PROP);
   }
 
   @VisibleForTesting
