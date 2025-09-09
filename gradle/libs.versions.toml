@@ -35,6 +35,7 @@ awssdk-bom = "2.33.0"
 azuresdk-bom = "1.2.37"
 awssdk-s3accessgrants = "2.3.0"
 bson-ver = "4.11.5"
+bson = "4.11.0"
 caffeine = "2.9.3"
 calcite = "1.40.0"
 comet = "0.8.1"
@@ -209,6 +210,7 @@ jakarta-servlet = {module = "jakarta.servlet:jakarta.servlet-api", version.ref =
 jetty-server = { module = "org.eclipse.jetty:jetty-server", version.ref = "jetty" }
 jetty-servlet = { module = "org.eclipse.jetty:jetty-servlet", version.ref = "jetty" }
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit" }
+junit-jupiter-api = { module = "org.junit.jupiter:junit-jupiter-api", version.ref = "junit" }
 junit-jupiter-engine = { module = "org.junit.jupiter:junit-jupiter-engine", version.ref = "junit" }
 junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher", version.ref = "junit-platform" }
 junit-suite-api = { module = "org.junit.platform:junit-platform-suite-api", version.ref = "junit-platform" }
