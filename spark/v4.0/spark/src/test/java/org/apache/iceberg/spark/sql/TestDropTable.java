@@ -104,6 +104,30 @@ public class TestDropTable extends CatalogTestBase {
   }
 
   @TestTemplate
+  public void testPurgeTableWithDeleteDirectoryEnabled() throws IOException {
+    String tableBaseDir = validationCatalog.loadTable(tableIdent).location();
+    sql("ALTER TABLE %s SET TBLPROPERTIES ('drop.base-directory.enabled' = 'true')", tableName);
+
+    testPurgeTable();
+
+    assertThat(checkFilesExist(ImmutableList.of(tableBaseDir), false))
+        .as("Base table directory should be deleted")
+        .isTrue();
+  }
+
+  @TestTemplate
+  public void testPurgeTableWithDeleteDirectoryEnabledAndGcDisabled() throws IOException {
+    String tableBaseDir = validationCatalog.loadTable(tableIdent).location();
+    sql("ALTER TABLE %s SET TBLPROPERTIES ('drop.base-directory.enabled' = 'true')", tableName);
+
+    testPurgeTableGCDisabled();
+
+    assertThat(checkFilesExist(ImmutableList.of(tableBaseDir), true))
+        .as("Base table directory should not be deleted")
+        .isTrue();
+  }
+
+  @TestTemplate
   public void testPurgeTableGCDisabled() throws IOException {
     sql("ALTER TABLE %s SET TBLPROPERTIES (gc.enabled = false)", tableName);
 
