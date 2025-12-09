@@ -33,7 +33,7 @@ buildscript {
     // well.
     classpath "net.ltgt.gradle:gradle-errorprone-plugin:3.1.0"
 
-    classpath 'com.diffplug.spotless:spotless-plugin-gradle:6.13.0'
+    classpath 'com.diffplug.spotless:spotless-plugin-gradle:7.0.0'
     classpath 'gradle.plugin.org.inferred:gradle-processors:3.7.0'
     classpath 'me.champeau.jmh:jmh-gradle-plugin:0.7.2'
     classpath 'gradle.plugin.io.morethan.jmhreport:gradle-jmh-report:0.9.6'
@@ -62,7 +62,7 @@ if (JavaVersion.current() == JavaVersion.VERSION_1_8) {
 } else if (JavaVersion.current() == JavaVersion.VERSION_11) {
   project.ext.jdkVersion = '11'
   project.ext.extraJvmArgs = []
-} else if (JavaVersion.current() == JavaVersion.VERSION_17) {
+} else if (JavaVersion.current() == JavaVersion.VERSION_17 || JavaVersion.current() == JavaVersion.VERSION_21) {
   project.ext.jdkVersion = '17'
   project.ext.extraJvmArgs = ["--add-opens", "java.base/java.io=ALL-UNNAMED",
                               "--add-opens", "java.base/java.lang.invoke=ALL-UNNAMED",
@@ -125,6 +125,13 @@ allprojects {
   group = "org.apache.iceberg"
   version = projectVersion
   repositories {
+    maven {
+      url = 'https://maven.pkg.github.com/arenadata/*'
+      credentials {
+        username = project.findProperty("gpr.user") ?: System.getenv("GITHUB_USERNAME")
+        password = project.findProperty("gpr.key") ?: System.getenv("GITHUB_TOKEN")
+      }
+    }
     mavenCentral()
     mavenLocal()
   }

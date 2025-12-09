@@ -203,6 +203,8 @@ project(':iceberg-kafka-connect:iceberg-kafka-connect-runtime') {
     integrationImplementation libs.testcontainers
     integrationImplementation libs.httpcomponents.httpclient5
     integrationImplementation libs.awaitility
+
+    runtimeOnly libs.ozone.filesystem.hadoop3
   }
 
   task integrationTest(type: Test) {
