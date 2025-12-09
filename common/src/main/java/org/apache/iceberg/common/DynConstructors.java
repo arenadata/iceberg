@@ -43,7 +43,9 @@ public class DynConstructors {
       this.constructed = constructed;
     }
 
-    /** @deprecated since 1.6.0, will be removed in 1.7.0 */
+    /**
+     * @deprecated since 1.6.0, will be removed in 1.7.0
+     */
     @Deprecated
     public Class<? extends C> getConstructedClass() {
       return constructed;

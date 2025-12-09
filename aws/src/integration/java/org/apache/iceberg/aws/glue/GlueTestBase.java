@@ -185,9 +185,7 @@ public class GlueTestBase {
                     .owner(existingTable.owner())
                     .parameters(existingTable.parameters())
                     .storageDescriptor(
-                        existingTable
-                            .storageDescriptor()
-                            .toBuilder()
+                        existingTable.storageDescriptor().toBuilder()
                             .columns(updatedColumns)
                             .build())
                     .build())

@@ -17,6 +17,7 @@
  * under the License.
  */
 package io.tabular.iceberg.connect.transforms;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -30,7 +31,6 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Function;
-
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.connect.data.Schema;
@@ -63,7 +63,8 @@ public class MongoDebeziumTransformTest {
 
   private MongoDebeziumTransform getTransformer(String mode) {
     MongoDebeziumTransform transform = new MongoDebeziumTransform();
-    transform.configure(Collections.singletonMap(MongoDebeziumTransform.ARRAY_HANDLING_MODE_KEY, mode));
+    transform.configure(
+        Collections.singletonMap(MongoDebeziumTransform.ARRAY_HANDLING_MODE_KEY, mode));
     return transform;
   }
 
@@ -91,7 +92,7 @@ public class MongoDebeziumTransformTest {
   }
 
   private static Struct getUpdateDescriptionStruct(
-          Optional<List<String>> removedFields, String updatedFields) {
+      Optional<List<String>> removedFields, String updatedFields) {
     Struct struct = new Struct(getUpdateDescriptionSchema());
     removedFields.map(fields -> struct.put("removedFields", fields));
     struct.put("updatedFields", updatedFields);

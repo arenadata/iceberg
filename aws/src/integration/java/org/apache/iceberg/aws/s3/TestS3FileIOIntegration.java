@@ -412,8 +412,7 @@ public class TestS3FileIOIntegration {
     List<Integer> scaleSizes = Lists.newArrayList(1, 1000, 2500);
     String listPrefix = String.format("s3://%s/%s/%s", bucketName, prefix, "prefix-list-test");
 
-    scaleSizes
-        .parallelStream()
+    scaleSizes.parallelStream()
         .forEach(
             scale -> {
               String scalePrefix = String.format("%s/%s/", listPrefix, scale);
@@ -434,8 +433,7 @@ public class TestS3FileIOIntegration {
     String deletePrefix = String.format("s3://%s/%s/%s", bucketName, prefix, "prefix-delete-test");
 
     List<Integer> scaleSizes = Lists.newArrayList(0, 5, 1000, 2500);
-    scaleSizes
-        .parallelStream()
+    scaleSizes.parallelStream()
         .forEach(
             scale -> {
               String scalePrefix = String.format("%s/%s/", deletePrefix, scale);
