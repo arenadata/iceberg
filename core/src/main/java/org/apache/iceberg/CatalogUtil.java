@@ -362,9 +362,6 @@ public class CatalogUtil {
         case ICEBERG_CATALOG_TYPE_JDBC:
           catalogImpl = ICEBERG_CATALOG_JDBC;
           break;
-        case ICEBERG_CATALOG_TYPE_BIGQUERY:
-          catalogImpl = ICEBERG_CATALOG_BIGQUERY;
-          break;
         default:
           throw new UnsupportedOperationException("Unknown catalog type: " + catalogType);
       }
