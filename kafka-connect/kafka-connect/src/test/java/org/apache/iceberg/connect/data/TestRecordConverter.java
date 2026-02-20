@@ -49,6 +49,7 @@ import org.apache.iceberg.connect.data.SchemaUpdate.AddColumn;
 import org.apache.iceberg.connect.data.SchemaUpdate.UpdateType;
 import org.apache.iceberg.data.GenericRecord;
 import org.apache.iceberg.data.Record;
+import org.apache.iceberg.expressions.Literal;
 import org.apache.iceberg.mapping.MappedField;
 import org.apache.iceberg.mapping.NameMapping;
 import org.apache.iceberg.mapping.NameMappingParser;
@@ -57,6 +58,7 @@ import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.types.Type;
+import org.apache.iceberg.types.Types;
 import org.apache.iceberg.types.Types.BinaryType;
 import org.apache.iceberg.types.Types.BooleanType;
 import org.apache.iceberg.types.Types.DateType;
@@ -75,6 +77,10 @@ import org.apache.iceberg.types.Types.TimeType;
 import org.apache.iceberg.types.Types.TimestampType;
 import org.apache.iceberg.types.Types.UUIDType;
 import org.apache.iceberg.util.UUIDUtil;
+import org.apache.iceberg.variants.Variant;
+import org.apache.iceberg.variants.VariantObject;
+import org.apache.iceberg.variants.VariantPrimitive;
+import org.apache.iceberg.variants.VariantValue;
 import org.apache.kafka.connect.data.Decimal;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.SchemaBuilder;
@@ -180,6 +186,79 @@ public class TestRecordConverter {
   private static final Schema CONNECT_STRUCT_IN_MAP_SCHEMA =
       SchemaBuilder.struct()
           .field("stma", SchemaBuilder.map(Schema.STRING_SCHEMA, CONNECT_NESTED_SCHEMA))
+          .build();
+
+  private static final org.apache.iceberg.Schema VARIANT_SCHEMA =
+      new org.apache.iceberg.Schema(
+          NestedField.required(1, "id", IntegerType.get()),
+          NestedField.optional(2, "payload", Types.VariantType.get()));
+
+  private static final org.apache.iceberg.Schema UNKNOWN_SCHEMA =
+      new org.apache.iceberg.Schema(
+          NestedField.required(1, "id", IntegerType.get()),
+          NestedField.optional(2, "x", Types.UnknownType.get()));
+
+  private static final org.apache.iceberg.Schema TIMESTAMPTZ_NANO_SCHEMA =
+      new org.apache.iceberg.Schema(
+          NestedField.required(1, "id", IntegerType.get()),
+          NestedField.required(2, "ts", Types.TimestampNanoType.withZone()));
+
+  private static final org.apache.iceberg.Schema TIMESTAMP_NANO_SCHEMA =
+      new org.apache.iceberg.Schema(
+          NestedField.required(1, "id", IntegerType.get()),
+          NestedField.required(2, "ts", Types.TimestampNanoType.withoutZone()));
+
+  private static final org.apache.iceberg.Schema DEFAULTS_SCHEMA =
+      new org.apache.iceberg.Schema(
+          Types.NestedField.required(1, "id", Types.IntegerType.get()),
+          Types.NestedField.builder()
+              .withId(2)
+              .withName("i32_def")
+              .ofType(Types.IntegerType.get())
+              .withWriteDefault(Literal.of(42).to(Types.IntegerType.get()))
+              .build(),
+          Types.NestedField.builder()
+              .withId(3)
+              .withName("i64_def")
+              .ofType(Types.LongType.get())
+              .withWriteDefault(Literal.of(4200L).to(Types.LongType.get()))
+              .build(),
+          Types.NestedField.builder()
+              .withId(4)
+              .withName("b_def")
+              .ofType(Types.BooleanType.get())
+              .withWriteDefault(Literal.of(true).to(Types.BooleanType.get()))
+              .build(),
+          Types.NestedField.builder()
+              .withId(5)
+              .withName("s_def")
+              .ofType(Types.StringType.get())
+              .withWriteDefault(Literal.of("hello").to(Types.StringType.get()))
+              .build());
+
+  private static final org.apache.iceberg.Schema DEFAULTS_VARIANT_UNKNOWN_SCHEMA =
+      new org.apache.iceberg.Schema(
+          Types.NestedField.required(1, "id", Types.IntegerType.get()),
+          Types.NestedField.builder()
+              .withId(2)
+              .withName("v")
+              .ofType(Types.VariantType.get())
+              .withWriteDefault(Literal.of("x").to(Types.UnknownType.get()))
+              .build(),
+          Types.NestedField.builder()
+              .withId(3)
+              .withName("u")
+              .ofType(Types.UnknownType.get())
+              .withWriteDefault(Literal.of("x").to(Types.UnknownType.get()))
+              .build());
+
+  private static final Schema CONNECT_DEFAULTS_SCHEMA =
+      SchemaBuilder.struct()
+          .field("id", Schema.INT32_SCHEMA)
+          .field("i32_def", SchemaBuilder.int32().optional().defaultValue(42).build())
+          .field("i64_def", SchemaBuilder.int64().optional().defaultValue(4200L).build())
+          .field("b_def", SchemaBuilder.bool().optional().defaultValue(true).build())
+          .field("s_def", SchemaBuilder.string().optional().defaultValue("hello").build())
           .build();
 
   private static final LocalDate DATE_VAL = LocalDate.parse("2023-05-18");
@@ -879,6 +958,201 @@ public class TestRecordConverter {
 
     assertThat(updateMap.get("st.ii").type()).isInstanceOf(LongType.class);
     assertThat(updateMap.get("st.ff").type()).isInstanceOf(DoubleType.class);
+  }
+
+  @Test
+  public void testVariantMapConversion() {
+    Table table = mock(Table.class);
+    when(table.schema()).thenReturn(VARIANT_SCHEMA);
+
+    RecordConverter converter = new RecordConverter(table, config);
+
+    Map<String, Object> payload =
+        ImmutableMap.of(
+            "a", 1,
+            "b", ImmutableList.of(true, "x"),
+            "c", ImmutableMap.of("k", "v"));
+
+    Record record =
+        converter.convert(
+            ImmutableMap.<String, Object>builder().put("id", 1001).put("payload", payload).build());
+
+    Object out = record.getField("payload");
+    assertThat(out).isInstanceOf(Variant.class);
+
+    Variant variant = (Variant) out;
+    assertThat(variant.metadata()).isNotNull();
+    assertThat(variant.value()).isNotNull();
+
+    VariantValue variantValue = variant.value();
+    VariantObject variantObject = variantValue.asObject();
+
+    assertThat(variantObject.get("a")).isNotNull();
+    VariantPrimitive<?> variantPrimitive = variantObject.get("a").asPrimitive();
+    assertThat(variantPrimitive.get()).isEqualTo(1);
+
+    assertThat(variantObject.get("c")).isNotNull();
+    VariantObject variantObject1 = variantObject.get("c").asObject();
+    assertThat(variantObject1.get("k").asPrimitive().get()).isEqualTo("v");
+  }
+
+  @Test
+  public void testUnknownValueWritesNullAndDoesNotEvolve() {
+    Table table = mock(Table.class);
+    when(table.schema()).thenReturn(UNKNOWN_SCHEMA);
+
+    when(config.evolveUnknownTypeEnabled()).thenReturn(true);
+
+    RecordConverter converter = new RecordConverter(table, config);
+
+    SchemaUpdate.Consumer consumer = new SchemaUpdate.Consumer();
+    Record record =
+        converter.convert(
+            ImmutableMap.<String, Object>builder().put("id", 1).put("x", "abc").build(), consumer);
+
+    assertThat(record.getField("x")).isNull();
+    assertThat(consumer.updateTypes()).isEmpty();
+  }
+
+  @Test
+  public void testTimestamptzNsConversionFromEpochNanos() {
+    Table table = mock(Table.class);
+    when(table.schema()).thenReturn(TIMESTAMPTZ_NANO_SCHEMA);
+
+    RecordConverter converter = new RecordConverter(table, config);
+
+    long epochNanos = 1760608425201123456L; // 2025-10-16T09:53:45.201123456Z
+    Map<String, Object> data = ImmutableMap.of("id", 1, "ts", epochNanos);
+
+    Record record = converter.convert(data);
+
+    Object ts = record.getField("ts");
+    assertThat(ts).isInstanceOf(OffsetDateTime.class);
+
+    OffsetDateTime expected =
+        OffsetDateTime.ofInstant(Instant.ofEpochSecond(1760608425L, 201123456), ZoneOffset.UTC);
+
+    assertThat(ts).isEqualTo(expected);
+  }
+
+  @Test
+  public void testTimestampNsConversionFromEpochNanos() {
+    Table table = mock(Table.class);
+    when(table.schema()).thenReturn(TIMESTAMP_NANO_SCHEMA);
+
+    RecordConverter converter = new RecordConverter(table, config);
+
+    long epochNanos = 1760608425201123456L; // 2025-10-16T09:53:45.201123456Z
+    Map<String, Object> data = ImmutableMap.of("id", 1, "ts", epochNanos);
+
+    Record record = converter.convert(data);
+
+    Object ts = record.getField("ts");
+    assertThat(ts).isInstanceOf(LocalDateTime.class);
+
+    LocalDateTime expected =
+        LocalDateTime.ofInstant(Instant.ofEpochSecond(1760608425L, 201123456), ZoneOffset.UTC);
+
+    assertThat(ts).isEqualTo(expected);
+  }
+
+  @Test
+  public void testTimestamptzNsConversionFromString() {
+    Table table = mock(Table.class);
+    when(table.schema()).thenReturn(TIMESTAMPTZ_NANO_SCHEMA);
+
+    RecordConverter converter = new RecordConverter(table, config);
+
+    Map<String, Object> data = ImmutableMap.of("id", 1, "ts", "2025-10-16T09:53:45.201123456Z");
+    Record record = converter.convert(data);
+
+    assertThat(record.getField("ts"))
+        .isEqualTo(OffsetDateTime.parse("2025-10-16T09:53:45.201123456Z"));
+  }
+
+  @Test
+  public void testMapAppliesWriteDefaultsWhenFieldMissing() {
+    Table table = mock(Table.class);
+    when(table.schema()).thenReturn(DEFAULTS_SCHEMA);
+
+    when(config.tableDefaultsEnabled()).thenReturn(true);
+
+    RecordConverter converter = new RecordConverter(table, config);
+
+    Record record = converter.convert(ImmutableMap.of("id", 1));
+
+    assertThat(record.getField("id")).isEqualTo(1);
+    assertThat(record.getField("i32_def")).isEqualTo(42);
+    assertThat(record.getField("i64_def")).isEqualTo(4200L);
+    assertThat(record.getField("b_def")).isEqualTo(true);
+    assertThat(record.getField("s_def")).isEqualTo("hello");
+  }
+
+  @Test
+  public void testStructAppliesWriteDefaultsWhenFieldMissing() {
+    Table table = mock(Table.class);
+    when(table.schema()).thenReturn(DEFAULTS_SCHEMA);
+
+    when(config.tableDefaultsEnabled()).thenReturn(true);
+
+    RecordConverter converter = new RecordConverter(table, config);
+
+    Struct data = new Struct(CONNECT_DEFAULTS_SCHEMA).put("id", 1);
+
+    Record record = converter.convert(data);
+
+    assertThat(record.getField("id")).isEqualTo(1);
+    assertThat(record.getField("i32_def")).isEqualTo(42);
+    assertThat(record.getField("i64_def")).isEqualTo(4200L);
+    assertThat(record.getField("b_def")).isEqualTo(true);
+    assertThat(record.getField("s_def")).isEqualTo("hello");
+  }
+
+  @Test
+  public void testDefaultsNotAppliedForVariantAndUnknown() {
+    Table table = mock(Table.class);
+    when(table.schema()).thenReturn(DEFAULTS_VARIANT_UNKNOWN_SCHEMA);
+
+    when(config.tableDefaultsEnabled()).thenReturn(true);
+
+    RecordConverter converter = new RecordConverter(table, config);
+
+    Record record = converter.convert(ImmutableMap.of("id", 1));
+
+    assertThat(record.getField("v")).isNull();
+    assertThat(record.getField("u")).isNull();
+  }
+
+  @Test
+  public void testMissingColumnDetectionStructCarriesDefaultLiteral() {
+    Table table = mock(Table.class);
+    when(table.schema()).thenReturn(ID_SCHEMA);
+
+    when(config.tableDefaultsEnabled()).thenReturn(true);
+    when(config.schemaForceOptional()).thenReturn(false);
+    when(config.schemaVariantFieldPaths()).thenReturn(ImmutableList.of());
+
+    RecordConverter converter = new RecordConverter(table, config);
+
+    Schema valueSchema =
+        SchemaBuilder.struct()
+            .field("ii", Schema.INT32_SCHEMA)
+            .field("i32_def", SchemaBuilder.int32().optional().defaultValue(42).build())
+            .build();
+
+    Struct data = new Struct(valueSchema).put("ii", 1);
+
+    SchemaUpdate.Consumer consumer = new SchemaUpdate.Consumer();
+    converter.convert(data, consumer);
+
+    AddColumn defCol =
+        consumer.addColumns().stream()
+            .filter(c -> c.name().equals("i32_def"))
+            .findFirst()
+            .orElseThrow();
+
+    assertThat(defCol.defaultValue()).isNotNull();
+    assertThat((defCol.defaultValue()).value()).isEqualTo(42);
   }
 
   public static Map<String, Object> createMapData() {
