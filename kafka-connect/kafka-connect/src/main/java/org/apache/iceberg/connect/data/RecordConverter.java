@@ -40,6 +40,7 @@ import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import org.apache.iceberg.FileFormat;
@@ -191,7 +192,7 @@ class RecordConverter {
       StructType schema,
       int structFieldId,
       SchemaUpdate.Consumer schemaUpdateConsumer) {
-    java.util.Set<Integer> seenFieldIds = Sets.newHashSet();
+    Set<Integer> seenFieldIds = Sets.newHashSet();
     GenericRecord result = GenericRecord.create(schema);
     map.forEach(
         (recordFieldNameObj, recordFieldValue) -> {
@@ -239,7 +240,7 @@ class RecordConverter {
       StructType schema,
       int structFieldId,
       SchemaUpdate.Consumer schemaUpdateConsumer) {
-    java.util.Set<Integer> seenFieldIds = Sets.newHashSet();
+    Set<Integer> seenFieldIds = Sets.newHashSet();
     GenericRecord result = GenericRecord.create(schema);
     struct
         .schema()
@@ -291,7 +292,9 @@ class RecordConverter {
   private void addColumn(
       int structFieldId, SchemaUpdate.Consumer schemaUpdateConsumer, Field recordField) {
     String parentFieldName = structFieldId < 0 ? null : tableSchema.findColumnName(structFieldId);
-    Type type = SchemaUtils.toIcebergType(recordField.schema(), config, recordField.name());
+    Type type =
+        SchemaUtils.toIcebergType(
+            recordField.schema(), config, joinPath(parentFieldName, recordField.name()));
     Object defaultValue = recordField.schema().defaultValue();
     Literal<?> lit = null;
 
@@ -308,7 +311,7 @@ class RecordConverter {
   }
 
   private void applyWriteDefaults(
-      StructType schema, GenericRecord record, java.util.Set<Integer> seenFieldIds) {
+      StructType schema, GenericRecord record, Set<Integer> seenFieldIds) {
     for (NestedField field : schema.fields()) {
       if (seenFieldIds.contains(field.fieldId())) {
         continue;

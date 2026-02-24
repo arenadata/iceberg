@@ -32,6 +32,7 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 import java.time.temporal.Temporal;
 import java.util.Base64;
 import java.util.Collection;
@@ -74,8 +75,12 @@ import org.apache.iceberg.types.Types.NestedField;
 import org.apache.iceberg.types.Types.StringType;
 import org.apache.iceberg.types.Types.StructType;
 import org.apache.iceberg.types.Types.TimeType;
+import org.apache.iceberg.types.Types.TimestampNanoType;
 import org.apache.iceberg.types.Types.TimestampType;
 import org.apache.iceberg.types.Types.UUIDType;
+import org.apache.iceberg.types.Types.UnknownType;
+import org.apache.iceberg.types.Types.VariantType;
+import org.apache.iceberg.util.DateTimeUtil;
 import org.apache.iceberg.util.UUIDUtil;
 import org.apache.iceberg.variants.Variant;
 import org.apache.iceberg.variants.VariantObject;
@@ -100,6 +105,26 @@ import org.junit.jupiter.params.provider.ValueSource;
 public class TestRecordConverter {
 
   private static final ObjectMapper MAPPER = new ObjectMapper();
+  private static final LocalDate DEFAULT_DATE_VAL = LocalDate.parse("2026-02-24");
+  private static final LocalTime DEFAULT_TIME_VAL = LocalTime.parse("01:02:03.004005");
+  private static final LocalDateTime DEFAULT_TS_VAL =
+      LocalDateTime.parse("2026-02-24T03:04:05.006007");
+  private static final OffsetDateTime DEFAULT_TSZ_VAL =
+      OffsetDateTime.parse("2026-02-24T03:04:05.006007Z");
+  private static final LocalDateTime DEFAULT_TS_NS_VAL =
+      LocalDateTime.parse("2026-02-24T03:04:05.123456789");
+  private static final String TZ_NS_TIMESTAMP_STR_VALUE = "2026-02-24T03:04:05.123456789+00:00";
+  private static final OffsetDateTime DEFAULT_TSZ_NS_VAL =
+      OffsetDateTime.parse(TZ_NS_TIMESTAMP_STR_VALUE);
+  private static final int DEFAULT_DATE_DAYS = DateTimeUtil.daysFromDate(DEFAULT_DATE_VAL);
+  private static final long DEFAULT_TIME_MICROS = DateTimeUtil.microsFromTime(DEFAULT_TIME_VAL);
+  private static final long DEFAULT_TS_MICROS = DateTimeUtil.microsFromTimestamp(DEFAULT_TS_VAL);
+  private static final long DEFAULT_TSZ_MICROS =
+      DateTimeUtil.microsFromTimestamptz(DEFAULT_TSZ_VAL);
+  private static final long DEFAULT_TS_NS_NANOS =
+      DateTimeUtil.nanosFromTimestamp(DEFAULT_TS_NS_VAL);
+  private static final long DEFAULT_TSZ_NS_NANOS =
+      DateTimeUtil.nanosFromTimestamptz(DEFAULT_TSZ_NS_VAL);
 
   private static final org.apache.iceberg.Schema SCHEMA =
       new org.apache.iceberg.Schema(
@@ -196,60 +221,99 @@ public class TestRecordConverter {
   private static final org.apache.iceberg.Schema UNKNOWN_SCHEMA =
       new org.apache.iceberg.Schema(
           NestedField.required(1, "id", IntegerType.get()),
-          NestedField.optional(2, "x", Types.UnknownType.get()));
+          NestedField.optional(2, "x", UnknownType.get()));
 
   private static final org.apache.iceberg.Schema TIMESTAMPTZ_NANO_SCHEMA =
       new org.apache.iceberg.Schema(
           NestedField.required(1, "id", IntegerType.get()),
-          NestedField.required(2, "ts", Types.TimestampNanoType.withZone()));
+          NestedField.required(2, "ts", TimestampNanoType.withZone()));
 
   private static final org.apache.iceberg.Schema TIMESTAMP_NANO_SCHEMA =
       new org.apache.iceberg.Schema(
           NestedField.required(1, "id", IntegerType.get()),
-          NestedField.required(2, "ts", Types.TimestampNanoType.withoutZone()));
+          NestedField.required(2, "ts", TimestampNanoType.withoutZone()));
 
   private static final org.apache.iceberg.Schema DEFAULTS_SCHEMA =
       new org.apache.iceberg.Schema(
-          Types.NestedField.required(1, "id", Types.IntegerType.get()),
-          Types.NestedField.builder()
+          NestedField.required(1, "id", IntegerType.get()),
+          NestedField.builder()
               .withId(2)
               .withName("i32_def")
-              .ofType(Types.IntegerType.get())
-              .withWriteDefault(Literal.of(42).to(Types.IntegerType.get()))
+              .ofType(IntegerType.get())
+              .withWriteDefault(Literal.of(42).to(IntegerType.get()))
               .build(),
-          Types.NestedField.builder()
+          NestedField.builder()
               .withId(3)
               .withName("i64_def")
-              .ofType(Types.LongType.get())
-              .withWriteDefault(Literal.of(4200L).to(Types.LongType.get()))
+              .ofType(LongType.get())
+              .withWriteDefault(Literal.of(4200L).to(LongType.get()))
               .build(),
-          Types.NestedField.builder()
+          NestedField.builder()
               .withId(4)
               .withName("b_def")
-              .ofType(Types.BooleanType.get())
-              .withWriteDefault(Literal.of(true).to(Types.BooleanType.get()))
+              .ofType(BooleanType.get())
+              .withWriteDefault(Literal.of(true).to(BooleanType.get()))
               .build(),
-          Types.NestedField.builder()
+          NestedField.builder()
               .withId(5)
               .withName("s_def")
-              .ofType(Types.StringType.get())
-              .withWriteDefault(Literal.of("hello").to(Types.StringType.get()))
+              .ofType(StringType.get())
+              .withWriteDefault(Literal.of("hello").to(StringType.get()))
+              .build(),
+          NestedField.builder()
+              .withId(6)
+              .withName("d_def")
+              .ofType(DateType.get())
+              .withWriteDefault(Literal.of(DEFAULT_DATE_DAYS).to(DateType.get()))
+              .build(),
+          NestedField.builder()
+              .withId(7)
+              .withName("t_def")
+              .ofType(TimeType.get())
+              .withWriteDefault(Literal.of(DEFAULT_TIME_MICROS).to(TimeType.get()))
+              .build(),
+          NestedField.builder()
+              .withId(8)
+              .withName("ts_def")
+              .ofType(TimestampType.withoutZone())
+              .withWriteDefault(Literal.of(DEFAULT_TS_MICROS).to(TimestampType.withoutZone()))
+              .build(),
+          NestedField.builder()
+              .withId(9)
+              .withName("tsz_def")
+              .ofType(TimestampType.withZone())
+              .withWriteDefault(Literal.of(DEFAULT_TSZ_MICROS).to(TimestampType.withZone()))
+              .build(),
+          NestedField.builder()
+              .withId(10)
+              .withName("ts_ns_def")
+              .ofType(TimestampNanoType.withoutZone())
+              .withWriteDefault(
+                  Literal.of(DEFAULT_TS_NS_VAL.format(DateTimeFormatter.ISO_LOCAL_DATE_TIME))
+                      .to(Types.TimestampNanoType.withoutZone()))
+              .build(),
+          NestedField.builder()
+              .withId(11)
+              .withName("tsz_ns_def")
+              .ofType(TimestampNanoType.withZone())
+              .withWriteDefault(
+                  Literal.of(TZ_NS_TIMESTAMP_STR_VALUE).to(TimestampNanoType.withZone()))
               .build());
 
   private static final org.apache.iceberg.Schema DEFAULTS_VARIANT_UNKNOWN_SCHEMA =
       new org.apache.iceberg.Schema(
-          Types.NestedField.required(1, "id", Types.IntegerType.get()),
-          Types.NestedField.builder()
+          NestedField.required(1, "id", IntegerType.get()),
+          NestedField.builder()
               .withId(2)
               .withName("v")
-              .ofType(Types.VariantType.get())
-              .withWriteDefault(Literal.of("x").to(Types.UnknownType.get()))
+              .ofType(VariantType.get())
+              .withWriteDefault(Literal.of("x").to(UnknownType.get()))
               .build(),
-          Types.NestedField.builder()
+          NestedField.builder()
               .withId(3)
               .withName("u")
-              .ofType(Types.UnknownType.get())
-              .withWriteDefault(Literal.of("x").to(Types.UnknownType.get()))
+              .ofType(UnknownType.get())
+              .withWriteDefault(Literal.of("x").to(UnknownType.get()))
               .build());
 
   private static final Schema CONNECT_DEFAULTS_SCHEMA =
@@ -259,6 +323,23 @@ public class TestRecordConverter {
           .field("i64_def", SchemaBuilder.int64().optional().defaultValue(4200L).build())
           .field("b_def", SchemaBuilder.bool().optional().defaultValue(true).build())
           .field("s_def", SchemaBuilder.string().optional().defaultValue("hello").build())
+          .build();
+
+  private static final org.apache.iceberg.Schema NESTED_VARIANT_EVOLVE_TABLE_SCHEMA =
+      new org.apache.iceberg.Schema(
+          NestedField.required(1, "id", IntegerType.get()),
+          NestedField.required(
+              2, "st", StructType.of(NestedField.required(3, "x", IntegerType.get()))));
+
+  private static final Schema CONNECT_NESTED_VARIANT_EVOLVE_SCHEMA =
+      SchemaBuilder.struct()
+          .field("id", Schema.INT32_SCHEMA)
+          .field(
+              "st",
+              SchemaBuilder.struct()
+                  .field("x", Schema.INT32_SCHEMA)
+                  .field("payload", Schema.STRING_SCHEMA)
+                  .build())
           .build();
 
   private static final LocalDate DATE_VAL = LocalDate.parse("2023-05-18");
@@ -1086,6 +1167,12 @@ public class TestRecordConverter {
     assertThat(record.getField("i64_def")).isEqualTo(4200L);
     assertThat(record.getField("b_def")).isEqualTo(true);
     assertThat(record.getField("s_def")).isEqualTo("hello");
+    assertThat(record.getField("d_def")).isEqualTo(DEFAULT_DATE_DAYS);
+    assertThat(record.getField("t_def")).isEqualTo(DEFAULT_TIME_MICROS);
+    assertThat(record.getField("ts_def")).isEqualTo(DEFAULT_TS_MICROS);
+    assertThat(record.getField("tsz_def")).isEqualTo(DEFAULT_TSZ_MICROS);
+    assertThat(record.getField("ts_ns_def")).isEqualTo(DEFAULT_TS_NS_NANOS);
+    assertThat(record.getField("tsz_ns_def")).isEqualTo(DEFAULT_TSZ_NS_NANOS);
   }
 
   @Test
@@ -1106,6 +1193,12 @@ public class TestRecordConverter {
     assertThat(record.getField("i64_def")).isEqualTo(4200L);
     assertThat(record.getField("b_def")).isEqualTo(true);
     assertThat(record.getField("s_def")).isEqualTo("hello");
+    assertThat(record.getField("d_def")).isEqualTo(DEFAULT_DATE_DAYS);
+    assertThat(record.getField("t_def")).isEqualTo(DEFAULT_TIME_MICROS);
+    assertThat(record.getField("ts_def")).isEqualTo(DEFAULT_TS_MICROS);
+    assertThat(record.getField("tsz_def")).isEqualTo(DEFAULT_TSZ_MICROS);
+    assertThat(record.getField("ts_ns_def")).isEqualTo(DEFAULT_TS_NS_NANOS);
+    assertThat(record.getField("tsz_ns_def")).isEqualTo(DEFAULT_TSZ_NS_NANOS);
   }
 
   @Test
@@ -1153,6 +1246,31 @@ public class TestRecordConverter {
 
     assertThat(defCol.defaultValue()).isNotNull();
     assertThat((defCol.defaultValue()).value()).isEqualTo(42);
+  }
+
+  @Test
+  public void testMissingNestedColumnUsesFullFieldPathForVariant() {
+    Table table = mock(Table.class);
+    when(table.schema()).thenReturn(NESTED_VARIANT_EVOLVE_TABLE_SCHEMA);
+    when(config.schemaVariantFieldPaths()).thenReturn(ImmutableList.of("st.payload"));
+    when(config.schemaForceOptional()).thenReturn(false);
+
+    RecordConverter converter = new RecordConverter(table, config);
+    Struct st =
+        new Struct(CONNECT_NESTED_VARIANT_EVOLVE_SCHEMA.field("st").schema())
+            .put("x", 1)
+            .put("payload", "abc");
+
+    Struct data = new Struct(CONNECT_NESTED_VARIANT_EVOLVE_SCHEMA).put("id", 10).put("st", st);
+
+    SchemaUpdate.Consumer consumer = new SchemaUpdate.Consumer();
+    converter.convert(data, consumer);
+
+    assertThat(consumer.addColumns()).hasSize(1);
+    AddColumn addColumn = consumer.addColumns().iterator().next();
+    assertThat(addColumn.parentName()).isEqualTo("st");
+    assertThat(addColumn.name()).isEqualTo("payload");
+    assertThat(addColumn.type()).isEqualTo(Types.VariantType.get());
   }
 
   public static Map<String, Object> createMapData() {
