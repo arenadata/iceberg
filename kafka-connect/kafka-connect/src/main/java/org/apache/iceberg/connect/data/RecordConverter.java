@@ -25,6 +25,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -39,6 +40,7 @@ import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import org.apache.iceberg.FileFormat;
@@ -48,11 +50,13 @@ import org.apache.iceberg.TableProperties;
 import org.apache.iceberg.connect.IcebergSinkConfig;
 import org.apache.iceberg.data.GenericRecord;
 import org.apache.iceberg.data.Record;
+import org.apache.iceberg.expressions.Literal;
 import org.apache.iceberg.mapping.MappedField;
 import org.apache.iceberg.mapping.NameMapping;
 import org.apache.iceberg.mapping.NameMappingParser;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
+import org.apache.iceberg.relocated.com.google.common.collect.Sets;
 import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.Type.PrimitiveType;
 import org.apache.iceberg.types.Types.DecimalType;
@@ -60,10 +64,14 @@ import org.apache.iceberg.types.Types.ListType;
 import org.apache.iceberg.types.Types.MapType;
 import org.apache.iceberg.types.Types.NestedField;
 import org.apache.iceberg.types.Types.StructType;
+import org.apache.iceberg.types.Types.TimestampNanoType;
 import org.apache.iceberg.types.Types.TimestampType;
 import org.apache.iceberg.util.ByteBuffers;
 import org.apache.iceberg.util.DateTimeUtil;
 import org.apache.iceberg.util.UUIDUtil;
+import org.apache.iceberg.variants.Variant;
+import org.apache.iceberg.variants.Variants;
+import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.errors.ConnectException;
 
@@ -76,11 +84,17 @@ class RecordConverter {
           .append(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
           .appendOffset("+HHmm", "Z")
           .toFormatter(Locale.ROOT);
+  private static final int VARIANT_KEYS_CACHE_MAX_SIZE = 50_000;
+  private static final Duration VARIANT_KEYS_CACHE_EXPIRE_AFTER_ACCESS_DURATION =
+      Duration.ofMinutes(30);
 
   private final Schema tableSchema;
   private final NameMapping nameMapping;
   private final IcebergSinkConfig config;
   private final Map<Integer, Map<String, NestedField>> structNameMap = Maps.newHashMap();
+  private final VariantConverter variantConverter =
+      new VariantConverter(
+          VARIANT_KEYS_CACHE_MAX_SIZE, VARIANT_KEYS_CACHE_EXPIRE_AFTER_ACCESS_DURATION);
 
   RecordConverter(Table table, IcebergSinkConfig config) {
     this.tableSchema = table.schema();
@@ -142,6 +156,14 @@ class RecordConverter {
         return convertTimeValue(value);
       case TIMESTAMP:
         return convertTimestampValue(value, (TimestampType) type);
+      case VARIANT:
+        return convertVariantValue(value);
+      case UNKNOWN:
+        // UNKNOWN columns should store null values. Do not attempt automatic promotion,
+        // as Iceberg currently rejects unknown -> specific type in UpdateSchema.
+        return null;
+      case TIMESTAMP_NANO:
+        return convertTimestampNano(value, (TimestampNanoType) type);
     }
     throw new UnsupportedOperationException("Unsupported type: " + type.typeId());
   }
@@ -170,6 +192,7 @@ class RecordConverter {
       StructType schema,
       int structFieldId,
       SchemaUpdate.Consumer schemaUpdateConsumer) {
+    Set<Integer> seenFieldIds = Sets.newHashSet();
     GenericRecord result = GenericRecord.create(schema);
     map.forEach(
         (recordFieldNameObj, recordFieldValue) -> {
@@ -179,10 +202,11 @@ class RecordConverter {
             // add the column if schema evolution is on, otherwise skip the value,
             // skip the add column if we can't infer the type
             if (schemaUpdateConsumer != null) {
-              Type type = SchemaUtils.inferIcebergType(recordFieldValue, config);
+              String parentFieldName =
+                  structFieldId < 0 ? null : tableSchema.findColumnName(structFieldId);
+              String fieldPath = joinPath(parentFieldName, recordFieldName);
+              Type type = SchemaUtils.inferIcebergType(recordFieldValue, config, fieldPath);
               if (type != null) {
-                String parentFieldName =
-                    structFieldId < 0 ? null : tableSchema.findColumnName(structFieldId);
                 schemaUpdateConsumer.addColumn(parentFieldName, recordFieldName, type);
               }
             }
@@ -194,9 +218,20 @@ class RecordConverter {
                     tableField.type(),
                     tableField.fieldId(),
                     schemaUpdateConsumer));
+            seenFieldIds.add(tableField.fieldId());
           }
         });
+    if (config.tableDefaultsEnabled()) {
+      applyWriteDefaults(schema, result, seenFieldIds);
+    }
     return result;
+  }
+
+  private static String joinPath(String parent, String child) {
+    if (parent == null || parent.isEmpty()) {
+      return child;
+    }
+    return parent + "." + child;
   }
 
   /** This method will be called for records and struct values when there is a record schema. */
@@ -205,6 +240,7 @@ class RecordConverter {
       StructType schema,
       int structFieldId,
       SchemaUpdate.Consumer schemaUpdateConsumer) {
+    Set<Integer> seenFieldIds = Sets.newHashSet();
     GenericRecord result = GenericRecord.create(schema);
     struct
         .schema()
@@ -215,10 +251,7 @@ class RecordConverter {
               if (tableField == null) {
                 // add the column if schema evolution is on, otherwise skip the value
                 if (schemaUpdateConsumer != null) {
-                  String parentFieldName =
-                      structFieldId < 0 ? null : tableSchema.findColumnName(structFieldId);
-                  Type type = SchemaUtils.toIcebergType(recordField.schema(), config);
-                  schemaUpdateConsumer.addColumn(parentFieldName, recordField.name(), type);
+                  addColumn(structFieldId, schemaUpdateConsumer, recordField);
                 }
               } else {
                 boolean hasSchemaUpdates = false;
@@ -246,10 +279,52 @@ class RecordConverter {
                           tableField.type(),
                           tableField.fieldId(),
                           schemaUpdateConsumer));
+                  seenFieldIds.add(tableField.fieldId());
                 }
               }
             });
+    if (config.tableDefaultsEnabled()) {
+      applyWriteDefaults(schema, result, seenFieldIds);
+    }
     return result;
+  }
+
+  private void addColumn(
+      int structFieldId, SchemaUpdate.Consumer schemaUpdateConsumer, Field recordField) {
+    String parentFieldName = structFieldId < 0 ? null : tableSchema.findColumnName(structFieldId);
+    Type type =
+        SchemaUtils.toIcebergType(
+            recordField.schema(), config, joinPath(parentFieldName, recordField.name()));
+    Object defaultValue = recordField.schema().defaultValue();
+    Literal<?> lit = null;
+
+    if (config.tableDefaultsEnabled()
+        && defaultValue != null
+        && SchemaUtils.isPrimitiveDefaultSupported(type)) {
+      lit = SchemaUtils.toIcebergLiteral(type, defaultValue);
+    }
+    if (lit != null) {
+      schemaUpdateConsumer.addColumn(parentFieldName, recordField.name(), type, lit);
+    } else {
+      schemaUpdateConsumer.addColumn(parentFieldName, recordField.name(), type);
+    }
+  }
+
+  private void applyWriteDefaults(
+      StructType schema, GenericRecord record, Set<Integer> seenFieldIds) {
+    for (NestedField field : schema.fields()) {
+      if (seenFieldIds.contains(field.fieldId())) {
+        continue;
+      }
+      if (field.writeDefault() == null) {
+        continue;
+      }
+      Type type = field.type();
+      if (!SchemaUtils.isPrimitiveDefaultSupported(type)) {
+        continue;
+      }
+      record.setField(field.name(), field.writeDefault());
+    }
   }
 
   private NestedField lookupStructField(String fieldName, StructType schema, int structFieldId) {
@@ -464,6 +539,23 @@ class RecordConverter {
     return convertLocalDateTime(value);
   }
 
+  @SuppressWarnings("unchecked")
+  private Object convertVariantValue(Object value) {
+    if (value instanceof Map) {
+      Map<String, ?> map = (Map<String, ?>) value;
+      return variantConverter.fromMap(map);
+    }
+    // need metadata only for map type
+    return Variant.of(Variants.emptyMetadata(), variantConverter.toVariantValue(value));
+  }
+
+  private Object convertTimestampNano(Object value, TimestampNanoType type) {
+    if (type.shouldAdjustToUTC()) {
+      return convertTimestamptzNanosValue(value);
+    }
+    return convertTimestampNanosValue(value);
+  }
+
   @SuppressWarnings("JavaUtilDate")
   private OffsetDateTime convertOffsetDateTime(Object value) {
     if (value instanceof Number) {
@@ -508,6 +600,40 @@ class RecordConverter {
     }
     throw new ConnectException(
         "Cannot convert timestamp: " + value + ", type: " + value.getClass());
+  }
+
+  private OffsetDateTime convertTimestamptzNanosValue(Object value) {
+    if (value instanceof Number) {
+      long epochNanos = ((Number) value).longValue();
+      return DateTimeUtil.timestamptzFromNanos(epochNanos);
+    } else if (value instanceof String) {
+      return parseOffsetDateTime((String) value);
+    } else if (value instanceof OffsetDateTime) {
+      return (OffsetDateTime) value;
+    } else if (value instanceof LocalDateTime) {
+      return ((LocalDateTime) value).atOffset(ZoneOffset.UTC);
+    } else if (value instanceof Date) {
+      return OffsetDateTime.ofInstant(((Date) value).toInstant(), ZoneOffset.UTC);
+    }
+    throw new ConnectException(
+        "Cannot convert timestamptz_ns: " + value + ", type: " + value.getClass());
+  }
+
+  private LocalDateTime convertTimestampNanosValue(Object value) {
+    if (value instanceof Number) {
+      long epochNanos = ((Number) value).longValue();
+      return DateTimeUtil.timestampFromNanos(epochNanos);
+    } else if (value instanceof String) {
+      return parseLocalDateTime((String) value);
+    } else if (value instanceof LocalDateTime) {
+      return (LocalDateTime) value;
+    } else if (value instanceof OffsetDateTime) {
+      return ((OffsetDateTime) value).toLocalDateTime();
+    } else if (value instanceof Date) {
+      return LocalDateTime.ofInstant(((Date) value).toInstant(), ZoneOffset.UTC);
+    }
+    throw new ConnectException(
+        "Cannot convert timestamp_ns: " + value + ", type: " + value.getClass());
   }
 
   private LocalDateTime parseLocalDateTime(String str) {

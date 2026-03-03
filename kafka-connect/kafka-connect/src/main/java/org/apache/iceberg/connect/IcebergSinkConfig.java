@@ -22,9 +22,11 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import org.apache.iceberg.IcebergBuild;
@@ -34,6 +36,7 @@ import org.apache.iceberg.relocated.com.google.common.base.Splitter;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
+import org.apache.iceberg.relocated.com.google.common.collect.Sets;
 import org.apache.iceberg.util.PropertyUtil;
 import org.apache.kafka.common.config.AbstractConfig;
 import org.apache.kafka.common.config.ConfigDef;
@@ -90,7 +93,11 @@ public class IcebergSinkConfig extends AbstractConfig {
   private static final String TRANSACTIONAL_PREFIX_PROP =
       "iceberg.coordinator.transactional.prefix";
   private static final String HADOOP_CONF_DIR_PROP = "iceberg.hadoop-conf-dir";
-
+  private static final String TABLES_SCHEMA_VARIANT_FIELDS_PROP =
+      "iceberg.tables.schema-variant-fields";
+  private static final String TABLES_EVOLVE_UNKNOWN_TYPE_ENABLED_PROP =
+      "iceberg.tables.evolve-unknown-type-enabled";
+  private static final String TABLES_DEFAULTS_ENABLED_PROP = "iceberg.tables.defaults-enabled";
   private static final String NAME_PROP = "name";
   private static final String TASK_ID = "task.id";
   private static final String BOOTSTRAP_SERVERS_PROP = "bootstrap.servers";
@@ -235,6 +242,26 @@ public class IcebergSinkConfig extends AbstractConfig {
         120000L,
         Importance.LOW,
         "config to control coordinator executor keep alive time");
+    configDef.define(
+        TABLES_SCHEMA_VARIANT_FIELDS_PROP,
+        ConfigDef.Type.STRING,
+        null,
+        Importance.MEDIUM,
+        "Comma-separated list of record field paths that must be mapped to Iceberg VARIANT. "
+            + "Paths use dot-notation, e.g. 'payload', 'after.details', 'meta.props'.");
+    configDef.define(
+        TABLES_EVOLVE_UNKNOWN_TYPE_ENABLED_PROP,
+        ConfigDef.Type.BOOLEAN,
+        false,
+        Importance.MEDIUM,
+        "Set to true to create columns with UNKNOWN type when the field type cannot be inferred "
+            + "and later evolve UNKNOWN columns to a specific type when a non-null value arrives.");
+    configDef.define(
+        TABLES_DEFAULTS_ENABLED_PROP,
+        ConfigDef.Type.BOOLEAN,
+        false,
+        Importance.MEDIUM,
+        "Enable mapping Kafka Connect schema default values to Iceberg write-default/initial-default");
     return configDef;
   }
 
@@ -246,6 +273,7 @@ public class IcebergSinkConfig extends AbstractConfig {
   private final Map<String, String> writeProps;
   private final Map<String, TableSinkConfig> tableConfigMap = Maps.newHashMap();
   private final JsonConverter jsonConverter;
+  private final Collection<String> schemaVariantFieldPaths;
 
   public IcebergSinkConfig(Map<String, String> originalProps) {
     super(CONFIG_DEF, originalProps);
@@ -269,6 +297,8 @@ public class IcebergSinkConfig extends AbstractConfig {
             ConverterConfig.TYPE_CONFIG,
             ConverterType.VALUE.getName()));
 
+    this.schemaVariantFieldPaths =
+        parseVariantFieldPaths(getString(TABLES_SCHEMA_VARIANT_FIELDS_PROP));
     validate();
   }
 
@@ -491,5 +521,62 @@ public class IcebergSinkConfig extends AbstractConfig {
         "Worker properties not loaded, using only {}* properties for Kafka clients",
         KAFKA_PROP_PREFIX);
     return ImmutableMap.of();
+  }
+
+  private static Collection<String> parseVariantFieldPaths(String value) {
+    if (value == null || value.trim().isEmpty()) {
+      return ImmutableList.of();
+    }
+    // split by comma, trim, drop empties, keep order, drop duplicates
+    List<String> raw = stringToList(value, ",");
+    Set<String> result = Sets.newLinkedHashSet();
+    for (String path : raw) {
+      if (path == null) {
+        continue;
+      }
+      String trimmedPath = path.trim();
+      if (trimmedPath.isEmpty()) {
+        continue;
+      }
+      validateFieldPath(trimmedPath);
+      result.add(trimmedPath);
+    }
+    return ImmutableList.copyOf(result);
+  }
+
+  private static void validateFieldPath(String path) {
+    if (path.startsWith(".") || path.endsWith(".") || path.contains("..")) {
+      throw new ConfigException(
+          TABLES_SCHEMA_VARIANT_FIELDS_PROP,
+          path,
+          "Invalid field path. Use dot-notation without empty segments, e.g. 'a.b.c'");
+    }
+    Iterable<String> parts = Splitter.on('.').split(path);
+    for (String part : parts) {
+      if (part.isEmpty()) {
+        throw new ConfigException(
+            TABLES_SCHEMA_VARIANT_FIELDS_PROP,
+            path,
+            "Invalid field path. Empty segment is not allowed.");
+      }
+      if (!part.matches("[A-Za-z0-9_\\-]+")) {
+        throw new ConfigException(
+            TABLES_SCHEMA_VARIANT_FIELDS_PROP,
+            path,
+            "Invalid field path segment '" + part + "'. Allowed: [A-Za-z0-9_-]");
+      }
+    }
+  }
+
+  public Collection<String> schemaVariantFieldPaths() {
+    return schemaVariantFieldPaths;
+  }
+
+  public boolean evolveUnknownTypeEnabled() {
+    return getBoolean(TABLES_EVOLVE_UNKNOWN_TYPE_ENABLED_PROP);
+  }
+
+  public boolean tableDefaultsEnabled() {
+    return getBoolean(TABLES_DEFAULTS_ENABLED_PROP);
   }
 }
