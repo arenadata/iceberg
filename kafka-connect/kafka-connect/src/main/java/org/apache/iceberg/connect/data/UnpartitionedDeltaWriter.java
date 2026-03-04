@@ -24,43 +24,46 @@ import org.apache.iceberg.FileFormat;
 import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.data.Record;
-import org.apache.iceberg.io.FileAppenderFactory;
 import org.apache.iceberg.io.FileIO;
+import org.apache.iceberg.io.FileWriterFactory;
 import org.apache.iceberg.io.OutputFileFactory;
 
-public class UnpartitionedDeltaWriter extends BaseDeltaTaskWriter {
+public class UnpartitionedDeltaWriter extends BaseDeltaWriter {
   private final RowDataDeltaWriter writer;
 
   UnpartitionedDeltaWriter(
       PartitionSpec spec,
       FileFormat format,
-      FileAppenderFactory<Record> appenderFactory,
+      FileWriterFactory<Record> fileWriterFactory,
       OutputFileFactory fileFactory,
       FileIO io,
       long targetFileSize,
       Schema schema,
       Set<Integer> identifierFieldIds,
-      boolean upsertMode) {
+      boolean upsert,
+      boolean useDv) {
     super(
         spec,
         format,
-        appenderFactory,
+        fileWriterFactory,
         fileFactory,
         io,
         targetFileSize,
         schema,
         identifierFieldIds,
-        upsertMode);
+        upsert,
+        useDv);
     this.writer = new RowDataDeltaWriter(null);
   }
 
   @Override
   RowDataDeltaWriter route(Record row) {
-    return writer;
+    return this.writer;
   }
 
   @Override
   public void close() throws IOException {
     writer.close();
+    super.close();
   }
 }

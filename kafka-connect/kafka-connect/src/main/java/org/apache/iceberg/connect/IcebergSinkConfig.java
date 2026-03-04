@@ -72,6 +72,8 @@ public class IcebergSinkConfig extends AbstractConfig {
   private static final String TABLES_DYNAMIC_PROP = "iceberg.tables.dynamic-enabled";
   private static final String TABLES_ROUTE_FIELD_PROP = "iceberg.tables.route-field";
   private static final String TABLES_CDC_FIELD_PROP = "iceberg.tables.cdc-field";
+  private static final String TABLES_UPSERT_MODE_ENABLED_PROP =
+      "iceberg.tables.upsert-mode-enabled";
   private static final String TABLES_CDC_OPS_INSERT_PROP = "iceberg.tables.cdc.ops.insert";
   private static final String TABLES_CDC_OP_INSERT_DEFAULT = "r,c";
   private static final String TABLES_CDC_OPS_UPDATE_PROP = "iceberg.tables.cdc.ops.update";
@@ -80,8 +82,6 @@ public class IcebergSinkConfig extends AbstractConfig {
   private static final String TABLES_CDC_OP_DELETE_DEFAULT = "d";
   private static final String TABLES_CDC_OPS_IGNORE_PROP = "iceberg.tables.cdc.ops.ignored";
   private static final String TABLES_CDC_OP_IGNORE_DEFAULT = "t,m";
-  private static final String TABLES_UPSERT_MODE_ENABLED_PROP =
-      "iceberg.tables.upsert-mode-enabled";
   private static final String TABLES_DEFAULT_COMMIT_BRANCH = "iceberg.tables.default-commit-branch";
   private static final String TABLES_DEFAULT_ID_COLUMNS = "iceberg.tables.default-id-columns";
   private static final String TABLES_DEFAULT_PARTITION_BY = "iceberg.tables.default-partition-by";
@@ -164,6 +164,12 @@ public class IcebergSinkConfig extends AbstractConfig {
         Importance.MEDIUM,
         "Source record field for routing records to tables");
     configDef.define(
+        TABLES_UPSERT_MODE_ENABLED_PROP,
+        ConfigDef.Type.BOOLEAN,
+        false,
+        Importance.MEDIUM,
+        "Set to true to treat all appends as upserts, false otherwise");
+    configDef.define(
         TABLES_DEFAULT_COMMIT_BRANCH,
         ConfigDef.Type.STRING,
         null,
@@ -193,12 +199,6 @@ public class IcebergSinkConfig extends AbstractConfig {
         false,
         Importance.MEDIUM,
         "Set to true to set columns as optional during table create and evolution, false to respect schema");
-    configDef.define(
-        TABLES_UPSERT_MODE_ENABLED_PROP,
-        ConfigDef.Type.BOOLEAN,
-        false,
-        Importance.MEDIUM,
-        "Set to true to treat all appends as upserts, false otherwise");
     configDef.define(
         TABLES_SCHEMA_CASE_INSENSITIVE_PROP,
         ConfigDef.Type.BOOLEAN,

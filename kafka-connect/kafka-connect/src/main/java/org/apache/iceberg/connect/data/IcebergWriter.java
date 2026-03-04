@@ -28,8 +28,8 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Stream;
 import org.apache.iceberg.Table;
-import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.connect.IcebergSinkConfig;
+import org.apache.iceberg.connect.events.TableReference;
 import org.apache.iceberg.data.Record;
 import org.apache.iceberg.io.TaskWriter;
 import org.apache.iceberg.io.WriteResult;
@@ -41,23 +41,29 @@ import org.apache.kafka.connect.sink.SinkRecord;
 
 class IcebergWriter implements RecordWriter {
   private final Table table;
-  private final String tableName;
+  private final TableReference tableReference;
   private final IcebergSinkConfig config;
   private final List<IcebergWriterResult> writerResults;
   private final Map<String, Operation> operationMappings;
   private final Set<String> ignoredOperations;
-
   private RecordConverter recordConverter;
   private TaskWriter<Record> writer;
 
-  IcebergWriter(Table table, String tableName, IcebergSinkConfig config) {
-    this(table, RecordUtils.createTableWriter(table, tableName, config), tableName, config);
+  IcebergWriter(Table table, TableReference tableReference, IcebergSinkConfig config) {
+    this(
+        table,
+        tableReference,
+        config,
+        RecordUtils.createTableWriter(table, tableReference, config));
   }
 
   IcebergWriter(
-      Table table, TaskWriter<Record> writer, String tableName, IcebergSinkConfig config) {
+      Table table,
+      TableReference tableReference,
+      IcebergSinkConfig config,
+      TaskWriter<Record> writer) {
     this.table = table;
-    this.tableName = tableName;
+    this.tableReference = tableReference;
     this.config = config;
     this.writerResults = Lists.newArrayList();
     this.operationMappings = Maps.newHashMap();
@@ -65,11 +71,6 @@ class IcebergWriter implements RecordWriter {
     this.writer = writer;
     this.recordConverter = new RecordConverter(table, config);
     initOperationMappings();
-  }
-
-  private void initNewWriter() {
-    this.writer = RecordUtils.createTableWriter(table, tableName, config);
-    this.recordConverter = new RecordConverter(table, config);
   }
 
   @Override
@@ -151,10 +152,15 @@ class IcebergWriter implements RecordWriter {
 
     writerResults.add(
         new IcebergWriterResult(
-            TableIdentifier.parse(tableName),
+            tableReference,
             Arrays.asList(writeResult.dataFiles()),
             Arrays.asList(writeResult.deleteFiles()),
             table.spec().partitionType()));
+  }
+
+  private void initNewWriter() {
+    writer = RecordUtils.createTableWriter(table, tableReference, config);
+    recordConverter = new RecordConverter(table, config);
   }
 
   @Override

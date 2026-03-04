@@ -20,9 +20,13 @@ package org.apache.iceberg.connect.data;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.apache.iceberg.Schema;
+import org.apache.iceberg.StructLike;
 import org.apache.iceberg.data.Record;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
+import org.apache.iceberg.relocated.com.google.common.primitives.Ints;
+import org.apache.iceberg.types.TypeUtil;
 import org.apache.iceberg.types.Types.ListType;
 import org.apache.iceberg.types.Types.MapType;
 import org.apache.iceberg.types.Types.NestedField;
@@ -32,6 +36,19 @@ import org.apache.iceberg.types.Types.StructType;
  * This is modified from {@link org.apache.iceberg.util.StructProjection} to support record types.
  */
 public class RecordProjection implements Record {
+  /**
+   * Creates a projecting wrapper for {@link StructLike} rows.
+   *
+   * <p>This projection does not work with repeated types like lists and maps.
+   *
+   * @param schema schema of rows wrapped by this projection
+   * @param ids field ids from the row schema to project
+   * @return a wrapper to project rows
+   */
+  public static RecordProjection create(Schema schema, Set<Integer> ids) {
+    StructType structType = schema.asStruct();
+    return new RecordProjection(structType, TypeUtil.project(structType, ids));
+  }
 
   /**
    * Creates a projecting wrapper for {@link Record} rows.
@@ -46,10 +63,45 @@ public class RecordProjection implements Record {
     return new RecordProjection(dataSchema.asStruct(), projectedSchema.asStruct());
   }
 
+  /**
+   * Creates a projecting wrapper for {@link Record} rows.
+   *
+   * <p>This projection does not work with repeated types like lists and maps.
+   *
+   * @param structType type of rows wrapped by this projection
+   * @param projectedStructType result type of the projected rows
+   * @return a wrapper to project rows
+   */
+  public static RecordProjection create(StructType structType, StructType projectedStructType) {
+    return new RecordProjection(structType, projectedStructType);
+  }
+
+  /**
+   * Creates a projecting wrapper for {@link Record} rows.
+   *
+   * <p>This projection allows missing fields and does not work with repeated types like lists and
+   * maps.
+   *
+   * @param structType type of rows wrapped by this projection
+   * @param projectedStructType result type of the projected rows
+   * @return a wrapper to project rows
+   */
+  public static RecordProjection createAllowMissing(
+      StructType structType, StructType projectedStructType) {
+    return new RecordProjection(structType, projectedStructType, true);
+  }
+
   private final StructType type;
   private final int[] positionMap;
   private final RecordProjection[] nestedProjections;
   private Record record;
+
+  private RecordProjection(
+      StructType type, int[] positionMap, RecordProjection[] nestedProjections) {
+    this.type = type;
+    this.positionMap = positionMap;
+    this.nestedProjections = nestedProjections;
+  }
 
   private RecordProjection(StructType structType, StructType projection) {
     this(structType, projection, false);
@@ -127,9 +179,19 @@ public class RecordProjection implements Record {
     }
   }
 
+  public int projectedFields() {
+    return (int) Ints.asList(positionMap).stream().filter(val -> val != -1).count();
+  }
+
   public RecordProjection wrap(Record newRecord) {
     this.record = newRecord;
     return this;
+  }
+
+  public static RecordProjection copyFor(Record newRecord) {
+    return new RecordProjection(
+            newRecord.struct(), new int[newRecord.size()], new RecordProjection[newRecord.size()])
+        .wrap(newRecord);
   }
 
   @Override

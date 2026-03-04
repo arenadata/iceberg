@@ -28,11 +28,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.Table;
+import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.connect.IcebergSinkConfig;
+import org.apache.iceberg.connect.events.TableReference;
 import org.apache.iceberg.data.GenericRecord;
 import org.apache.iceberg.data.Record;
 import org.apache.iceberg.io.TaskWriter;
@@ -85,7 +88,12 @@ public class TestIcebergWriter {
     when(config.tablesCdcOpsDelete()).thenReturn(ImmutableList.of("d", "rm"));
     when(config.tablesCdcIgnoredOps()).thenReturn(ImmutableList.of("m", "t"));
 
-    IcebergWriter icebergWriter = new IcebergWriter(table, mockTaskWriter, "ignored", config);
+    IcebergWriter icebergWriter =
+        new IcebergWriter(
+            table,
+            TableReference.of("catalog", TableIdentifier.of("ignored"), UUID.randomUUID()),
+            config,
+            mockTaskWriter);
 
     Stream.of(
             record(1, "one", "c", ""),
@@ -119,7 +127,12 @@ public class TestIcebergWriter {
     when(config.tablesCdcOpsDelete()).thenReturn(ImmutableList.of("DELETE", "REMOVE"));
     when(config.tablesCdcIgnoredOps()).thenReturn(ImmutableList.of("MESSAGE", "truncate"));
 
-    IcebergWriter icebergWriter = new IcebergWriter(table, mockTaskWriter, "ignored", config);
+    IcebergWriter icebergWriter =
+        new IcebergWriter(
+            table,
+            TableReference.of("catalog", TableIdentifier.of("ignored"), UUID.randomUUID()),
+            config,
+            mockTaskWriter);
 
     Stream.of(
             record(1, "one", "c", "insert"),
@@ -152,7 +165,12 @@ public class TestIcebergWriter {
     when(config.tablesCdcOpsUpdate()).thenReturn(Collections.singletonList("u"));
     when(config.tablesCdcOpsDelete()).thenReturn(Collections.singletonList("r"));
 
-    IcebergWriter icebergWriter = new IcebergWriter(table, mockTaskWriter, "ignored", config);
+    IcebergWriter icebergWriter =
+        new IcebergWriter(
+            table,
+            TableReference.of("catalog", TableIdentifier.of("ignored"), UUID.randomUUID()),
+            config,
+            mockTaskWriter);
 
     Stream.of(
             record(1, "one", "c", "insert"),

@@ -27,13 +27,14 @@ import org.apache.iceberg.PartitionKey;
 import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.data.Record;
-import org.apache.iceberg.io.FileAppenderFactory;
 import org.apache.iceberg.io.FileIO;
+import org.apache.iceberg.io.FileWriterFactory;
 import org.apache.iceberg.io.OutputFileFactory;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.util.Tasks;
 
-public class PartitionedDeltaWriter extends BaseDeltaTaskWriter {
+public class PartitionedDeltaWriter extends BaseDeltaWriter {
+
   private final PartitionKey partitionKey;
 
   private final Map<PartitionKey, RowDataDeltaWriter> writers = Maps.newHashMap();
@@ -41,35 +42,35 @@ public class PartitionedDeltaWriter extends BaseDeltaTaskWriter {
   PartitionedDeltaWriter(
       PartitionSpec spec,
       FileFormat format,
-      FileAppenderFactory<Record> appenderFactory,
+      FileWriterFactory<Record> fileWriterFactory,
       OutputFileFactory fileFactory,
       FileIO io,
       long targetFileSize,
       Schema schema,
       Set<Integer> identifierFieldIds,
-      boolean upsertMode) {
+      boolean upsert,
+      boolean useDv) {
     super(
         spec,
         format,
-        appenderFactory,
+        fileWriterFactory,
         fileFactory,
         io,
         targetFileSize,
         schema,
         identifierFieldIds,
-        upsertMode);
+        upsert,
+        useDv);
     this.partitionKey = new PartitionKey(spec, schema);
   }
 
   @Override
-  RowDataDeltaWriter route(Record row) {
-    partitionKey.partition(wrapper().wrap(row));
+  protected RowDataDeltaWriter route(Record row) {
+    PartitionKey copiedKey = this.partitionKey.copy();
+    copiedKey.partition(getWrapper().wrap(row));
 
-    RowDataDeltaWriter writer = writers.get(partitionKey);
+    RowDataDeltaWriter writer = writers.get(copiedKey);
     if (writer == null) {
-      // NOTICE: we need to copy a new partition key here, in case of messing up the keys in
-      // writers.
-      PartitionKey copiedKey = partitionKey.copy();
       writer = new RowDataDeltaWriter(copiedKey);
       writers.put(copiedKey, writer);
     }
@@ -80,6 +81,7 @@ public class PartitionedDeltaWriter extends BaseDeltaTaskWriter {
   @Override
   public void close() {
     try {
+      super.close();
       Tasks.foreach(writers.values())
           .throwFailureWhenFinished()
           .noRetry()
