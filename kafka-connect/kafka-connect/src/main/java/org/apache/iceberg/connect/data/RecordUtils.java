@@ -119,7 +119,7 @@ class RecordUtils {
     Set<Integer> identifierFieldIds = table.schema().identifierFieldIds();
 
     // override the identifier fields if the config is set
-    List<String> idCols = config.tableConfig(tableReference.identifier().name()).idColumns();
+    List<String> idCols = config.tableConfig(tableReference.identifier().toString()).idColumns();
     if (!idCols.isEmpty()) {
       identifierFieldIds =
           idCols.stream()
@@ -135,7 +135,9 @@ class RecordUtils {
     }
 
     FileWriterFactory<Record> writerFactory;
-    if (identifierFieldIds == null || identifierFieldIds.isEmpty()) {
+    boolean isIdentifierFieldsDoesDotExist =
+        identifierFieldIds == null || identifierFieldIds.isEmpty();
+    if (isIdentifierFieldsDoesDotExist) {
       writerFactory =
           new GenericFileWriterFactory.Builder(table)
               .dataSchema(table.schema())
@@ -164,30 +166,30 @@ class RecordUtils {
             .build();
 
     TaskWriter<Record> writer;
-    boolean useDv;
-    switch (TableUtil.formatVersion(table)) {
-      case 1:
-        throw new IllegalArgumentException(
-            "CDC and upsert modes are not supported for Iceberg table format version 1");
-      case 2:
-        LOG.warn(
-            "Table {} format version 2 detected. Delete Vectors are disabled. "
-                + "CDC and upsert modes work best with format version 3 or higher. "
-                + "Consider upgrading the table.",
-            tableReference.identifier());
-        useDv = false;
-        break;
-      default:
-        useDv = true;
-        break;
-    }
 
-    if (table.spec().isUnpartitioned()) {
-      if (config.tablesCdcField() == null && !config.isUpsertMode()) {
+    if (config.tablesCdcField() == null && !config.isUpsertMode()) {
+      if (table.spec().isUnpartitioned()) {
         writer =
             new UnpartitionedWriter<>(
                 table.spec(), format, writerFactory, fileFactory, table.io(), targetFileSize);
       } else {
+        writer =
+            new PartitionedAppendWriter(
+                table.spec(),
+                format,
+                writerFactory,
+                fileFactory,
+                table.io(),
+                targetFileSize,
+                table.schema());
+      }
+    } else {
+      if (isIdentifierFieldsDoesDotExist) {
+        throw new IllegalArgumentException(
+            "Table identifier fields must be specified when using CDC or upsert modes");
+      }
+      boolean useDv = isUseDv(table, tableReference);
+      if (table.spec().isUnpartitioned()) {
         writer =
             new UnpartitionedDeltaWriter(
                 table.spec(),
@@ -200,18 +202,6 @@ class RecordUtils {
                 identifierFieldIds,
                 config.isUpsertMode(),
                 useDv);
-      }
-    } else {
-      if (config.tablesCdcField() == null && !config.isUpsertMode()) {
-        writer =
-            new PartitionedAppendWriter(
-                table.spec(),
-                format,
-                writerFactory,
-                fileFactory,
-                table.io(),
-                targetFileSize,
-                table.schema());
       } else {
         writer =
             new PartitionedDeltaWriter(
@@ -228,6 +218,23 @@ class RecordUtils {
       }
     }
     return writer;
+  }
+
+  private static boolean isUseDv(Table table, TableReference tableReference) {
+    switch (TableUtil.formatVersion(table)) {
+      case 1:
+        throw new IllegalArgumentException(
+            "CDC and upsert modes are not supported for Iceberg table format version 1");
+      case 2:
+        LOG.warn(
+            "Table {} format version 2 detected. Delete Vectors are disabled. "
+                + "CDC and upsert modes work best with format version 3 or higher. "
+                + "Consider upgrading the table.",
+            tableReference.identifier());
+        return false;
+      default:
+        return true;
+    }
   }
 
   private RecordUtils() {}

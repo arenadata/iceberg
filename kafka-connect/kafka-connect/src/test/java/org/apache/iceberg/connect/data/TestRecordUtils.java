@@ -19,6 +19,7 @@
 package org.apache.iceberg.connect.data;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -123,9 +124,16 @@ public class TestRecordUtils {
               Types.NestedField.required(4, "_op", Types.StringType.get())),
           ImmutableSet.of(1, 3));
 
+  private static final org.apache.iceberg.Schema NO_IDENTIFIER_SCHEMA =
+      new org.apache.iceberg.Schema(
+          ImmutableList.of(
+              Types.NestedField.required(1, "id", Types.LongType.get()),
+              Types.NestedField.required(2, "data", Types.StringType.get()),
+              Types.NestedField.required(3, "_op", Types.StringType.get())));
+
   @Test
-  public void testCreateTableWriterFormatVersion1ThrowsException() {
-    Table table = createMockTable(1);
+  public void testCreateTableWriterFormatVersion1ThrowsExceptionInCdcMode() {
+    Table table = createMockTable(1, CDC_SCHEMA, PartitionSpec.unpartitioned());
     IcebergSinkConfig config = createCdcConfig();
     TableReference tableReference =
         TableReference.of("test_catalog", TableIdentifier.of("test_table"), UUID.randomUUID());
@@ -137,8 +145,25 @@ public class TestRecordUtils {
   }
 
   @Test
+  public void testCreateTableWriterFormatVersion1DoesNotThrowInAppendMode() {
+    Table table = createMockTable(1, CDC_SCHEMA, PartitionSpec.unpartitioned());
+    IcebergSinkConfig config = createAppendConfig();
+    TableReference tableReference =
+        TableReference.of("test_catalog", TableIdentifier.of("test_table"), UUID.randomUUID());
+
+    assertThatCode(
+            () -> {
+              try (TaskWriter<Record> writer =
+                  RecordUtils.createTableWriter(table, tableReference, config)) {
+                assertThat(writer).isInstanceOf(org.apache.iceberg.io.UnpartitionedWriter.class);
+              }
+            })
+        .doesNotThrowAnyException();
+  }
+
+  @Test
   public void testCreateTableWriterFormatVersion2CreatesEqualityDeleteWriter() {
-    Table table = createMockTable(2);
+    Table table = createMockTable(2, CDC_SCHEMA, PartitionSpec.unpartitioned());
     IcebergSinkConfig config = createCdcConfig();
     TableReference tableReference =
         TableReference.of("test_catalog", TableIdentifier.of("test_table"), UUID.randomUUID());
@@ -153,7 +178,7 @@ public class TestRecordUtils {
 
   @Test
   public void testCreateTableWriterFormatVersion3CreatesDeleteVectorWriter() {
-    Table table = createMockTable(3);
+    Table table = createMockTable(3, CDC_SCHEMA, PartitionSpec.unpartitioned());
     IcebergSinkConfig config = createCdcConfig();
     TableReference tableReference =
         TableReference.of("test_catalog", TableIdentifier.of("test_table"), UUID.randomUUID());
@@ -166,11 +191,40 @@ public class TestRecordUtils {
     }
   }
 
-  private Table createMockTable(int formatVersion) {
+  @Test
+  public void testCreateTableWriterThrowsWhenIdentifierFieldsDoNotExistForCdcMode() {
+    Table table = createMockTable(3, NO_IDENTIFIER_SCHEMA, PartitionSpec.unpartitioned());
+    IcebergSinkConfig config = createCdcConfig();
+    TableReference tableReference =
+        TableReference.of("test_catalog", TableIdentifier.of("test_table"), UUID.randomUUID());
+
+    assertThatThrownBy(() -> RecordUtils.createTableWriter(table, tableReference, config))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining(
+            "Table identifier fields must be specified when using CDC or upsert modes");
+  }
+
+  @Test
+  public void testCreateTableWriterAppendModeCreatesPartitionedAppendWriter() {
+    PartitionSpec partitionSpec = PartitionSpec.builderFor(CDC_SCHEMA).identity("data").build();
+    Table table = createMockTable(3, CDC_SCHEMA, partitionSpec);
+    IcebergSinkConfig config = createAppendConfig();
+    TableReference tableReference =
+        TableReference.of("test_catalog", TableIdentifier.of("test_table"), UUID.randomUUID());
+
+    try (TaskWriter<Record> writer = RecordUtils.createTableWriter(table, tableReference, config)) {
+      assertThat(writer).isInstanceOf(PartitionedAppendWriter.class);
+    } catch (Exception e) {
+      throw new RuntimeException(e);
+    }
+  }
+
+  private Table createMockTable(
+      int formatVersion, org.apache.iceberg.Schema schema, PartitionSpec partitionSpec) {
     InMemoryFileIO fileIO = new InMemoryFileIO();
     Table table = mock(Table.class, withSettings().extraInterfaces(HasTableOperations.class));
-    when(table.schema()).thenReturn(CDC_SCHEMA);
-    when(table.spec()).thenReturn(PartitionSpec.unpartitioned());
+    when(table.schema()).thenReturn(schema);
+    when(table.spec()).thenReturn(partitionSpec);
     when(table.io()).thenReturn(fileIO);
     when(table.locationProvider())
         .thenReturn(LocationProviders.locationsFor("file", ImmutableMap.of()));
@@ -188,11 +242,27 @@ public class TestRecordUtils {
 
   private IcebergSinkConfig createCdcConfig() {
     IcebergSinkConfig config = mock(IcebergSinkConfig.class);
+    TableSinkConfig tableSinkConfig = mock(TableSinkConfig.class);
     when(config.tableConfig(any())).thenReturn(mock(TableSinkConfig.class));
+    when(tableSinkConfig.idColumns()).thenReturn(ImmutableList.of());
     when(config.writeProps()).thenReturn(ImmutableMap.of());
     when(config.isUpsertMode()).thenReturn(true);
     when(config.tablesDefaultIdColumns()).thenReturn("id,id2");
     when(config.tablesCdcField()).thenReturn("_op");
+    return config;
+  }
+
+  private IcebergSinkConfig createAppendConfig() {
+    IcebergSinkConfig config = mock(IcebergSinkConfig.class);
+    TableSinkConfig tableSinkConfig = mock(TableSinkConfig.class);
+
+    when(tableSinkConfig.idColumns()).thenReturn(ImmutableList.of());
+    when(config.tableConfig(any())).thenReturn(tableSinkConfig);
+    when(config.writeProps()).thenReturn(ImmutableMap.of());
+    when(config.isUpsertMode()).thenReturn(false);
+    when(config.tablesDefaultIdColumns()).thenReturn(null);
+    when(config.tablesCdcField()).thenReturn(null);
+
     return config;
   }
 }
