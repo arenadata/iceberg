@@ -23,46 +23,78 @@ import java.io.UncheckedIOException;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Stream;
 import org.apache.iceberg.Table;
-import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.connect.IcebergSinkConfig;
+import org.apache.iceberg.connect.events.TableReference;
 import org.apache.iceberg.data.Record;
 import org.apache.iceberg.io.TaskWriter;
 import org.apache.iceberg.io.WriteResult;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
+import org.apache.iceberg.relocated.com.google.common.collect.Maps;
+import org.apache.iceberg.relocated.com.google.common.collect.Sets;
 import org.apache.kafka.connect.errors.DataException;
 import org.apache.kafka.connect.sink.SinkRecord;
 
 class IcebergWriter implements RecordWriter {
   private final Table table;
-  private final String tableName;
+  private final TableReference tableReference;
   private final IcebergSinkConfig config;
   private final List<IcebergWriterResult> writerResults;
-
+  private final Map<String, Operation> operationMappings;
+  private final Set<String> ignoredOperations;
   private RecordConverter recordConverter;
   private TaskWriter<Record> writer;
 
-  IcebergWriter(Table table, String tableName, IcebergSinkConfig config) {
-    this.table = table;
-    this.tableName = tableName;
-    this.config = config;
-    this.writerResults = Lists.newArrayList();
-    initNewWriter();
+  IcebergWriter(Table table, TableReference tableReference, IcebergSinkConfig config) {
+    this(
+        table,
+        tableReference,
+        config,
+        RecordUtils.createTableWriter(table, tableReference, config));
   }
 
-  private void initNewWriter() {
-    this.writer = RecordUtils.createTableWriter(table, tableName, config);
+  IcebergWriter(
+      Table table,
+      TableReference tableReference,
+      IcebergSinkConfig config,
+      TaskWriter<Record> writer) {
+    this.table = table;
+    this.tableReference = tableReference;
+    this.config = config;
+    this.writerResults = Lists.newArrayList();
+    this.operationMappings = Maps.newHashMap();
+    this.ignoredOperations = Sets.newHashSet();
+    this.writer = writer;
     this.recordConverter = new RecordConverter(table, config);
+    initOperationMappings();
   }
 
   @Override
   public void write(SinkRecord record) {
     try {
-      // ignore tombstones...
-      if (record.value() != null) {
-        Record row = convertToRow(record);
-        writer.write(row);
+      if (record.value() == null) {
+        // ignore tombstones...
+        return;
       }
+
+      Optional<String> rawOperation = extractRawOperation(record);
+      if (rawOperation.filter(ignoredOperations::contains).isPresent()) {
+        // skip ignored operation
+        return;
+      }
+
+      // We enrich a record with an operation only if we have a mapping for it.
+      // Otherwise, we send a raw record to the downstream writer, allowing him to decide
+      // what type of operation to generate, based on the mode (upsert/append).
+      Record row =
+          rawOperation
+              .flatMap(operation -> convertToRowWithOp(record, operation))
+              .orElseGet(() -> convertToRow(record));
+      writer.write(row);
     } catch (Exception e) {
       throw new DataException(
           String.format(
@@ -73,6 +105,19 @@ class IcebergWriter implements RecordWriter {
               record.kafkaOffset()),
           e);
     }
+  }
+
+  private Optional<Record> convertToRowWithOp(SinkRecord record, String rawOperation) {
+    return Optional.ofNullable(operationMappings.get(rawOperation))
+        .map(operation -> new RecordWrapper(convertToRow(record), operation));
+  }
+
+  private Optional<String> extractRawOperation(SinkRecord record) {
+    return Optional.ofNullable(config.tablesCdcField())
+        .map(operationField -> RecordUtils.extractFromRecordValue(record.value(), operationField))
+        .map(Object::toString)
+        .map(String::trim)
+        .map(String::toLowerCase);
   }
 
   private Record convertToRow(SinkRecord record) {
@@ -107,10 +152,15 @@ class IcebergWriter implements RecordWriter {
 
     writerResults.add(
         new IcebergWriterResult(
-            TableIdentifier.parse(tableName),
+            tableReference,
             Arrays.asList(writeResult.dataFiles()),
             Arrays.asList(writeResult.deleteFiles()),
             table.spec().partitionType()));
+  }
+
+  private void initNewWriter() {
+    writer = RecordUtils.createTableWriter(table, tableReference, config);
+    recordConverter = new RecordConverter(table, config);
   }
 
   @Override
@@ -130,5 +180,25 @@ class IcebergWriter implements RecordWriter {
     } catch (IOException e) {
       throw new UncheckedIOException(e);
     }
+  }
+
+  private void initOperationMappings() {
+    insertOperationMappings(config.tablesCdcOpsInsert(), Operation.INSERT);
+    insertOperationMappings(config.tablesCdcOpsUpdate(), Operation.UPDATE);
+    insertOperationMappings(config.tablesCdcOpsDelete(), Operation.DELETE);
+
+    normalize(config.tablesCdcIgnoredOps()).forEach(ignoredOperations::add);
+  }
+
+  private void insertOperationMappings(List<String> cdcOperations, Operation operation) {
+    normalize(cdcOperations).forEach(cdcOp -> operationMappings.put(cdcOp, operation));
+  }
+
+  private Stream<String> normalize(List<String> operations) {
+    if (operations == null || operations.isEmpty()) {
+      return Stream.empty();
+    }
+
+    return operations.stream().map(String::toLowerCase);
   }
 }

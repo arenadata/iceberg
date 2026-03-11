@@ -59,12 +59,40 @@ project(':iceberg-kafka-connect:iceberg-kafka-connect') {
   }
 }
 
+project(':iceberg-kafka-connect:iceberg-kafka-connect-transforms') {
+  dependencies {
+    implementation project(path: ':iceberg-bundled-guava', configuration: 'shadow')
+    implementation libs.bson
+    implementation libs.slf4j.api
+    compileOnly libs.kafka.clients
+    compileOnly libs.kafka.connect.api
+    compileOnly libs.kafka.connect.json
+    compileOnly libs.kafka.connect.transforms
+
+    testImplementation libs.junit.jupiter.api
+    testRuntimeOnly libs.junit.jupiter.engine
+
+    testImplementation libs.mockito.core
+    testImplementation libs.assertj.core
+  }
+
+  configurations {
+    testImplementation.extendsFrom compileOnly
+  }
+}
+
 project(':iceberg-kafka-connect:iceberg-kafka-connect-runtime') {
   apply plugin: 'distribution'
 
   configurations {
     hive {
       extendsFrom runtimeClasspath
+        resolutionStrategy.dependencySubstitution {
+          substitute module('org.apache.hive:hive-exec') using module('io.arenadata.hive:hive-exec:2.3.9_arenadata5')
+          substitute module('org.apache.hive:hive-metastore') using module('io.arenadata.hive:hive-metastore:2.3.9_arenadata5')
+          substitute module('org.apache.hive:hive-serde') using module('io.arenadata.hive:hive-serde:2.3.9_arenadata5')
+          substitute module('org.apache.hive:hive-service') using module('io.arenadata.hive:hive-service:2.3.9_arenadata5')
+        }
     }
     all {
       exclude group: 'javax.activation', module: 'activation'

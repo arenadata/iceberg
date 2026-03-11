@@ -71,6 +71,17 @@ public class IcebergSinkConfig extends AbstractConfig {
   private static final String TABLES_PROP = "iceberg.tables";
   private static final String TABLES_DYNAMIC_PROP = "iceberg.tables.dynamic-enabled";
   private static final String TABLES_ROUTE_FIELD_PROP = "iceberg.tables.route-field";
+  private static final String TABLES_CDC_FIELD_PROP = "iceberg.tables.cdc-field";
+  private static final String TABLES_UPSERT_MODE_ENABLED_PROP =
+      "iceberg.tables.upsert-mode-enabled";
+  private static final String TABLES_CDC_OPS_INSERT_PROP = "iceberg.tables.cdc.ops.insert";
+  private static final String TABLES_CDC_OP_INSERT_DEFAULT = "r,c";
+  private static final String TABLES_CDC_OPS_UPDATE_PROP = "iceberg.tables.cdc.ops.update";
+  private static final String TABLES_CDC_OP_UPDATE_DEFAULT = "u";
+  private static final String TABLES_CDC_OPS_DELETE_PROP = "iceberg.tables.cdc.ops.delete";
+  private static final String TABLES_CDC_OP_DELETE_DEFAULT = "d";
+  private static final String TABLES_CDC_OPS_IGNORE_PROP = "iceberg.tables.cdc.ops.ignored";
+  private static final String TABLES_CDC_OP_IGNORE_DEFAULT = "t,m";
   private static final String TABLES_DEFAULT_COMMIT_BRANCH = "iceberg.tables.default-commit-branch";
   private static final String TABLES_DEFAULT_ID_COLUMNS = "iceberg.tables.default-id-columns";
   private static final String TABLES_DEFAULT_PARTITION_BY = "iceberg.tables.default-partition-by";
@@ -93,6 +104,18 @@ public class IcebergSinkConfig extends AbstractConfig {
   private static final String TRANSACTIONAL_PREFIX_PROP =
       "iceberg.coordinator.transactional.prefix";
   private static final String HADOOP_CONF_DIR_PROP = "iceberg.hadoop-conf-dir";
+
+  private static final String HDFS_AUTHENTICATION_KERBEROS_PROP =
+      "iceberg.hdfs.authentication.kerberos";
+  private static final Boolean HDFS_AUTHENTICATION_KERBEROS_DEFAULT = false;
+  private static final String CONNECT_HDFS_PRINCIPAL_PROP = "iceberg.connect.hdfs.principal";
+  private static final String CONNECT_HDFS_PRINCIPAL_DEFAULT = "";
+  private static final String CONNECT_HDFS_KEYTAB_PROP = "iceberg.connect.hdfs.keytab";
+  private static final String CONNECT_HDFS_KEYTAB_DEFAULT = "";
+  private static final String KERBEROS_TICKET_RENEW_PERIOD_MS_PROP =
+      "kerberos.ticket.renew.period.ms";
+  private static final long KERBEROS_TICKET_RENEW_PERIOD_MS_DEFAULT = 60000 * 60;
+
   private static final String TABLES_SCHEMA_VARIANT_FIELDS_PROP =
       "iceberg.tables.schema-variant-fields";
   private static final String TABLES_EVOLVE_UNKNOWN_TYPE_ENABLED_PROP =
@@ -140,6 +163,12 @@ public class IcebergSinkConfig extends AbstractConfig {
         null,
         Importance.MEDIUM,
         "Source record field for routing records to tables");
+    configDef.define(
+        TABLES_UPSERT_MODE_ENABLED_PROP,
+        ConfigDef.Type.BOOLEAN,
+        false,
+        Importance.MEDIUM,
+        "Set to true to treat all appends as upserts, false otherwise");
     configDef.define(
         TABLES_DEFAULT_COMMIT_BRANCH,
         ConfigDef.Type.STRING,
@@ -242,6 +271,40 @@ public class IcebergSinkConfig extends AbstractConfig {
         120000L,
         Importance.LOW,
         "config to control coordinator executor keep alive time");
+    defineHdfsKerberosProps(configDef);
+    defineV3NewTypesSupportProps(configDef);
+    defineCdcProps(configDef);
+    return configDef;
+  }
+
+  private static void defineHdfsKerberosProps(ConfigDef configDef) {
+    configDef.define(
+        HDFS_AUTHENTICATION_KERBEROS_PROP,
+        ConfigDef.Type.BOOLEAN,
+        HDFS_AUTHENTICATION_KERBEROS_DEFAULT,
+        Importance.HIGH,
+        "Configuration indicating whether HDFS is using Kerberos for authentication");
+    configDef.define(
+        CONNECT_HDFS_PRINCIPAL_PROP,
+        ConfigDef.Type.STRING,
+        CONNECT_HDFS_PRINCIPAL_DEFAULT,
+        Importance.HIGH,
+        "The principal name to load from the keytab for Kerberos authentication");
+    configDef.define(
+        CONNECT_HDFS_KEYTAB_PROP,
+        ConfigDef.Type.STRING,
+        CONNECT_HDFS_KEYTAB_DEFAULT,
+        Importance.HIGH,
+        "The path to the keytab file for the HDFS connector principal. This keytab file should only be readable by the connector user");
+    configDef.define(
+        KERBEROS_TICKET_RENEW_PERIOD_MS_PROP,
+        ConfigDef.Type.LONG,
+        KERBEROS_TICKET_RENEW_PERIOD_MS_DEFAULT,
+        Importance.LOW,
+        "The period in milliseconds to renew the Kerberos ticket");
+  }
+
+  private static void defineV3NewTypesSupportProps(ConfigDef configDef) {
     configDef.define(
         TABLES_SCHEMA_VARIANT_FIELDS_PROP,
         ConfigDef.Type.STRING,
@@ -262,7 +325,39 @@ public class IcebergSinkConfig extends AbstractConfig {
         false,
         Importance.MEDIUM,
         "Enable mapping Kafka Connect schema default values to Iceberg write-default/initial-default");
-    return configDef;
+  }
+
+  private static void defineCdcProps(ConfigDef configDef) {
+    configDef.define(
+        TABLES_CDC_FIELD_PROP,
+        ConfigDef.Type.STRING,
+        null,
+        Importance.MEDIUM,
+        "Source record field that identifies the type of operation (insert, update, or delete)");
+    configDef.define(
+        TABLES_CDC_OPS_INSERT_PROP,
+        ConfigDef.Type.LIST,
+        TABLES_CDC_OP_INSERT_DEFAULT,
+        Importance.MEDIUM,
+        "The comma-separated values of the cdc operation field corresponding to INSERT");
+    configDef.define(
+        TABLES_CDC_OPS_UPDATE_PROP,
+        ConfigDef.Type.LIST,
+        TABLES_CDC_OP_UPDATE_DEFAULT,
+        Importance.MEDIUM,
+        "The comma-separated values of the cdc operation field corresponding to UPDATE");
+    configDef.define(
+        TABLES_CDC_OPS_DELETE_PROP,
+        ConfigDef.Type.LIST,
+        TABLES_CDC_OP_DELETE_DEFAULT,
+        Importance.MEDIUM,
+        "The comma-separated values of the cdc operation field corresponding to DELETE");
+    configDef.define(
+        TABLES_CDC_OPS_IGNORE_PROP,
+        ConfigDef.Type.LIST,
+        TABLES_CDC_OP_IGNORE_DEFAULT,
+        Importance.MEDIUM,
+        "The comma-separated values of the cdc operation field that should be ignored by connector");
   }
 
   private final Map<String, String> originalProps;
@@ -409,6 +504,26 @@ public class IcebergSinkConfig extends AbstractConfig {
         });
   }
 
+  public String tablesCdcField() {
+    return getString(TABLES_CDC_FIELD_PROP);
+  }
+
+  public List<String> tablesCdcOpsInsert() {
+    return getList(TABLES_CDC_OPS_INSERT_PROP);
+  }
+
+  public List<String> tablesCdcOpsUpdate() {
+    return getList(TABLES_CDC_OPS_UPDATE_PROP);
+  }
+
+  public List<String> tablesCdcOpsDelete() {
+    return getList(TABLES_CDC_OPS_DELETE_PROP);
+  }
+
+  public List<String> tablesCdcIgnoredOps() {
+    return getList(TABLES_CDC_OPS_IGNORE_PROP);
+  }
+
   @VisibleForTesting
   static List<String> stringToList(String value, String regex) {
     if (value == null || value.isEmpty()) {
@@ -437,12 +552,32 @@ public class IcebergSinkConfig extends AbstractConfig {
     return "connect-" + connectorName;
   }
 
+  public boolean kerberosAuthentication() {
+    return getBoolean(HDFS_AUTHENTICATION_KERBEROS_PROP);
+  }
+
+  public String connectHdfsPrincipal() {
+    return getString(CONNECT_HDFS_PRINCIPAL_PROP);
+  }
+
+  public String connectHdfsKeytab() {
+    return getString(CONNECT_HDFS_KEYTAB_PROP);
+  }
+
+  public long kerberosTicketRenewPeriodMs() {
+    return getLong(KERBEROS_TICKET_RENEW_PERIOD_MS_PROP);
+  }
+
   public int commitIntervalMs() {
     return getInt(COMMIT_INTERVAL_MS_PROP);
   }
 
   public int commitTimeoutMs() {
     return getInt(COMMIT_TIMEOUT_MS_PROP);
+  }
+
+  public boolean isUpsertMode() {
+    return getBoolean(TABLES_UPSERT_MODE_ENABLED_PROP);
   }
 
   public int commitThreads() {

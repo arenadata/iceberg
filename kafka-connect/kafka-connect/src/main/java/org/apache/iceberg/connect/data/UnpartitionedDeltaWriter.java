@@ -18,38 +18,52 @@
  */
 package org.apache.iceberg.connect.data;
 
+import java.io.IOException;
+import java.util.Set;
 import org.apache.iceberg.FileFormat;
-import org.apache.iceberg.PartitionKey;
 import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.Schema;
-import org.apache.iceberg.data.InternalRecordWrapper;
 import org.apache.iceberg.data.Record;
 import org.apache.iceberg.io.FileIO;
 import org.apache.iceberg.io.FileWriterFactory;
 import org.apache.iceberg.io.OutputFileFactory;
-import org.apache.iceberg.io.PartitionedFanoutWriter;
 
-class PartitionedAppendWriter extends PartitionedFanoutWriter<Record> {
+public class UnpartitionedDeltaWriter extends BaseDeltaWriter {
+  private final RowDataDeltaWriter writer;
 
-  private final PartitionKey partitionKey;
-  private final InternalRecordWrapper wrapper;
-
-  PartitionedAppendWriter(
+  UnpartitionedDeltaWriter(
       PartitionSpec spec,
       FileFormat format,
       FileWriterFactory<Record> fileWriterFactory,
       OutputFileFactory fileFactory,
       FileIO io,
       long targetFileSize,
-      Schema schema) {
-    super(spec, format, fileWriterFactory, fileFactory, io, targetFileSize);
-    this.partitionKey = new PartitionKey(spec, schema);
-    this.wrapper = new InternalRecordWrapper(schema.asStruct());
+      Schema schema,
+      Set<Integer> identifierFieldIds,
+      boolean upsert,
+      boolean useDv) {
+    super(
+        spec,
+        format,
+        fileWriterFactory,
+        fileFactory,
+        io,
+        targetFileSize,
+        schema,
+        identifierFieldIds,
+        upsert,
+        useDv);
+    this.writer = new RowDataDeltaWriter(null);
   }
 
   @Override
-  protected PartitionKey partition(Record row) {
-    partitionKey.partition(wrapper.wrap(row));
-    return partitionKey;
+  RowDataDeltaWriter route(Record row) {
+    return this.writer;
+  }
+
+  @Override
+  public void close() throws IOException {
+    writer.close();
+    super.close();
   }
 }
