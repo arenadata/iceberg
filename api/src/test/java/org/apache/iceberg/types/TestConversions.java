@@ -169,6 +169,18 @@ public class TestConversions {
     assertThat(Literal.of(new BigDecimal("3.45")).toByteBuffer().array())
         .isEqualTo(new byte[] {1, 89});
 
+    // geometry values are stored directly as binary (same as BINARY)
+    assertConversion(
+        ByteBuffer.wrap(new byte[] {1, 2, 3}),
+        Types.GeometryType.crs84(),
+        new byte[] {1, 2, 3});
+
+    // geography values are stored directly as binary (same as BINARY)
+    assertConversion(
+        ByteBuffer.wrap(new byte[] {4, 5, 6}),
+        Types.GeographyType.crs84(),
+        new byte[] {4, 5, 6});
+
     // decimal on 3-bytes to test that we use the minimum number of bytes and not a power of 2
     // 1234567 is 00010010|11010110|10000111 in binary
     // 00010010 -> 18, 11010110 -> -42, 10000111 -> -121

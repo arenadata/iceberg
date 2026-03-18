@@ -114,6 +114,8 @@ public class Conversions {
         return UUIDUtil.convertToByteBuffer((UUID) value);
       case FIXED:
       case BINARY:
+      case GEOMETRY:
+      case GEOGRAPHY:
         return (ByteBuffer) value;
       case DECIMAL:
         return ByteBuffer.wrap(((BigDecimal) value).unscaledValue().toByteArray());
@@ -174,6 +176,8 @@ public class Conversions {
         return UUIDUtil.convert(tmp);
       case FIXED:
       case BINARY:
+      case GEOMETRY:
+      case GEOGRAPHY:
         return tmp;
       case DECIMAL:
         Types.DecimalType decimal = (Types.DecimalType) type;

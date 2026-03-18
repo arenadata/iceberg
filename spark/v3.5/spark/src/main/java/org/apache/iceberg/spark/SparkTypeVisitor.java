@@ -49,7 +49,7 @@ class SparkTypeVisitor<T> {
       return visitor.array((ArrayType) type, visit(((ArrayType) type).elementType(), visitor));
 
     } else if (type instanceof UserDefinedType) {
-      throw new UnsupportedOperationException("User-defined types are not supported");
+      return visitor.udt((UserDefinedType<?>) type);
 
     } else {
       return visitor.atomic(type);
@@ -74,5 +74,10 @@ class SparkTypeVisitor<T> {
 
   public T atomic(DataType atomic) {
     return null;
+  }
+
+  public T udt(UserDefinedType<?> udt) {
+    throw new UnsupportedOperationException(
+        "User-defined types are not supported: " + udt.getClass().getName());
   }
 }

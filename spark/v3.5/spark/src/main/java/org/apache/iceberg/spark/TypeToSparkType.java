@@ -49,6 +49,13 @@ class TypeToSparkType extends TypeUtil.SchemaVisitor<DataType> {
 
   public static final String METADATA_COL_ATTR_KEY = "__metadata_col";
 
+  /**
+   * Metadata key storing the original Iceberg type name for types that don't have a native Spark
+   * equivalent (e.g., "geometry", "geography"). This enables lossless Spark ↔ Iceberg schema
+   * roundtrips.
+   */
+  static final String ICEBERG_ORIGINAL_TYPE_KEY = "iceberg.original-type";
+
   @Override
   public DataType schema(Schema schema, DataType structType) {
     return structType;
@@ -62,7 +69,7 @@ class TypeToSparkType extends TypeUtil.SchemaVisitor<DataType> {
     for (int i = 0; i < fields.size(); i += 1) {
       Types.NestedField field = fields.get(i);
       DataType type = fieldResults.get(i);
-      Metadata metadata = fieldMetadata(field.fieldId());
+      Metadata metadata = fieldMetadata(field);
       StructField sparkField = StructField.apply(field.name(), type, field.isOptional(), metadata);
       if (field.doc() != null) {
         sparkField = sparkField.withComment(field.doc());
@@ -118,9 +125,11 @@ class TypeToSparkType extends TypeUtil.SchemaVisitor<DataType> {
         // use String
         return StringType$.MODULE$;
       case FIXED:
-        return BinaryType$.MODULE$;
       case BINARY:
         return BinaryType$.MODULE$;
+      case GEOMETRY:
+      case GEOGRAPHY:
+        return customSparkType(primitive);
       case DECIMAL:
         Types.DecimalType decimal = (Types.DecimalType) primitive;
         return DecimalType$.MODULE$.apply(decimal.precision(), decimal.scale());
@@ -130,11 +139,53 @@ class TypeToSparkType extends TypeUtil.SchemaVisitor<DataType> {
     }
   }
 
-  private Metadata fieldMetadata(int fieldId) {
-    if (MetadataColumns.metadataFieldIds().contains(fieldId)) {
-      return new MetadataBuilder().putBoolean(METADATA_COL_ATTR_KEY, true).build();
+  private Metadata fieldMetadata(Types.NestedField field) {
+    boolean isMetadataCol = MetadataColumns.metadataFieldIds().contains(field.fieldId());
+    String originalType = originalTypeName(field.type());
+
+    if (!isMetadataCol && originalType == null) {
+      return Metadata.empty();
     }
 
-    return Metadata.empty();
+    MetadataBuilder builder = new MetadataBuilder();
+
+    if (isMetadataCol) {
+      builder.putBoolean(METADATA_COL_ATTR_KEY, true);
+    }
+
+    if (originalType != null) {
+      builder.putString(ICEBERG_ORIGINAL_TYPE_KEY, originalType);
+    }
+
+    return builder.build();
+  }
+
+  /**
+   * Delegates to {@link SparkTypeCustomizer} instances if available, otherwise falls back to
+   * BinaryType.
+   */
+  private static DataType customSparkType(Type.PrimitiveType primitive) {
+    for (SparkTypeCustomizer customizer : SparkTypeCustomizer.loadAll()) {
+      DataType custom = customizer.toSparkType(primitive);
+      if (custom != null) {
+        return custom;
+      }
+    }
+
+    return BinaryType$.MODULE$;
+  }
+
+  /**
+   * Returns the Iceberg type string for types that lose identity when mapped to Spark. Returns null
+   * for types that have a native Spark equivalent.
+   */
+  private static String originalTypeName(Type type) {
+    switch (type.typeId()) {
+      case GEOMETRY:
+      case GEOGRAPHY:
+        return type.toString();
+      default:
+        return null;
+    }
   }
 }

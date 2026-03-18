@@ -41,6 +41,7 @@ import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.types.TimestampNTZType;
 import org.apache.spark.sql.types.TimestampType;
+import org.apache.spark.sql.types.UserDefinedType;
 import org.apache.spark.sql.types.VarcharType;
 
 class SparkTypeToType extends SparkTypeVisitor<Type> {
@@ -95,6 +96,25 @@ class SparkTypeToType extends SparkTypeVisitor<Type> {
 
   @Override
   public Type field(StructField field, Type typeResult) {
+    // Check if this field carries an original Iceberg type that was lost in the Spark mapping
+    // (e.g., GEOMETRY/GEOGRAPHY mapped to BinaryType with iceberg.original-type metadata)
+    if (field.metadata().contains(TypeToSparkType.ICEBERG_ORIGINAL_TYPE_KEY)) {
+      String originalType = field.metadata().getString(TypeToSparkType.ICEBERG_ORIGINAL_TYPE_KEY);
+      Type restored = Types.fromPrimitiveString(originalType);
+      if (restored != null) {
+        return restored;
+      }
+    }
+
+    // Check if a SparkTypeCustomizer recognizes the field metadata
+    // (e.g., Sedona marks geometry fields with {"sedona.geometry": true})
+    for (SparkTypeCustomizer customizer : SparkTypeCustomizer.loadAll()) {
+      Type customType = customizer.toIcebergType(field);
+      if (customType != null) {
+        return customType;
+      }
+    }
+
     return typeResult;
   }
 
@@ -158,5 +178,19 @@ class SparkTypeToType extends SparkTypeVisitor<Type> {
     }
 
     throw new UnsupportedOperationException("Not a supported type: " + atomic.catalogString());
+  }
+
+  @Override
+  public Type udt(UserDefinedType<?> udt) {
+    // Check if a SparkTypeCustomizer can handle this UDT (e.g., GeometryUDT → GeometryType)
+    for (SparkTypeCustomizer customizer : SparkTypeCustomizer.loadAll()) {
+      Type customType = customizer.toIcebergType(udt);
+      if (customType != null) {
+        return customType;
+      }
+    }
+
+    // Fall back to visiting the UDT's underlying SQL type
+    return SparkTypeVisitor.visit(udt.sqlType(), this);
   }
 }

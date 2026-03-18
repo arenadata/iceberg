@@ -127,6 +127,22 @@ public class TestComparators {
   }
 
   @Test
+  public void testGeometry() {
+    assertComparesCorrectly(
+        Comparators.forType(Types.GeometryType.crs84()),
+        ByteBuffer.wrap(new byte[] {1, 1}),
+        ByteBuffer.wrap(new byte[] {1, 1, 1}));
+  }
+
+  @Test
+  public void testGeography() {
+    assertComparesCorrectly(
+        Comparators.forType(Types.GeographyType.crs84()),
+        ByteBuffer.wrap(new byte[] {1, 1}),
+        ByteBuffer.wrap(new byte[] {1, 1, 1}));
+  }
+
+  @Test
   public void testList() {
     assertComparesCorrectly(
         Comparators.forType(Types.ListType.ofRequired(18, Types.IntegerType.get())),
