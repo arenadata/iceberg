@@ -18,9 +18,9 @@
  */
 package org.apache.iceberg.connect.data;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Pattern;
+import org.apache.commons.compress.utils.Lists;
 import org.apache.iceberg.connect.IcebergSinkConfig;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.kafka.connect.sink.SinkRecord;
@@ -48,7 +48,7 @@ class RegexRecordRouter implements RecordRouter {
       return ImmutableList.of();
     }
 
-    List<String> matchedTables = new ArrayList<>();
+    List<String> matchedTables = Lists.newArrayList();
     for (String tableName : tables) {
       Pattern regex = config.tableConfig(tableName).routeRegex();
       if (regex != null && regex.matcher(routeValue.toString()).matches()) {
