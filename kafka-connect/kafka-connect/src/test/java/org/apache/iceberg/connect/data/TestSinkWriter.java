@@ -84,6 +84,7 @@ public class TestSinkWriter {
   @Test
   public void testDefaultRoute() {
     IcebergSinkConfig config = mock(IcebergSinkConfig.class);
+    when(config.routingStrategy()).thenReturn(RecordRoutingStrategy.ALL_TABLES);
     when(config.tableConfig(any())).thenReturn(mock(TableSinkConfig.class));
     when(config.tables()).thenReturn(ImmutableList.of(TABLE_IDENTIFIER.toString()));
     Map<String, Object> value = ImmutableMap.of();
@@ -97,6 +98,7 @@ public class TestSinkWriter {
   @Test
   public void testDefaultNoRoute() {
     IcebergSinkConfig config = mock(IcebergSinkConfig.class);
+    when(config.routingStrategy()).thenReturn(RecordRoutingStrategy.ALL_TABLES);
     when(config.tableConfig(any())).thenReturn(mock(TableSinkConfig.class));
     when(config.tables()).thenReturn(ImmutableList.of());
     Map<String, Object> value = ImmutableMap.of();
@@ -111,6 +113,7 @@ public class TestSinkWriter {
     when(tableConfig.routeRegex()).thenReturn(Pattern.compile("val"));
 
     IcebergSinkConfig config = mock(IcebergSinkConfig.class);
+    when(config.routingStrategy()).thenReturn(RecordRoutingStrategy.REGEX);
     when(config.tables()).thenReturn(ImmutableList.of(TABLE_IDENTIFIER.toString()));
     when(config.tableConfig(any())).thenReturn(tableConfig);
     when(config.tablesRouteField()).thenReturn(ROUTE_FIELD);
@@ -128,6 +131,7 @@ public class TestSinkWriter {
     when(tableConfig.routeRegex()).thenReturn(Pattern.compile("val"));
 
     IcebergSinkConfig config = mock(IcebergSinkConfig.class);
+    when(config.routingStrategy()).thenReturn(RecordRoutingStrategy.REGEX);
     when(config.tables()).thenReturn(ImmutableList.of(TABLE_IDENTIFIER.toString()));
     when(config.tableConfig(any())).thenReturn(tableConfig);
     when(config.tablesRouteField()).thenReturn(ROUTE_FIELD);
@@ -140,6 +144,7 @@ public class TestSinkWriter {
   @Test
   public void testDynamicRoute() {
     IcebergSinkConfig config = mock(IcebergSinkConfig.class);
+    when(config.routingStrategy()).thenReturn(RecordRoutingStrategy.DYNAMIC_FIELD);
     when(config.tables()).thenReturn(ImmutableList.of(TABLE_IDENTIFIER.toString()));
     when(config.tableConfig(any())).thenReturn(mock(TableSinkConfig.class));
     when(config.dynamicTablesEnabled()).thenReturn(true);
@@ -156,6 +161,7 @@ public class TestSinkWriter {
   @Test
   public void testDynamicNoRoute() {
     IcebergSinkConfig config = mock(IcebergSinkConfig.class);
+    when(config.routingStrategy()).thenReturn(RecordRoutingStrategy.DYNAMIC_FIELD);
     when(config.tables()).thenReturn(ImmutableList.of(TABLE_IDENTIFIER.toString()));
     when(config.tableConfig(any())).thenReturn(mock(TableSinkConfig.class));
     when(config.dynamicTablesEnabled()).thenReturn(true);

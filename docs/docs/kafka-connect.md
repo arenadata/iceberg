@@ -60,9 +60,11 @@ for exactly-once semantics. This requires Kafka 2.5 or later.
 
 | Property                                   | Description                                                                                                      |
 |--------------------------------------------|------------------------------------------------------------------------------------------------------------------|
+| routing.strategy                           | Record routing strategy: `all-tables`, `regex`, `dynamic-field`, or `topic-to-table`                             |
 | iceberg.tables                             | Comma-separated list of destination tables                                                                       |
 | iceberg.tables.dynamic-enabled             | Set to `true` to route to a table specified in `routeField` instead of using `routeRegex`, default is `false`    |
 | iceberg.tables.route-field                 | For multi-table fan-out, the name of the field used to route records to tables                                   |
+| iceberg.tables.topic-to-table-mapping      | Comma-separated static mapping from Kafka topic names to Iceberg tables, for example `topic1:db.table1`          |
 | iceberg.tables.default-commit-branch       | Default branch for commits, main is used if not specified                                                        |
 | iceberg.tables.default-id-columns          | Default comma-separated list of columns that identify a row in tables (primary key)                              |
 | iceberg.tables.default-partition-by        | Default comma-separated list of partition field names to use when creating tables                                |
@@ -88,9 +90,24 @@ for exactly-once semantics. This requires Kafka 2.5 or later.
 | iceberg.hadoop.*                           | Properties passed through to the Hadoop configuration                                                            |
 | iceberg.kafka.*                            | Properties passed through to control topic Kafka client initialization                                           |
 
-If `iceberg.tables.dynamic-enabled` is `false` (the default) then you must specify `iceberg.tables`. If
-`iceberg.tables.dynamic-enabled` is `true` then you must specify `iceberg.tables.route-field` which will
-contain the name of the table.
+If `routing.strategy` is not set, the connector keeps the existing behavior for backward compatibility:
+it uses `dynamic-field` when `iceberg.tables.dynamic-enabled` is `true`, `regex` when
+`iceberg.tables.route-field` is set, and `all-tables` otherwise.
+
+The supported routing strategies are:
+
+* `all-tables` - routes every record to every table listed in `iceberg.tables`
+* `regex` - routes records by matching `iceberg.tables.route-field` against each table's `route-regex`
+* `dynamic-field` - routes records to the table name stored in `iceberg.tables.route-field`
+* `topic-to-table` - routes records by matching the Kafka topic name against `iceberg.tables.topic-to-table-mapping`
+
+For `all-tables` and `regex`, `iceberg.tables` must be specified. For `regex` and `dynamic-field`,
+`iceberg.tables.route-field` must be specified. For `topic-to-table`,
+`iceberg.tables.topic-to-table-mapping` must be specified in the format
+`topic_name1:table_name1,topic_name2:table_name2`.
+
+Records that do not match the selected routing strategy are skipped. For example, a record whose topic is
+not present in `iceberg.tables.topic-to-table-mapping` is not written to any table.
 
 ### Kafka configuration
 
@@ -356,6 +373,47 @@ See above for creating two tables.
     "topics": "events",
     "iceberg.tables.dynamic-enabled": "true",
     "iceberg.tables.route-field": "db_table",
+    "iceberg.catalog.type": "rest",
+    "iceberg.catalog.uri": "https://localhost",
+    "iceberg.catalog.credential": "<credential>",
+    "iceberg.catalog.warehouse": "<warehouse name>"
+  }
+}
+```
+
+### Topic-to-table routing
+
+This example writes records from the Kafka topic `sales-topic` to the Iceberg table `default.sales`
+and records from `logs-topic` to `default.logs`. Records from topics that are not present in
+`iceberg.tables.topic-to-table-mapping` are skipped.
+
+#### Create two destination tables
+
+```sql
+CREATE TABLE default.sales (
+    id STRING,
+    ts TIMESTAMP,
+    payload STRING)
+PARTITIONED BY (hours(ts));
+
+CREATE TABLE default.logs (
+    id STRING,
+    ts TIMESTAMP,
+    payload STRING)
+PARTITIONED BY (hours(ts));
+```
+
+#### Connector config
+
+```json
+{
+  "name": "events-sink",
+  "config": {
+    "connector.class": "org.apache.iceberg.connect.IcebergSinkConnector",
+    "tasks.max": "2",
+    "topics": "sales-topic,logs-topic",
+    "routing.strategy": "topic-to-table",
+    "iceberg.tables.topic-to-table-mapping": "sales-topic:default.sales,logs-topic:default.logs",
     "iceberg.catalog.type": "rest",
     "iceberg.catalog.uri": "https://localhost",
     "iceberg.catalog.credential": "<credential>",

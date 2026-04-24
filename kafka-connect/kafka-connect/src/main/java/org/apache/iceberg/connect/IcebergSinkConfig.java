@@ -22,12 +22,15 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import org.apache.iceberg.IcebergBuild;
+import org.apache.iceberg.catalog.TableIdentifier;
+import org.apache.iceberg.connect.data.RecordRoutingStrategy;
 import org.apache.iceberg.relocated.com.google.common.annotations.VisibleForTesting;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.base.Splitter;
@@ -68,6 +71,9 @@ public class IcebergSinkConfig extends AbstractConfig {
   private static final String TABLES_PROP = "iceberg.tables";
   private static final String TABLES_DYNAMIC_PROP = "iceberg.tables.dynamic-enabled";
   private static final String TABLES_ROUTE_FIELD_PROP = "iceberg.tables.route-field";
+  private static final String TABLES_TOPIC_TO_TABLE_MAPPING_PROP =
+      "iceberg.tables.topic-to-table-mapping";
+  private static final String ROUTING_STRATEGY_PROP = "routing.strategy";
   private static final String TABLES_DEFAULT_COMMIT_BRANCH = "iceberg.tables.default-commit-branch";
   private static final String TABLES_DEFAULT_ID_COLUMNS = "iceberg.tables.default-id-columns";
   private static final String TABLES_DEFAULT_PARTITION_BY = "iceberg.tables.default-partition-by";
@@ -116,6 +122,12 @@ public class IcebergSinkConfig extends AbstractConfig {
   private static ConfigDef newConfigDef() {
     ConfigDef configDef = new ConfigDef();
     configDef.define(
+        ROUTING_STRATEGY_PROP,
+        ConfigDef.Type.STRING,
+        null,
+        Importance.MEDIUM,
+        "Routing strategy. Supported values: dynamic-field, all-tables, regex, topic-to-table");
+    configDef.define(
         TABLES_PROP,
         ConfigDef.Type.LIST,
         null,
@@ -133,6 +145,12 @@ public class IcebergSinkConfig extends AbstractConfig {
         null,
         Importance.MEDIUM,
         "Source record field for routing records to tables");
+    configDef.define(
+        TABLES_TOPIC_TO_TABLE_MAPPING_PROP,
+        ConfigDef.Type.STRING,
+        null,
+        Importance.MEDIUM,
+        "Static mapping from topic name to table name in format topic1:db.table1,topic2:db.table2");
     configDef.define(
         TABLES_DEFAULT_COMMIT_BRANCH,
         ConfigDef.Type.STRING,
@@ -245,6 +263,8 @@ public class IcebergSinkConfig extends AbstractConfig {
   private final Map<String, String> autoCreateProps;
   private final Map<String, String> writeProps;
   private final Map<String, TableSinkConfig> tableConfigMap = Maps.newHashMap();
+  private final RecordRoutingStrategy recordRoutingStrategy;
+  private final Map<String, String> topicToTableMapping;
   private final JsonConverter jsonConverter;
 
   public IcebergSinkConfig(Map<String, String> originalProps) {
@@ -269,19 +289,40 @@ public class IcebergSinkConfig extends AbstractConfig {
             ConverterConfig.TYPE_CONFIG,
             ConverterType.VALUE.getName()));
 
+    this.recordRoutingStrategy = resolveRoutingStrategy();
+    this.topicToTableMapping = parseTopicToTableMapping();
+
     validate();
   }
 
   private void validate() {
     checkState(!catalogProps().isEmpty(), "Must specify Iceberg catalog properties");
-    if (tables() != null) {
-      checkState(!dynamicTablesEnabled(), "Cannot specify both static and dynamic table names");
-    } else if (dynamicTablesEnabled()) {
-      checkState(
-          tablesRouteField() != null, "Must specify a route field if using dynamic table names");
-    } else {
-      throw new ConfigException("Must specify table name(s)");
+    switch (recordRoutingStrategy) {
+      case DYNAMIC_FIELD:
+        checkState(tables() == null, "Cannot specify both static and dynamic table names");
+        checkState(
+            getTablesRouteField() != null,
+            "Must specify a route field if using dynamic table names");
+        break;
+      case ALL_TABLES:
+        checkState(tables() != null && !tables().isEmpty(), "Must specify table name(s)");
+        break;
+      case REGEX:
+        checkState(tables() != null && !tables().isEmpty(), "Must specify table name(s)");
+        checkState(
+            getTablesRouteField() != null,
+            "Must specify a route field if using regex routing strategy");
+        break;
+      case TOPIC_TO_TABLE:
+        checkState(
+            !topicToTableMapping.isEmpty(),
+            "Must specify iceberg.tables.topic-to-table-mapping for topic-to-table routing strategy");
+        break;
+      default:
+        throw new ConfigException("Unsupported routing strategy: " + recordRoutingStrategy);
     }
+
+    LOG.info("Using routing strategy: {}", recordRoutingStrategy.value());
   }
 
   private void checkState(boolean condition, String msg) {
@@ -336,7 +377,15 @@ public class IcebergSinkConfig extends AbstractConfig {
   }
 
   public String tablesRouteField() {
-    return getString(TABLES_ROUTE_FIELD_PROP);
+    return getTablesRouteField();
+  }
+
+  public RecordRoutingStrategy routingStrategy() {
+    return recordRoutingStrategy;
+  }
+
+  public Map<String, String> topicToTableMapping() {
+    return topicToTableMapping;
   }
 
   public String tablesDefaultCommitBranch() {
@@ -386,6 +435,72 @@ public class IcebergSinkConfig extends AbstractConfig {
     }
 
     return Arrays.stream(value.split(regex)).map(String::trim).collect(Collectors.toList());
+  }
+
+  private RecordRoutingStrategy resolveRoutingStrategy() {
+    String strategyValue = getString(ROUTING_STRATEGY_PROP);
+    try {
+      RecordRoutingStrategy routingStrategy = RecordRoutingStrategy.fromConfig(strategyValue);
+      if (routingStrategy != null) {
+        return routingStrategy;
+      }
+
+      if (dynamicTablesEnabled()) {
+        return RecordRoutingStrategy.DYNAMIC_FIELD;
+      }
+
+      if (getTablesRouteField() != null) {
+        return RecordRoutingStrategy.REGEX;
+      }
+
+      return RecordRoutingStrategy.ALL_TABLES;
+    } catch (IllegalArgumentException e) {
+      throw new ConfigException(ROUTING_STRATEGY_PROP, strategyValue, e.getMessage());
+    }
+  }
+
+  private String getTablesRouteField() {
+    String routeField = getString(TABLES_ROUTE_FIELD_PROP);
+    return routeField == null || routeField.isBlank() ? null : routeField.trim();
+  }
+
+  private Map<String, String> parseTopicToTableMapping() {
+    String mappingValue = getString(TABLES_TOPIC_TO_TABLE_MAPPING_PROP);
+    if (mappingValue == null || mappingValue.isBlank()) {
+      return ImmutableMap.of();
+    }
+
+    Map<String, String> result = new LinkedHashMap<>();
+    for (String pair : Splitter.on(',').trimResults().split(mappingValue)) {
+      checkState(!pair.isEmpty(), "Empty mapping pair is not allowed");
+
+      String[] split = pair.split(":", 2);
+      checkState(split.length == 2, "Invalid mapping pair: " + pair + ". Expected topic:table");
+
+      String topic = split[0].trim();
+      String table = split[1].trim();
+      checkState(
+          !topic.isEmpty() && !table.isEmpty(),
+          "Topic and table must be non-empty in pair: " + pair);
+
+      checkState(!result.containsKey(topic), "Duplicate topic mapping: " + topic);
+      checkTableName(table, pair, mappingValue);
+
+      result.put(topic, table);
+    }
+
+    return ImmutableMap.copyOf(result);
+  }
+
+  private void checkTableName(String table, String pair, String mappingValue) {
+    try {
+      TableIdentifier.parse(table);
+    } catch (RuntimeException e) {
+      throw new ConfigException(
+          TABLES_TOPIC_TO_TABLE_MAPPING_PROP,
+          mappingValue,
+          "Invalid table identifier in pair: " + pair);
+    }
   }
 
   public String controlTopic() {

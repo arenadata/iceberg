@@ -25,27 +25,37 @@ import java.util.List;
 import org.apache.iceberg.DataFile;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
-public class TestIntegrationDynamicTable extends IntegrationTestBase {
+public class TestIntegrationTopicToTable extends IntegrationTestBase {
 
-  private static final String TEST_TABLE1 = "tbl1";
-  private static final String TEST_TABLE2 = "tbl2";
+  private static final String TEST_TABLE1 = "topic_tbl1";
+  private static final String TEST_TABLE2 = "topic_tbl2";
   private static final TableIdentifier TABLE_IDENTIFIER1 = TableIdentifier.of(TEST_DB, TEST_TABLE1);
   private static final TableIdentifier TABLE_IDENTIFIER2 = TableIdentifier.of(TEST_DB, TEST_TABLE2);
+
+  private String secondTopic;
+  private String unmappedTopic;
+
+  @BeforeEach
+  public void before() {
+    secondTopic = testTopic() + "-second";
+    unmappedTopic = testTopic() + "-unmapped";
+    createTopic(secondTopic, TEST_TOPIC_PARTITIONS);
+    createTopic(unmappedTopic, TEST_TOPIC_PARTITIONS);
+  }
 
   @ParameterizedTest
   @NullSource
   @ValueSource(strings = "test_branch")
   public void testIcebergSink(String branch) {
-    // partitioned table
     catalog().createTable(TABLE_IDENTIFIER1, TestEvent.TEST_SCHEMA, TestEvent.TEST_SPEC);
-    // unpartitioned table
     catalog().createTable(TABLE_IDENTIFIER2, TestEvent.TEST_SCHEMA);
 
-    boolean useSchema = branch == null; // use a schema for one of the tests
+    boolean useSchema = branch == null;
     runTest(branch, useSchema, ImmutableMap.of(), List.of(TABLE_IDENTIFIER1, TABLE_IDENTIFIER2));
 
     List<DataFile> files = dataFiles(TABLE_IDENTIFIER1, branch);
@@ -62,25 +72,31 @@ public class TestIntegrationDynamicTable extends IntegrationTestBase {
   @Override
   protected KafkaConnectUtils.Config createConfig(boolean useSchema) {
     return createCommonConfig(useSchema)
-        .config("routing.strategy", "dynamic-field")
-        .config("iceberg.tables.dynamic-enabled", true)
-        .config("iceberg.tables.route-field", "payload");
+        .config("topics", String.format("%s,%s,%s", testTopic(), secondTopic, unmappedTopic))
+        .config("routing.strategy", "topic-to-table")
+        .config(
+            "iceberg.tables.topic-to-table-mapping",
+            String.format(
+                "%s:%s.%s,%s:%s.%s",
+                testTopic(), TEST_DB, TEST_TABLE1, secondTopic, TEST_DB, TEST_TABLE2));
   }
 
   @Override
   protected void sendEvents(boolean useSchema) {
-    TestEvent event1 = new TestEvent(1, "type1", Instant.now(), TEST_DB + "." + TEST_TABLE1);
-    TestEvent event2 = new TestEvent(2, "type2", Instant.now(), TEST_DB + "." + TEST_TABLE2);
-    TestEvent event3 = new TestEvent(3, "type3", Instant.now(), TEST_DB + ".tbl3");
+    TestEvent event1 = new TestEvent(1, "type1", Instant.now(), "test1");
+    TestEvent event2 = new TestEvent(2, "type2", Instant.now(), "test2");
+    TestEvent event3 = new TestEvent(3, "type3", Instant.now(), "ignored");
 
     send(testTopic(), event1, useSchema);
-    send(testTopic(), event2, useSchema);
-    send(testTopic(), event3, useSchema);
+    send(secondTopic, event2, useSchema);
+    send(unmappedTopic, event3, useSchema);
   }
 
   @Override
   void dropTables() {
-    catalog().dropTable(TableIdentifier.of(TEST_DB, TEST_TABLE1));
-    catalog().dropTable(TableIdentifier.of(TEST_DB, TEST_TABLE2));
+    deleteTopic(secondTopic);
+    deleteTopic(unmappedTopic);
+    catalog().dropTable(TABLE_IDENTIFIER1);
+    catalog().dropTable(TABLE_IDENTIFIER2);
   }
 }
