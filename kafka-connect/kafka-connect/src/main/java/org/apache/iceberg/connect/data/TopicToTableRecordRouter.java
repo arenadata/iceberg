@@ -18,9 +18,9 @@
  */
 package org.apache.iceberg.connect.data;
 
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.kafka.connect.sink.SinkRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -40,10 +40,10 @@ class TopicToTableRecordRouter implements RecordRouter {
     String tableName = topicToTableMapping.get(record.topic());
     if (tableName == null) {
       LOG.debug("No table mapping found for topic {}, skipping record", record.topic());
-      return ImmutableList.of();
+      return Collections.emptyList();
     }
 
     LOG.debug("Routing record from topic {} to table {}", record.topic(), tableName);
-    return ImmutableList.of(tableName);
+    return Collections.singletonList(tableName);
   }
 }

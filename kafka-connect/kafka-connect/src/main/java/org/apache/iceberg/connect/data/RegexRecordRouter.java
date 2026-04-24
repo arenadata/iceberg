@@ -18,11 +18,11 @@
  */
 package org.apache.iceberg.connect.data;
 
+import java.util.Collections;
 import java.util.List;
 import java.util.regex.Pattern;
-import org.apache.commons.compress.utils.Lists;
 import org.apache.iceberg.connect.IcebergSinkConfig;
-import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
+import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.kafka.connect.sink.SinkRecord;
 
 class RegexRecordRouter implements RecordRouter {
@@ -40,12 +40,12 @@ class RegexRecordRouter implements RecordRouter {
   @Override
   public List<String> route(SinkRecord record) {
     if (record.value() == null) {
-      return ImmutableList.of();
+      return Collections.emptyList();
     }
 
     Object routeValue = RecordUtils.extractFromRecordValue(record.value(), routeField);
     if (routeValue == null) {
-      return ImmutableList.of();
+      return Collections.emptyList();
     }
 
     List<String> matchedTables = Lists.newArrayList();

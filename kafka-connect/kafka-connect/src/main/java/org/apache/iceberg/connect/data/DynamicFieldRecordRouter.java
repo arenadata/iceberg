@@ -18,9 +18,9 @@
  */
 package org.apache.iceberg.connect.data;
 
+import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
-import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.kafka.connect.sink.SinkRecord;
 
 class DynamicFieldRecordRouter implements RecordRouter {
@@ -34,15 +34,15 @@ class DynamicFieldRecordRouter implements RecordRouter {
   @Override
   public List<String> route(SinkRecord record) {
     if (record.value() == null) {
-      return ImmutableList.of();
+      return Collections.emptyList();
     }
 
     Object routeValue = RecordUtils.extractFromRecordValue(record.value(), routeField);
     if (routeValue == null) {
-      return ImmutableList.of();
+      return Collections.emptyList();
     }
 
-    return ImmutableList.of(routeValue.toString().toLowerCase(Locale.ROOT));
+    return Collections.singletonList(routeValue.toString().toLowerCase(Locale.ROOT));
   }
 
   @Override
