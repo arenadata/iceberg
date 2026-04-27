@@ -103,6 +103,30 @@ public class TestDropTable extends SparkCatalogTestBase {
   }
 
   @Test
+  public void testPurgeTableWithDeleteDirectoryEnabled() throws IOException {
+    String tableBaseDir = validationCatalog.loadTable(tableIdent).location();
+    sql("ALTER TABLE %s SET TBLPROPERTIES ('drop.base-directory.enabled' = 'true')", tableName);
+
+    testPurgeTable();
+
+    Assert.assertTrue(
+        "Base table directory should be deleted",
+        checkFilesExist(ImmutableList.of(tableBaseDir), false));
+  }
+
+  @Test
+  public void testPurgeTableWithDeleteDirectoryEnabledAndGcDisabled() throws IOException {
+    String tableBaseDir = validationCatalog.loadTable(tableIdent).location();
+    sql("ALTER TABLE %s SET TBLPROPERTIES ('drop.base-directory.enabled' = 'true')", tableName);
+
+    testPurgeTableGCDisabled();
+
+    Assert.assertTrue(
+        "Base table directory should not be deleted",
+        checkFilesExist(ImmutableList.of(tableBaseDir), true));
+  }
+
+  @Test
   public void testPurgeTableGCDisabled() throws IOException {
     sql("ALTER TABLE %s SET TBLPROPERTIES (gc.enabled = false)", tableName);
 
