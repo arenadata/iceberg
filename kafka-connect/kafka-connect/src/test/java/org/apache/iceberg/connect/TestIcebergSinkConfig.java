@@ -25,10 +25,10 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
+import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.kafka.common.config.ConfigException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -348,7 +348,7 @@ public class TestIcebergSinkConfig {
   }
 
   private static Map<String, String> topicToTableProps(String... keyValues) {
-    Map<String, String> props = new HashMap<>();
+    Map<String, String> props = Maps.newHashMap();
     props.put("iceberg.catalog.type", "rest");
     props.put("topics", "source-topic");
     props.put("routing.strategy", "topic-to-table");
