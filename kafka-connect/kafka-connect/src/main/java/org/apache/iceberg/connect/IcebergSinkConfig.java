@@ -18,13 +18,24 @@
  */
 package org.apache.iceberg.connect;
 
+import com.fasterxml.jackson.core.JsonFactory;
+import com.fasterxml.jackson.core.StreamReadFeature;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.BufferedReader;
+import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Arrays;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Properties;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -73,6 +84,8 @@ public class IcebergSinkConfig extends AbstractConfig {
   private static final String TABLES_ROUTE_FIELD_PROP = "iceberg.tables.route-field";
   private static final String TABLES_TOPIC_TO_TABLE_MAPPING_PROP =
       "iceberg.tables.topic-to-table-mapping";
+  private static final String TABLES_TOPIC_TO_TABLE_MAPPING_FILE_PROP =
+      "iceberg.tables.topic-to-table-mapping-file";
   private static final String ROUTING_STRATEGY_PROP = "routing.strategy";
   private static final String TABLES_DEFAULT_COMMIT_BRANCH = "iceberg.tables.default-commit-branch";
   private static final String TABLES_DEFAULT_ID_COLUMNS = "iceberg.tables.default-id-columns";
@@ -110,6 +123,16 @@ public class IcebergSinkConfig extends AbstractConfig {
 
   private static final String COORDINATOR_EXECUTOR_KEEP_ALIVE_TIMEOUT_MS =
       "iceberg.coordinator-executor-keep-alive-timeout-ms";
+  private static final int TOPIC_TO_TABLE_MAPPING_FILE_VERSION = 1;
+  private static final String TOPIC_TO_TABLE_MAPPING_FILE_VERSION_FIELD = "version";
+  private static final String TOPIC_TO_TABLE_MAPPING_FILE_ROUTES_FIELD = "routes";
+  private static final String TOPIC_TO_TABLE_MAPPING_SOURCE_NONE = "none";
+  private static final String TOPIC_TO_TABLE_MAPPING_SOURCE_INLINE = "inline";
+  private static final String TOPIC_TO_TABLE_MAPPING_SOURCE_FILE = "file";
+  private static final ObjectMapper TOPIC_TO_TABLE_MAPPING_FILE_MAPPER =
+      new ObjectMapper(
+              JsonFactory.builder().enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).build())
+          .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
 
   @VisibleForTesting static final String COMMA_NO_PARENS_REGEX = ",(?![^()]*+\\))";
 
@@ -151,6 +174,12 @@ public class IcebergSinkConfig extends AbstractConfig {
         null,
         Importance.MEDIUM,
         "Static mapping from topic name to table name in format topic1:db.table1,topic2:db.table2");
+    configDef.define(
+        TABLES_TOPIC_TO_TABLE_MAPPING_FILE_PROP,
+        ConfigDef.Type.STRING,
+        null,
+        Importance.MEDIUM,
+        "Absolute path to a JSON file with static mapping from topic name to table name");
     configDef.define(
         TABLES_DEFAULT_COMMIT_BRANCH,
         ConfigDef.Type.STRING,
@@ -265,6 +294,7 @@ public class IcebergSinkConfig extends AbstractConfig {
   private final Map<String, TableSinkConfig> tableConfigMap = Maps.newHashMap();
   private final RecordRoutingStrategy recordRoutingStrategy;
   private final Map<String, String> topicToTableMapping;
+  private final String topicToTableMappingSource;
   private final JsonConverter jsonConverter;
 
   public IcebergSinkConfig(Map<String, String> originalProps) {
@@ -290,7 +320,9 @@ public class IcebergSinkConfig extends AbstractConfig {
             ConverterType.VALUE.getName()));
 
     this.recordRoutingStrategy = resolveRoutingStrategy();
-    this.topicToTableMapping = parseTopicToTableMapping();
+    TopicToTableMapping topicToTableMappingConfig = loadTopicToTableMapping();
+    this.topicToTableMapping = topicToTableMappingConfig.mapping();
+    this.topicToTableMappingSource = topicToTableMappingConfig.source();
 
     validate();
   }
@@ -316,13 +348,22 @@ public class IcebergSinkConfig extends AbstractConfig {
       case TOPIC_TO_TABLE:
         checkState(
             !topicToTableMapping.isEmpty(),
-            "Must specify iceberg.tables.topic-to-table-mapping for topic-to-table routing strategy");
+            "Must specify either iceberg.tables.topic-to-table-mapping or "
+                + "iceberg.tables.topic-to-table-mapping-file for topic-to-table routing strategy");
         break;
       default:
         throw new ConfigException("Unsupported routing strategy: " + recordRoutingStrategy);
     }
 
-    LOG.info("Using routing strategy: {}", recordRoutingStrategy.value());
+    if (recordRoutingStrategy == RecordRoutingStrategy.TOPIC_TO_TABLE) {
+      LOG.info(
+          "Using routing strategy: {}, topic-to-table mapping source: {}, route count: {}",
+          recordRoutingStrategy.value(),
+          topicToTableMappingSource,
+          topicToTableMapping.size());
+    } else {
+      LOG.info("Using routing strategy: {}", recordRoutingStrategy.value());
+    }
   }
 
   private void checkState(boolean condition, String msg) {
@@ -464,12 +505,37 @@ public class IcebergSinkConfig extends AbstractConfig {
     return routeField == null || routeField.isBlank() ? null : routeField.trim();
   }
 
-  private Map<String, String> parseTopicToTableMapping() {
+  private TopicToTableMapping loadTopicToTableMapping() {
     String mappingValue = getString(TABLES_TOPIC_TO_TABLE_MAPPING_PROP);
-    if (mappingValue == null || mappingValue.isBlank()) {
-      return ImmutableMap.of();
+    String mappingFile = getString(TABLES_TOPIC_TO_TABLE_MAPPING_FILE_PROP);
+
+    boolean hasInlineMapping = hasText(mappingValue);
+    boolean hasMappingFile = hasText(mappingFile);
+    checkState(
+        !(hasInlineMapping && hasMappingFile),
+        "Cannot specify both "
+            + TABLES_TOPIC_TO_TABLE_MAPPING_PROP
+            + " and "
+            + TABLES_TOPIC_TO_TABLE_MAPPING_FILE_PROP);
+
+    if (hasMappingFile) {
+      return new TopicToTableMapping(
+          parseTopicToTableMappingFile(mappingFile.trim()), TOPIC_TO_TABLE_MAPPING_SOURCE_FILE);
     }
 
+    if (hasInlineMapping) {
+      return new TopicToTableMapping(
+          parseInlineTopicToTableMapping(mappingValue), TOPIC_TO_TABLE_MAPPING_SOURCE_INLINE);
+    }
+
+    return new TopicToTableMapping(ImmutableMap.of(), TOPIC_TO_TABLE_MAPPING_SOURCE_NONE);
+  }
+
+  private static boolean hasText(String value) {
+    return value != null && !value.isBlank();
+  }
+
+  private Map<String, String> parseInlineTopicToTableMapping(String mappingValue) {
     Map<String, String> result = new LinkedHashMap<>();
     for (String pair : Splitter.on(',').trimResults().split(mappingValue)) {
       checkState(!pair.isEmpty(), "Empty mapping pair is not allowed");
@@ -484,7 +550,8 @@ public class IcebergSinkConfig extends AbstractConfig {
           "Topic and table must be non-empty in pair: " + pair);
 
       checkState(!result.containsKey(topic), "Duplicate topic mapping: " + topic);
-      checkTableName(table, pair, mappingValue);
+      checkTableName(
+          table, TABLES_TOPIC_TO_TABLE_MAPPING_PROP, "<redacted>", "mapping pair: " + pair);
 
       result.put(topic, table);
     }
@@ -492,14 +559,106 @@ public class IcebergSinkConfig extends AbstractConfig {
     return ImmutableMap.copyOf(result);
   }
 
-  private void checkTableName(String table, String pair, String mappingValue) {
+  private Map<String, String> parseTopicToTableMappingFile(String mappingFile) {
+    Path mappingPath = Paths.get(mappingFile);
+    checkMappingFile(mappingPath.isAbsolute(), mappingFile, "Mapping file path must be absolute");
+    checkMappingFile(Files.exists(mappingPath), mappingFile, "Mapping file does not exist");
+    checkMappingFile(Files.isRegularFile(mappingPath), mappingFile, "Mapping file must be a file");
+    checkMappingFile(Files.isReadable(mappingPath), mappingFile, "Mapping file is not readable");
+
+    JsonNode root;
+    try (BufferedReader reader = Files.newBufferedReader(mappingPath, StandardCharsets.UTF_8)) {
+      root = TOPIC_TO_TABLE_MAPPING_FILE_MAPPER.readTree(reader);
+    } catch (IOException e) {
+      throw new ConfigException(
+          TABLES_TOPIC_TO_TABLE_MAPPING_FILE_PROP,
+          mappingFile,
+          "Cannot read or parse JSON mapping file: " + e.getMessage());
+    }
+
+    checkMappingFile(
+        root != null && root.isObject(), mappingFile, "Mapping file root must be an object");
+
+    JsonNode version = root.get(TOPIC_TO_TABLE_MAPPING_FILE_VERSION_FIELD);
+    checkMappingFile(
+        version != null && version.isIntegralNumber(),
+        mappingFile,
+        "Mapping file must contain integer version: " + TOPIC_TO_TABLE_MAPPING_FILE_VERSION);
+    checkMappingFile(
+        version.intValue() == TOPIC_TO_TABLE_MAPPING_FILE_VERSION,
+        mappingFile,
+        "Unsupported mapping file version: "
+            + version.asText()
+            + ", expected: "
+            + TOPIC_TO_TABLE_MAPPING_FILE_VERSION);
+
+    JsonNode routes = root.get(TOPIC_TO_TABLE_MAPPING_FILE_ROUTES_FIELD);
+    checkMappingFile(
+        routes != null && routes.isObject(), mappingFile, "Mapping file routes must be an object");
+
+    Map<String, String> result = new LinkedHashMap<>();
+    Iterator<Entry<String, JsonNode>> routeEntries = routes.fields();
+    while (routeEntries.hasNext()) {
+      Entry<String, JsonNode> route = routeEntries.next();
+      String topic = route.getKey();
+      JsonNode tableNode = route.getValue();
+
+      checkMappingFile(!topic.isBlank(), mappingFile, "Route topic must be non-empty");
+      checkMappingFile(
+          topic.equals(topic.trim()),
+          mappingFile,
+          "Route topic must not have leading or trailing whitespace: " + topic);
+      checkMappingFile(
+          tableNode != null && tableNode.isTextual(),
+          mappingFile,
+          "Route table for topic " + topic + " must be a string");
+
+      String table = tableNode.textValue();
+      checkMappingFile(
+          !table.isBlank(), mappingFile, "Route table for topic " + topic + " must be non-empty");
+      checkMappingFile(
+          table.equals(table.trim()),
+          mappingFile,
+          "Route table for topic " + topic + " must not have leading or trailing whitespace");
+
+      checkTableName(
+          table, TABLES_TOPIC_TO_TABLE_MAPPING_FILE_PROP, mappingFile, "topic: " + topic);
+      result.put(topic, table);
+    }
+
+    checkMappingFile(!result.isEmpty(), mappingFile, "Mapping file routes must not be empty");
+    return ImmutableMap.copyOf(result);
+  }
+
+  private void checkMappingFile(boolean condition, String mappingFile, String message) {
+    if (!condition) {
+      throw new ConfigException(TABLES_TOPIC_TO_TABLE_MAPPING_FILE_PROP, mappingFile, message);
+    }
+  }
+
+  private void checkTableName(String table, String property, String value, String context) {
     try {
       TableIdentifier.parse(table);
     } catch (RuntimeException e) {
-      throw new ConfigException(
-          TABLES_TOPIC_TO_TABLE_MAPPING_PROP,
-          mappingValue,
-          "Invalid table identifier in pair: " + pair);
+      throw new ConfigException(property, value, "Invalid table identifier for " + context);
+    }
+  }
+
+  private static class TopicToTableMapping {
+    private final Map<String, String> mapping;
+    private final String source;
+
+    TopicToTableMapping(Map<String, String> mapping, String source) {
+      this.mapping = mapping;
+      this.source = source;
+    }
+
+    Map<String, String> mapping() {
+      return mapping;
+    }
+
+    String source() {
+      return source;
     }
   }
 

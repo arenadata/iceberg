@@ -65,6 +65,7 @@ for exactly-once semantics. This requires Kafka 2.5 or later.
 | iceberg.tables.dynamic-enabled             | Set to `true` to route to a table specified in `routeField` instead of using `routeRegex`, default is `false`    |
 | iceberg.tables.route-field                 | For multi-table fan-out, the name of the field used to route records to tables                                   |
 | iceberg.tables.topic-to-table-mapping      | Comma-separated static mapping from Kafka topic names to Iceberg tables, for example `topic1:db.table1`          |
+| iceberg.tables.topic-to-table-mapping-file | Absolute path to a JSON file with static mapping from Kafka topic names to Iceberg tables                        |
 | iceberg.tables.default-commit-branch       | Default branch for commits, main is used if not specified                                                        |
 | iceberg.tables.default-id-columns          | Default comma-separated list of columns that identify a row in tables (primary key)                              |
 | iceberg.tables.default-partition-by        | Default comma-separated list of partition field names to use when creating tables                                |
@@ -100,14 +101,17 @@ The supported routing strategies are:
 * `regex` - routes records by matching `iceberg.tables.route-field` against each table's `route-regex`
 * `dynamic-field` - routes records to the table name stored in `iceberg.tables.route-field`
 * `topic-to-table` - routes records by matching the Kafka topic name against `iceberg.tables.topic-to-table-mapping`
+  or `iceberg.tables.topic-to-table-mapping-file`
 
 For `all-tables` and `regex`, `iceberg.tables` must be specified. For `regex` and `dynamic-field`,
 `iceberg.tables.route-field` must be specified. For `topic-to-table`,
-`iceberg.tables.topic-to-table-mapping` must be specified in the format
-`topic_name1:table_name1,topic_name2:table_name2`.
+exactly one of `iceberg.tables.topic-to-table-mapping` or `iceberg.tables.topic-to-table-mapping-file`
+must be specified. The inline mapping format is `topic_name1:table_name1,topic_name2:table_name2`.
+The file mapping must be a JSON file with `version` set to `1` and a non-empty `routes`
+object whose keys are Kafka topic names and whose values are Iceberg table identifiers.
 
 Records that do not match the selected routing strategy are skipped. For example, a record whose topic is
-not present in `iceberg.tables.topic-to-table-mapping` is not written to any table.
+not present in the configured topic-to-table mapping is not written to any table.
 
 ### Kafka configuration
 
@@ -414,6 +418,42 @@ PARTITIONED BY (hours(ts));
     "topics": "sales-topic,logs-topic",
     "routing.strategy": "topic-to-table",
     "iceberg.tables.topic-to-table-mapping": "sales-topic:default.sales,logs-topic:default.logs",
+    "iceberg.catalog.type": "rest",
+    "iceberg.catalog.uri": "https://localhost",
+    "iceberg.catalog.credential": "<credential>",
+    "iceberg.catalog.warehouse": "<warehouse name>"
+  }
+}
+```
+
+For large mappings, use `iceberg.tables.topic-to-table-mapping-file` instead of storing all routes
+in the connector config. The file must be present at the same absolute path on every Kafka Connect
+worker. It is read when the task starts; changes to the file are not reloaded until the connector
+is restarted or reconfigured.
+
+Example mapping file:
+
+```json
+{
+  "version": 1,
+  "routes": {
+    "sales-topic": "default.sales",
+    "logs-topic": "default.logs"
+  }
+}
+```
+
+Example connector config using the file:
+
+```json
+{
+  "name": "events-sink",
+  "config": {
+    "connector.class": "org.apache.iceberg.connect.IcebergSinkConnector",
+    "tasks.max": "2",
+    "topics": "sales-topic,logs-topic",
+    "routing.strategy": "topic-to-table",
+    "iceberg.tables.topic-to-table-mapping-file": "/etc/iceberg/topic-table-routes.json",
     "iceberg.catalog.type": "rest",
     "iceberg.catalog.uri": "https://localhost",
     "iceberg.catalog.credential": "<credential>",
