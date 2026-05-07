@@ -24,6 +24,7 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -276,7 +277,9 @@ class SchemaUtils {
           if (Timestamp.LOGICAL_NAME.equals(valueSchema.name())) {
             return TimestampType.withZone();
           } else if (DEBEZIUM_NANO_TIMESTAMP_CLASS.equals(valueSchema.name())) {
-            return Types.TimestampNanoType.withZone();
+            return isTimestampNsField(fieldPath)
+                ? Types.TimestampNanoType.withoutZone()
+                : Types.TimestampNanoType.withZone();
           }
           return LongType.get();
         case FLOAT32:
@@ -343,14 +346,45 @@ class SchemaUtils {
     }
 
     private boolean isVariantField(String fieldPath) {
-      return fieldPath != null && config.schemaVariantFieldPaths().contains(fieldPath);
+      if (fieldPath == null) {
+        return false;
+      }
+
+      Collection<String> variantFieldPaths = config.schemaVariantFieldPaths();
+      return variantFieldPaths != null && variantFieldPaths.contains(fieldPath);
+    }
+
+    private boolean isTimestampNsField(String fieldPath) {
+      if (fieldPath == null) {
+        return false;
+      }
+
+      Collection<String> patterns = config.schemaTimestampNsFieldPaths();
+      if (patterns == null || patterns.isEmpty()) {
+        return false;
+      }
+
+      return patterns.stream().anyMatch(pattern -> fieldPathMatches(pattern, fieldPath));
+    }
+
+    private boolean fieldPathMatches(String pattern, String fieldPath) {
+      if ("*".equals(pattern)) {
+        return true;
+      }
+
+      if (pattern.contains(".")) {
+        return pattern.equals(fieldPath);
+      }
+
+      List<String> fieldParts = Splitter.on('.').splitToList(fieldPath);
+      return pattern.equals(fieldParts.get(fieldParts.size() - 1));
     }
 
     @SuppressWarnings("checkstyle:CyclomaticComplexity")
     Type inferIcebergType(Object value, String fieldPath) {
       if (value == null) {
         return unknownOrNull();
-      } else if (fieldPath != null && config.schemaVariantFieldPaths().contains(fieldPath)) {
+      } else if (isVariantField(fieldPath)) {
         return Types.VariantType.get();
       } else if (value instanceof String) {
         return StringType.get();

@@ -118,6 +118,8 @@ public class IcebergSinkConfig extends AbstractConfig {
 
   private static final String TABLES_SCHEMA_VARIANT_FIELDS_PROP =
       "iceberg.tables.schema-variant-fields";
+  private static final String TABLES_SCHEMA_TIMESTAMP_NS_FIELDS_PROP =
+      "iceberg.tables.schema-timestamp-ns-fields";
   private static final String TABLES_EVOLVE_UNKNOWN_TYPE_ENABLED_PROP =
       "iceberg.tables.evolve-unknown-type-enabled";
   private static final String TABLES_DEFAULTS_ENABLED_PROP = "iceberg.tables.defaults-enabled";
@@ -313,6 +315,14 @@ public class IcebergSinkConfig extends AbstractConfig {
         "Comma-separated list of record field paths that must be mapped to Iceberg VARIANT. "
             + "Paths use dot-notation, e.g. 'payload', 'after.details', 'meta.props'.");
     configDef.define(
+        TABLES_SCHEMA_TIMESTAMP_NS_FIELDS_PROP,
+        ConfigDef.Type.STRING,
+        null,
+        Importance.MEDIUM,
+        "Comma-separated list of record field names or exact field paths that must map Debezium "
+            + "NanoTimestamp fields to Iceberg timestamp_ns. Use '*' to match all Debezium "
+            + "NanoTimestamp fields, e.g. 'event_time', 'after.event_time', '*'.");
+    configDef.define(
         TABLES_EVOLVE_UNKNOWN_TYPE_ENABLED_PROP,
         ConfigDef.Type.BOOLEAN,
         false,
@@ -369,6 +379,7 @@ public class IcebergSinkConfig extends AbstractConfig {
   private final Map<String, TableSinkConfig> tableConfigMap = Maps.newHashMap();
   private final JsonConverter jsonConverter;
   private final Collection<String> schemaVariantFieldPaths;
+  private final Collection<String> schemaTimestampNsFieldPaths;
 
   public IcebergSinkConfig(Map<String, String> originalProps) {
     super(CONFIG_DEF, originalProps);
@@ -394,6 +405,8 @@ public class IcebergSinkConfig extends AbstractConfig {
 
     this.schemaVariantFieldPaths =
         parseVariantFieldPaths(getString(TABLES_SCHEMA_VARIANT_FIELDS_PROP));
+    this.schemaTimestampNsFieldPaths =
+        parseTimestampNsFieldPaths(getString(TABLES_SCHEMA_TIMESTAMP_NS_FIELDS_PROP));
     validate();
   }
 
@@ -659,6 +672,15 @@ public class IcebergSinkConfig extends AbstractConfig {
   }
 
   private static Collection<String> parseVariantFieldPaths(String value) {
+    return parseFieldPaths(value, TABLES_SCHEMA_VARIANT_FIELDS_PROP, false);
+  }
+
+  private static Collection<String> parseTimestampNsFieldPaths(String value) {
+    return parseFieldPaths(value, TABLES_SCHEMA_TIMESTAMP_NS_FIELDS_PROP, true);
+  }
+
+  private static Collection<String> parseFieldPaths(
+      String value, String propName, boolean allowWildcard) {
     if (value == null || value.trim().isEmpty()) {
       return ImmutableList.of();
     }
@@ -673,16 +695,16 @@ public class IcebergSinkConfig extends AbstractConfig {
       if (trimmedPath.isEmpty()) {
         continue;
       }
-      validateFieldPath(trimmedPath);
+      validateFieldPath(propName, trimmedPath, allowWildcard);
       result.add(trimmedPath);
     }
     return ImmutableList.copyOf(result);
   }
 
-  private static void validateFieldPath(String path) {
+  private static void validateFieldPath(String propName, String path, boolean allowWildcard) {
     if (path.startsWith(".") || path.endsWith(".") || path.contains("..")) {
       throw new ConfigException(
-          TABLES_SCHEMA_VARIANT_FIELDS_PROP,
+          propName,
           path,
           "Invalid field path. Use dot-notation without empty segments, e.g. 'a.b.c'");
     }
@@ -690,13 +712,24 @@ public class IcebergSinkConfig extends AbstractConfig {
     for (String part : parts) {
       if (part.isEmpty()) {
         throw new ConfigException(
-            TABLES_SCHEMA_VARIANT_FIELDS_PROP,
+            propName,
             path,
             "Invalid field path. Empty segment is not allowed.");
       }
+      if (part.contains("*")) {
+        if (allowWildcard && "*".equals(path)) {
+          continue;
+        }
+        throw new ConfigException(
+            propName,
+            path,
+            "Invalid field path segment '"
+                + part
+                + "'. Wildcard '*' is only allowed as the entire value.");
+      }
       if (!part.matches("[A-Za-z0-9_\\-]+")) {
         throw new ConfigException(
-            TABLES_SCHEMA_VARIANT_FIELDS_PROP,
+            propName,
             path,
             "Invalid field path segment '" + part + "'. Allowed: [A-Za-z0-9_-]");
       }
@@ -705,6 +738,10 @@ public class IcebergSinkConfig extends AbstractConfig {
 
   public Collection<String> schemaVariantFieldPaths() {
     return schemaVariantFieldPaths;
+  }
+
+  public Collection<String> schemaTimestampNsFieldPaths() {
+    return schemaTimestampNsFieldPaths;
   }
 
   public boolean evolveUnknownTypeEnabled() {

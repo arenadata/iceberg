@@ -399,11 +399,118 @@ public class TestSchemaUtils {
     IcebergSinkConfig config = mock(IcebergSinkConfig.class);
     when(config.schemaForceOptional()).thenReturn(false);
 
-    Schema nanoTsSchema = SchemaBuilder.int64().name("io.debezium.time.NanoTimestamp").build();
+    Type type = SchemaUtils.toIcebergType(debeziumNanoTimestampSchema(), config);
+    assertTimestampNanoType(type, true);
+  }
 
-    Type type = SchemaUtils.toIcebergType(nanoTsSchema, config);
-    assertThat(type).isInstanceOf(Types.TimestampNanoType.class);
-    assertThat(((Types.TimestampNanoType) type).shouldAdjustToUTC()).isTrue();
+  @Test
+  public void testToIcebergTypeDebeziumNanoTimestampConfiguredFieldNameMatchesAnyDepth() {
+    IcebergSinkConfig config = mock(IcebergSinkConfig.class);
+    when(config.schemaForceOptional()).thenReturn(false);
+    when(config.schemaVariantFieldPaths()).thenReturn(ImmutableList.of());
+    when(config.schemaTimestampNsFieldPaths()).thenReturn(ImmutableList.of("event_time"));
+
+    Schema metaSchema =
+        SchemaBuilder.struct().field("event_time", debeziumNanoTimestampSchema()).build();
+    Schema payloadSchema = SchemaBuilder.struct().field("meta", metaSchema).build();
+    Schema afterSchema =
+        SchemaBuilder.struct().field("event_time", debeziumNanoTimestampSchema()).build();
+    Schema connectSchema =
+        SchemaBuilder.struct()
+            .field("id", Schema.INT64_SCHEMA)
+            .field("event_time", debeziumNanoTimestampSchema())
+            .field("after", afterSchema)
+            .field("payload", payloadSchema)
+            .field("created_at", debeziumNanoTimestampSchema())
+            .build();
+
+    Type type = SchemaUtils.toIcebergType(connectSchema, config);
+    Types.StructType struct = type.asStructType();
+    Types.StructType afterStruct = struct.fieldType("after").asStructType();
+    Types.StructType payloadStruct = struct.fieldType("payload").asStructType();
+    Types.StructType metaStruct = payloadStruct.fieldType("meta").asStructType();
+
+    assertThat(struct.fieldType("id")).isInstanceOf(LongType.class);
+    assertTimestampNanoType(struct.fieldType("event_time"), false);
+    assertTimestampNanoType(afterStruct.fieldType("event_time"), false);
+    assertTimestampNanoType(metaStruct.fieldType("event_time"), false);
+    assertTimestampNanoType(struct.fieldType("created_at"), true);
+  }
+
+  @Test
+  public void testToIcebergTypeDebeziumNanoTimestampConfiguredWildcardMapsAllToTimestampNs() {
+    IcebergSinkConfig config = mock(IcebergSinkConfig.class);
+    when(config.schemaForceOptional()).thenReturn(false);
+    when(config.schemaVariantFieldPaths()).thenReturn(ImmutableList.of());
+    when(config.schemaTimestampNsFieldPaths()).thenReturn(ImmutableList.of("*"));
+
+    Schema nestedSchema =
+        SchemaBuilder.struct().field("event_time", debeziumNanoTimestampSchema()).build();
+    Schema connectSchema =
+        SchemaBuilder.struct()
+            .field("event_time", debeziumNanoTimestampSchema())
+            .field("nested", nestedSchema)
+            .build();
+
+    Type type = SchemaUtils.toIcebergType(connectSchema, config);
+    Types.StructType struct = type.asStructType();
+    Types.StructType nestedStruct = struct.fieldType("nested").asStructType();
+
+    assertTimestampNanoType(struct.fieldType("event_time"), false);
+    assertTimestampNanoType(nestedStruct.fieldType("event_time"), false);
+  }
+
+  @Test
+  public void testToIcebergTypeDebeziumNanoTimestampConfiguredPathMatchesExactPath() {
+    IcebergSinkConfig config = mock(IcebergSinkConfig.class);
+    when(config.schemaForceOptional()).thenReturn(false);
+    when(config.schemaVariantFieldPaths()).thenReturn(ImmutableList.of());
+    when(config.schemaTimestampNsFieldPaths()).thenReturn(ImmutableList.of("payload.event_time"));
+
+    Schema payloadSchema =
+        SchemaBuilder.struct()
+            .field("event_time", debeziumNanoTimestampSchema())
+            .field("other_time", debeziumNanoTimestampSchema())
+            .build();
+    Schema beforePayloadSchema =
+        SchemaBuilder.struct().field("event_time", debeziumNanoTimestampSchema()).build();
+    Schema beforeSchema =
+        SchemaBuilder.struct()
+            .field("payload", beforePayloadSchema)
+            .field("event_time", debeziumNanoTimestampSchema())
+            .build();
+    Schema connectSchema =
+        SchemaBuilder.struct()
+            .field("payload", payloadSchema)
+            .field("before", beforeSchema)
+            .build();
+
+    Type type = SchemaUtils.toIcebergType(connectSchema, config);
+    Types.StructType struct = type.asStructType();
+    Types.StructType payloadStruct = struct.fieldType("payload").asStructType();
+    Types.StructType beforeStruct = struct.fieldType("before").asStructType();
+    Types.StructType beforePayloadStruct = beforeStruct.fieldType("payload").asStructType();
+
+    assertTimestampNanoType(payloadStruct.fieldType("event_time"), false);
+    assertTimestampNanoType(beforePayloadStruct.fieldType("event_time"), true);
+    assertTimestampNanoType(payloadStruct.fieldType("other_time"), true);
+    assertTimestampNanoType(beforeStruct.fieldType("event_time"), true);
+  }
+
+  @Test
+  public void testToIcebergTypeVariantTakesPrecedenceOverTimestampNsConfig() {
+    IcebergSinkConfig config = mock(IcebergSinkConfig.class);
+    when(config.schemaForceOptional()).thenReturn(false);
+    when(config.schemaVariantFieldPaths()).thenReturn(ImmutableList.of("event_time"));
+    when(config.schemaTimestampNsFieldPaths()).thenReturn(ImmutableList.of("event_time"));
+
+    Schema connectSchema =
+        SchemaBuilder.struct().field("event_time", debeziumNanoTimestampSchema()).build();
+
+    Type type = SchemaUtils.toIcebergType(connectSchema, config);
+    Types.StructType struct = type.asStructType();
+
+    assertThat(struct.fieldType("event_time")).isInstanceOf(Types.VariantType.class);
   }
 
   @Test
@@ -504,5 +611,14 @@ public class TestSchemaUtils {
 
     assertThat(st.fieldType("payload")).isInstanceOf(Types.VariantType.class);
     assertThat(st.field("payload").writeDefault()).isNull();
+  }
+
+  private static Schema debeziumNanoTimestampSchema() {
+    return SchemaBuilder.int64().name("io.debezium.time.NanoTimestamp").build();
+  }
+
+  private static void assertTimestampNanoType(Type type, boolean shouldAdjustToUTC) {
+    assertThat(type).isInstanceOf(Types.TimestampNanoType.class);
+    assertThat(((Types.TimestampNanoType) type).shouldAdjustToUTC()).isEqualTo(shouldAdjustToUTC);
   }
 }

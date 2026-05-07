@@ -71,6 +71,7 @@ for exactly-once semantics. This requires Kafka 2.5 or later.
 | iceberg.tables.evolve-schema-enabled       | Set to `true` to add any missing record fields to the table schema, default is `false`                           |
 | iceberg.tables.schema-force-optional       | Set to `true` to set columns as optional during table create and evolution, default is `false` to respect schema |
 | iceberg.tables.schema-case-insensitive     | Set to `true` to look up table columns by case-insensitive name, default is `false` for case-sensitive           |
+| iceberg.tables.schema-timestamp-ns-fields  | Comma-separated field names or exact field paths for Debezium `NanoTimestamp` fields to map to Iceberg `timestamp_ns` |
 | iceberg.tables.cdc-field                   | Source record field that identifies the type of operation (insert, update, or delete)                            |
 | iceberg.tables.cdc.ops.insert              | The comma-separated values of the cdc operation field corresponding to INSERT                                    |
 | iceberg.tables.cdc.ops.update              | The comma-separated values of the cdc operation field corresponding to UPDATE                                    |
@@ -108,6 +109,32 @@ can be set explicitly using `iceberg.kafka.*` properties.
 #### Message format
 
 Messages should be converted to a struct or map using the appropriate Kafka Connect converter.
+
+#### Debezium nanosecond timestamps
+
+Kafka Connect schemas with `INT64` fields named `io.debezium.time.NanoTimestamp` are mapped to
+Iceberg `timestamptz_ns` by default. To create selected fields as Iceberg `timestamp_ns` instead,
+set `iceberg.tables.schema-timestamp-ns-fields` to `*` or a comma-separated list of field names
+or exact field paths.
+Examples:
+
+```
+"iceberg.tables.schema-timestamp-ns-fields": "event_time"
+"iceberg.tables.schema-timestamp-ns-fields": "after.event_time,before.event_time"
+"iceberg.tables.schema-timestamp-ns-fields": "*"
+"iceberg.tables.schema-timestamp-ns-fields": "payload.event_time"
+```
+
+The `*` value matches all Debezium `NanoTimestamp` fields. Other values match either field names or
+exact field paths: `event_time` matches any field named `event_time`, including
+`event_time`, `after.event_time`, and `payload.meta.event_time`; `payload.event_time` matches only
+the exact path `payload.event_time`. Wildcards inside field names or path segments, such as
+`*_time_ns` or `payload.*`, are not supported. Iceberg `timestamp_ns` requires table format version
+3; for auto-created tables set:
+
+```
+"iceberg.tables.auto-create-props.format-version": "3"
+```
 
 ### Catalog configuration
 
