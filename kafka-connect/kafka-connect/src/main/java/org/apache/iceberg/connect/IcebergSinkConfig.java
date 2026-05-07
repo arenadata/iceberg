@@ -712,9 +712,7 @@ public class IcebergSinkConfig extends AbstractConfig {
     for (String part : parts) {
       if (part.isEmpty()) {
         throw new ConfigException(
-            propName,
-            path,
-            "Invalid field path. Empty segment is not allowed.");
+            propName, path, "Invalid field path. Empty segment is not allowed.");
       }
       if (part.contains("*")) {
         if (allowWildcard && "*".equals(path)) {
@@ -729,9 +727,7 @@ public class IcebergSinkConfig extends AbstractConfig {
       }
       if (!part.matches("[A-Za-z0-9_\\-]+")) {
         throw new ConfigException(
-            propName,
-            path,
-            "Invalid field path segment '" + part + "'. Allowed: [A-Za-z0-9_-]");
+            propName, path, "Invalid field path segment '" + part + "'. Allowed: [A-Za-z0-9_-]");
       }
     }
   }
