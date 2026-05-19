@@ -19,68 +19,51 @@
 package org.apache.iceberg.connect.data;
 
 import java.util.List;
+import java.util.Map;
 import org.apache.iceberg.DataFile;
 import org.apache.iceberg.DeleteFile;
 import org.apache.iceberg.catalog.TableIdentifier;
-import org.apache.iceberg.connect.events.TableReference;
 import org.apache.iceberg.types.Types.StructType;
+import org.apache.kafka.common.TopicPartition;
 
-public class IcebergWriterResult {
+public class WriterResult {
 
-  private final TableReference tableReference;
+  private final TableIdentifier tableIdentifier;
   private final List<DataFile> dataFiles;
   private final List<DeleteFile> deleteFiles;
   private final StructType partitionStruct;
+  private final Map<TopicPartition, Long> offsets;
 
-  public IcebergWriterResult(
-      TableReference tableReference,
-      List<DataFile> dataFiles,
-      List<DeleteFile> deleteFiles,
-      StructType partitionStruct) {
-    this.tableReference = tableReference;
-    this.dataFiles = dataFiles;
-    this.deleteFiles = deleteFiles;
-    this.partitionStruct = partitionStruct;
-  }
-
-  /**
-   * @deprecated since 1.11.0, will be removed in 1.12.0; use {@link
-   *     IcebergWriterResult#IcebergWriterResult(TableReference, List, List, StructType)} instead
-   */
-  @Deprecated
-  public IcebergWriterResult(
+  public WriterResult(
       TableIdentifier tableIdentifier,
       List<DataFile> dataFiles,
       List<DeleteFile> deleteFiles,
-      StructType partitionStruct) {
-    this.tableReference = TableReference.of("unknown", tableIdentifier);
+      StructType partitionStruct,
+      Map<TopicPartition, Long> offsets) {
+    this.tableIdentifier = tableIdentifier;
     this.dataFiles = dataFiles;
     this.deleteFiles = deleteFiles;
     this.partitionStruct = partitionStruct;
+    this.offsets = offsets;
   }
 
-  public TableReference tableReference() {
-    return tableReference;
+  public TableIdentifier getTableIdentifier() {
+    return tableIdentifier;
   }
 
-  /**
-   * @deprecated since 1.11.0, will be removed in 1.12.0; use {@code tableReference().identifier()}
-   *     instead
-   */
-  @Deprecated
-  public TableIdentifier tableIdentifier() {
-    return tableReference.identifier();
-  }
-
-  public List<DataFile> dataFiles() {
+  public List<DataFile> getDataFiles() {
     return dataFiles;
   }
 
-  public List<DeleteFile> deleteFiles() {
+  public List<DeleteFile> getDeleteFiles() {
     return deleteFiles;
   }
 
-  public StructType partitionStruct() {
+  public StructType getPartitionStruct() {
     return partitionStruct;
+  }
+
+  public Map<TopicPartition, Long> getOffsets() {
+    return offsets;
   }
 }
