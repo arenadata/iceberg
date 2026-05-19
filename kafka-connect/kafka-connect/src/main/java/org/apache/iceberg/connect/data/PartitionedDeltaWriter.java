@@ -18,38 +18,78 @@
  */
 package org.apache.iceberg.connect.data;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.util.Map;
+import java.util.Set;
 import org.apache.iceberg.FileFormat;
 import org.apache.iceberg.PartitionKey;
 import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.Schema;
-import org.apache.iceberg.data.InternalRecordWrapper;
 import org.apache.iceberg.data.Record;
 import org.apache.iceberg.io.FileIO;
 import org.apache.iceberg.io.FileWriterFactory;
 import org.apache.iceberg.io.OutputFileFactory;
-import org.apache.iceberg.io.PartitionedFanoutWriter;
+import org.apache.iceberg.relocated.com.google.common.collect.Maps;
+import org.apache.iceberg.util.Tasks;
 
-class PartitionedAppendWriter extends PartitionedFanoutWriter<Record> {
+public class PartitionedDeltaWriter extends BaseDeltaWriter {
 
   private final PartitionKey partitionKey;
-  private final InternalRecordWrapper wrapper;
 
-  PartitionedAppendWriter(
+  private final Map<PartitionKey, RowDataDeltaWriter> writers = Maps.newHashMap();
+
+  PartitionedDeltaWriter(
       PartitionSpec spec,
       FileFormat format,
       FileWriterFactory<Record> fileWriterFactory,
       OutputFileFactory fileFactory,
       FileIO io,
       long targetFileSize,
-      Schema schema) {
-    super(spec, format, fileWriterFactory, fileFactory, io, targetFileSize);
+      Schema schema,
+      Set<Integer> identifierFieldIds,
+      boolean upsert,
+      boolean useDv) {
+    super(
+        spec,
+        format,
+        fileWriterFactory,
+        fileFactory,
+        io,
+        targetFileSize,
+        schema,
+        identifierFieldIds,
+        upsert,
+        useDv);
     this.partitionKey = new PartitionKey(spec, schema);
-    this.wrapper = new InternalRecordWrapper(schema.asStruct());
   }
 
   @Override
-  protected PartitionKey partition(Record row) {
-    partitionKey.partition(wrapper.wrap(row));
-    return partitionKey;
+  protected RowDataDeltaWriter route(Record row) {
+    PartitionKey copiedKey = this.partitionKey.copy();
+    copiedKey.partition(getWrapper().wrap(row));
+
+    RowDataDeltaWriter writer = writers.get(copiedKey);
+    if (writer == null) {
+      writer = new RowDataDeltaWriter(copiedKey);
+      writers.put(copiedKey, writer);
+    }
+
+    return writer;
+  }
+
+  @Override
+  public void close() {
+    try {
+      super.close();
+      Tasks.foreach(writers.values())
+          .throwFailureWhenFinished()
+          .noRetry()
+          .run(RowDataDeltaWriter::close, IOException.class);
+
+      writers.clear();
+    } catch (IOException e) {
+      throw new UncheckedIOException("Failed to close equality delta writer", e);
+    }
   }
 }
