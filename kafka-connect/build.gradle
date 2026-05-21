@@ -17,6 +17,12 @@
  * under the License.
  */
 
+configure(project(':iceberg-kafka-connect').subprojects) {
+  tasks.withType(JavaCompile.class).configureEach {
+    options.release = 17
+  }
+}
+
 project(':iceberg-kafka-connect:iceberg-kafka-connect-events') {
   dependencies {
     api project(':iceberg-api')
@@ -209,6 +215,8 @@ project(':iceberg-kafka-connect:iceberg-kafka-connect-runtime') {
     integrationImplementation libs.httpcomponents.httpclient5
     integrationImplementation libs.awaitility
     integrationImplementation libs.analyticsaccelerator.s3
+
+    runtimeOnly libs.ozone.filesystem.hadoop3
   }
 
   task integrationTest(type: Test) {

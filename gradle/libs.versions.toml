@@ -54,7 +54,7 @@ google-libraries-bom = "26.66.0"
 guava = "33.4.8-jre"
 hadoop3 = "3.4.1"
 httpcomponents-httpclient5 = "5.5"
-hive2 = { strictly = "2.3.10"} # see rich version usage explanation above
+hive2 = { strictly = "2.3.10.2-4.3.0-0"} # see rich version usage explanation above
 immutables-value = "2.11.3"
 jackson-bom = "2.19.2"
 jackson211 = { strictly = "2.11.4"} # see rich version usage explanation above
@@ -69,7 +69,7 @@ jaxb-runtime = "2.3.9"
 jetty = "11.0.26"
 junit = "5.13.4"
 junit-platform = "1.13.4"
-kafka = "3.9.1"
+kafka = "4.1.2.1-4.0.0-1"
 kryo-shaded = "4.0.3"
 microprofile-openapi-api = "3.1.2"
 mockito = "4.11.0"
@@ -97,6 +97,7 @@ sqlite-jdbc = "3.50.3.0"
 testcontainers = "1.21.3"
 tez010 = "0.10.3"
 tez08 = { strictly = "0.8.4"}  # see rich version usage explanation above
+ozone = "2.0.0"
 
 [libraries]
 activation = { module = "javax.activation:activation", version.ref = "activation" }
@@ -180,6 +181,7 @@ scala-collection-compat = { module = "org.scala-lang.modules:scala-collection-co
 slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }
 slf4j-simple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }
 snowflake-jdbc = { module = "net.snowflake:snowflake-jdbc", version.ref = "snowflake-jdbc" }
+ozone-filesystem-hadoop3 = { module = "org.apache.ozone:ozone-filesystem-hadoop3", version.ref = "ozone" }
 
 # test libraries
 apiguardian = { module = "org.apiguardian:apiguardian-api", version.ref = "apiguardian" }
