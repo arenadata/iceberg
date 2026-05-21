@@ -124,6 +124,8 @@ project(':iceberg-kafka-connect:iceberg-kafka-connect-runtime') {
   configurations {
     integrationImplementation.extendsFrom testImplementation
     integrationRuntime.extendsFrom testRuntimeOnly
+    // jars that skip checkClassUniqueness
+    distOnly
   }
 
   dependencies {
@@ -216,7 +218,7 @@ project(':iceberg-kafka-connect:iceberg-kafka-connect-runtime') {
     integrationImplementation libs.awaitility
     integrationImplementation libs.analyticsaccelerator.s3
 
-    runtimeOnly libs.ozone.filesystem.hadoop3
+    distOnly libs.ozone.filesystem.hadoop3
   }
 
   task integrationTest(type: Test) {
@@ -238,6 +240,7 @@ project(':iceberg-kafka-connect:iceberg-kafka-connect-runtime') {
         from "${processResources.destinationDir}/manifest.json"
         into('lib/') {
           from configurations.runtimeClasspath
+          from configurations.distOnly
         }
         into('doc/') {
           from "$projectDir/main/LICENSE"
@@ -253,6 +256,7 @@ project(':iceberg-kafka-connect:iceberg-kafka-connect-runtime') {
         from "${processResources.destinationDir}/manifest.json"
         into('lib/') {
           from configurations.hive
+          from configurations.distOnly
         }
         into('doc/') {
           from "$projectDir/hive/LICENSE"
