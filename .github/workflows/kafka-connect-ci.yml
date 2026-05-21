@@ -71,7 +71,7 @@ jobs:
     runs-on: ubuntu-22.04
     strategy:
       matrix:
-        jvm: [11, 17, 21]
+        jvm: [17, 21]
     env:
       SPARK_LOCAL_IP: localhost
     steps:
@@ -95,6 +95,9 @@ jobs:
           :iceberg-kafka-connect:iceberg-kafka-connect:check \
           :iceberg-kafka-connect:iceberg-kafka-connect-runtime:check \
           -Pquick=true -x javadoc
+      env:
+        GITHUB_USERNAME: ${{ github.actor }}
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     - uses: actions/upload-artifact@v4
       if: failure()
       with:
