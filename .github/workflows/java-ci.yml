@@ -103,6 +103,9 @@ jobs:
         distribution: zulu
         java-version: ${{ matrix.jvm }}
     - run: ./gradlew -DallModules build -x test -x javadoc -x integrationTest
+      env:
+        GITHUB_USERNAME: ${{ github.actor }}
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   build-javadoc:
     runs-on: ubuntu-22.04
@@ -116,3 +119,6 @@ jobs:
         distribution: zulu
         java-version: ${{ matrix.jvm }}
     - run: ./gradlew -Pquick=true javadoc
+      env:
+        GITHUB_USERNAME: ${{ github.actor }}
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
