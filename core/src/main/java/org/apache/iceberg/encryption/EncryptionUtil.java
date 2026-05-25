@@ -87,7 +87,7 @@ public class EncryptionUtil {
     return createEncryptionManager(List.of(), tableProperties, kmsClient);
   }
 
-  static EncryptionManager createEncryptionManager(
+  public static EncryptionManager createEncryptionManager(
       List<EncryptedKey> keys, Map<String, String> tableProperties, KeyManagementClient kmsClient) {
     Preconditions.checkArgument(kmsClient != null, "Invalid KMS client: null");
     String tableKeyId = tableProperties.get(TableProperties.ENCRYPTION_TABLE_KEY);
@@ -108,7 +108,7 @@ public class EncryptionUtil {
         "Invalid data key length: %s (must be 16, 24, or 32)",
         dataKeyLength);
 
-    return new StandardEncryptionManager(tableKeyId, dataKeyLength, kmsClient);
+    return new StandardEncryptionManager(keys, tableKeyId, dataKeyLength, kmsClient);
   }
 
   public static EncryptedOutputFile plainAsEncryptedOutput(OutputFile encryptingOutputFile) {
@@ -138,6 +138,14 @@ public class EncryptionUtil {
     byte[] decryptedKeyMetadata =
         decryptor.decrypt(keyMetadataBytes, manifestListKeyId.getBytes(StandardCharsets.UTF_8));
     return ByteBuffer.wrap(decryptedKeyMetadata);
+  }
+
+  public static Map<String, EncryptedKey> encryptionKeys(EncryptionManager em) {
+    Preconditions.checkState(
+        em instanceof StandardEncryptionManager,
+        "Retrieving encryption keys requires a StandardEncryptionManager");
+    StandardEncryptionManager sem = (StandardEncryptionManager) em;
+    return sem.encryptionKeys();
   }
 
   /**
