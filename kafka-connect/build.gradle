@@ -93,12 +93,6 @@ project(':iceberg-kafka-connect:iceberg-kafka-connect-runtime') {
   configurations {
     hive {
       extendsFrom runtimeClasspath
-        resolutionStrategy.dependencySubstitution {
-          substitute module('org.apache.hive:hive-exec') using module('io.arenadata.hive:hive-exec:2.3.9_arenadata5')
-          substitute module('org.apache.hive:hive-metastore') using module('io.arenadata.hive:hive-metastore:2.3.9_arenadata5')
-          substitute module('org.apache.hive:hive-serde') using module('io.arenadata.hive:hive-serde:2.3.9_arenadata5')
-          substitute module('org.apache.hive:hive-service') using module('io.arenadata.hive:hive-service:2.3.9_arenadata5')
-        }
     }
     all {
       exclude group: 'javax.activation', module: 'activation'
