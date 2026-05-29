@@ -51,8 +51,7 @@ public class TestSparkSchemaUtil {
           optional(3, "geog", Types.GeographyType.crs84()));
 
   private static final Schema TEST_SCHEMA_WITH_CUSTOM_CRS =
-      new Schema(
-          optional(1, "geom", Types.GeometryType.of("EPSG:32637")));
+      new Schema(optional(1, "geom", Types.GeometryType.of("EPSG:32637")));
 
   @Test
   public void testGeometrySchemaConversion() {
@@ -78,10 +77,8 @@ public class TestSparkSchemaUtil {
     StructType sparkType = SparkSchemaUtil.convert(TEST_SCHEMA_WITH_GEOMETRY);
     Schema roundTripped = SparkSchemaUtil.convert(sparkType);
 
-    assertThat(roundTripped.findField("geom").type())
-        .isEqualTo(Types.GeometryType.crs84());
-    assertThat(roundTripped.findField("geog").type())
-        .isEqualTo(Types.GeographyType.crs84());
+    assertThat(roundTripped.findField("geom").type()).isEqualTo(Types.GeometryType.crs84());
+    assertThat(roundTripped.findField("geog").type()).isEqualTo(Types.GeographyType.crs84());
   }
 
   @Test

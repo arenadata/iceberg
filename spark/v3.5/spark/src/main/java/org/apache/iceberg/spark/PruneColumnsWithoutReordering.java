@@ -32,7 +32,6 @@ import org.apache.iceberg.types.TypeUtil;
 import org.apache.iceberg.types.Types;
 import org.apache.spark.sql.types.ArrayType;
 import org.apache.spark.sql.types.BinaryType$;
-import org.apache.spark.sql.types.UserDefinedType;
 import org.apache.spark.sql.types.BooleanType$;
 import org.apache.spark.sql.types.DataType;
 import org.apache.spark.sql.types.DateType$;
@@ -47,6 +46,7 @@ import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.types.TimestampNTZType$;
 import org.apache.spark.sql.types.TimestampType$;
+import org.apache.spark.sql.types.UserDefinedType;
 
 public class PruneColumnsWithoutReordering extends TypeUtil.CustomOrderSchemaVisitor<Type> {
   private final StructType requestedType;

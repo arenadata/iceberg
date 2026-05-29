@@ -37,8 +37,7 @@ public class TestSparkTypeCustomizer {
   public void testServiceLoaderDiscovery() {
     List<SparkTypeCustomizer> customizers = SparkTypeCustomizer.loadAll();
     assertThat(customizers).isNotEmpty();
-    assertThat(customizers)
-        .anyMatch(c -> c instanceof TestGeometrySparkTypeCustomizer);
+    assertThat(customizers).anyMatch(c -> c instanceof TestGeometrySparkTypeCustomizer);
   }
 
   @Test
@@ -74,9 +73,7 @@ public class TestSparkTypeCustomizer {
   @Test
   public void testCustomizerIntegrationWithSparkTypeToType() {
     // Verify that SparkTypeToType restores geometry type via metadata (not just via SPI)
-    Schema schema =
-        new Schema(
-            Types.NestedField.optional(1, "geom", Types.GeometryType.crs84()));
+    Schema schema = new Schema(Types.NestedField.optional(1, "geom", Types.GeometryType.crs84()));
 
     // Iceberg → Spark → Iceberg roundtrip
     StructType sparkType = SparkSchemaUtil.convert(schema);
@@ -94,9 +91,8 @@ public class TestSparkTypeCustomizer {
   }
 
   /**
-   * Test implementation of {@link SparkTypeCustomizer} registered via
-   * META-INF/services. Returns BinaryType for geometry types to avoid breaking
-   * other tests that expect BinaryType.
+   * Test implementation of {@link SparkTypeCustomizer} registered via META-INF/services. Returns
+   * BinaryType for geometry types to avoid breaking other tests that expect BinaryType.
    */
   public static class TestGeometrySparkTypeCustomizer implements SparkTypeCustomizer {
 

@@ -18,10 +18,10 @@
  */
 package org.apache.iceberg.spark;
 
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.ServiceLoader;
+import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.types.Type;
 import org.apache.spark.sql.types.DataType;
 import org.apache.spark.sql.types.UserDefinedType;
@@ -102,7 +102,7 @@ public interface SparkTypeCustomizer {
           return current.customizers;
         }
 
-        List<SparkTypeCustomizer> customizers = new ArrayList<>();
+        List<SparkTypeCustomizer> customizers = Lists.newArrayList();
         ServiceLoader<SparkTypeCustomizer> loader =
             ServiceLoader.load(SparkTypeCustomizer.class, contextLoader);
         for (SparkTypeCustomizer customizer : loader) {
@@ -116,8 +116,8 @@ public interface SparkTypeCustomizer {
     }
 
     private static class CachedResult {
-      final List<SparkTypeCustomizer> customizers;
-      final ClassLoader loader;
+      private final List<SparkTypeCustomizer> customizers;
+      private final ClassLoader loader;
 
       CachedResult(List<SparkTypeCustomizer> customizers, ClassLoader loader) {
         this.customizers = customizers;
