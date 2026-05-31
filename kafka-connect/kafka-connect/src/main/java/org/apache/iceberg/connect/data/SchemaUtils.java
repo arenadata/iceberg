@@ -23,6 +23,8 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -36,10 +38,13 @@ import org.apache.iceberg.connect.IcebergSinkConfig;
 import org.apache.iceberg.connect.data.SchemaUpdate.AddColumn;
 import org.apache.iceberg.connect.data.SchemaUpdate.MakeOptional;
 import org.apache.iceberg.connect.data.SchemaUpdate.UpdateType;
+import org.apache.iceberg.expressions.Expressions;
+import org.apache.iceberg.expressions.Literal;
 import org.apache.iceberg.relocated.com.google.common.base.Splitter;
 import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.Type.PrimitiveType;
 import org.apache.iceberg.types.Type.TypeID;
+import org.apache.iceberg.types.Types;
 import org.apache.iceberg.types.Types.BinaryType;
 import org.apache.iceberg.types.Types.BooleanType;
 import org.apache.iceberg.types.Types.DateType;
@@ -55,6 +60,7 @@ import org.apache.iceberg.types.Types.StringType;
 import org.apache.iceberg.types.Types.StructType;
 import org.apache.iceberg.types.Types.TimeType;
 import org.apache.iceberg.types.Types.TimestampType;
+import org.apache.iceberg.util.DateTimeUtil;
 import org.apache.iceberg.util.Pair;
 import org.apache.iceberg.util.Tasks;
 import org.apache.kafka.connect.data.Date;
@@ -70,6 +76,7 @@ class SchemaUtils {
   private static final Logger LOG = LoggerFactory.getLogger(SchemaUtils.class);
 
   private static final Pattern TRANSFORM_REGEX = Pattern.compile("(\\w+)\\((.+)\\)");
+  private static final String DEBEZIUM_NANO_TIMESTAMP_CLASS = "io.debezium.time.NanoTimestamp";
 
   static PrimitiveType needsDataTypeUpdate(Type currentIcebergType, Schema valueSchema) {
     if (currentIcebergType.typeId() == TypeID.FLOAT && valueSchema.type() == Schema.Type.FLOAT64) {
@@ -123,7 +130,14 @@ class SchemaUtils {
     // apply the updates
     UpdateSchema updateSchema = table.updateSchema();
     addColumns.forEach(
-        update -> updateSchema.addColumn(update.parentName(), update.name(), update.type()));
+        update -> {
+          if (update.defaultValue() != null) {
+            updateSchema.addColumn(
+                update.parentName(), update.name(), update.type(), update.defaultValue());
+          } else {
+            updateSchema.addColumn(update.parentName(), update.name(), update.type());
+          }
+        });
     updateTypes.forEach(update -> updateSchema.updateColumn(update.name(), update.type()));
     makeOptionals.forEach(update -> updateSchema.makeColumnOptional(update.name()));
     updateSchema.commit();
@@ -209,12 +223,20 @@ class SchemaUtils {
     return Pair.of(parts.get(0).trim(), Integer.parseInt(parts.get(1).trim()));
   }
 
+  static Type toIcebergType(Schema valueSchema, IcebergSinkConfig config, String fieldPath) {
+    return new SchemaGenerator(config).toIcebergType(valueSchema, fieldPath);
+  }
+
   static Type toIcebergType(Schema valueSchema, IcebergSinkConfig config) {
-    return new SchemaGenerator(config).toIcebergType(valueSchema);
+    return new SchemaGenerator(config).toIcebergType(valueSchema, null);
   }
 
   static Type inferIcebergType(Object value, IcebergSinkConfig config) {
-    return new SchemaGenerator(config).inferIcebergType(value);
+    return new SchemaGenerator(config).inferIcebergType(value, null);
+  }
+
+  static Type inferIcebergType(Object value, IcebergSinkConfig config, String fieldPath) {
+    return new SchemaGenerator(config).inferIcebergType(value, fieldPath);
   }
 
   static class SchemaGenerator {
@@ -227,7 +249,11 @@ class SchemaUtils {
     }
 
     @SuppressWarnings("checkstyle:CyclomaticComplexity")
-    Type toIcebergType(Schema valueSchema) {
+    Type toIcebergType(Schema valueSchema, String fieldPath) {
+      if (isVariantField(fieldPath)) {
+        return Types.VariantType.get();
+      }
+
       switch (valueSchema.type()) {
         case BOOLEAN:
           return BooleanType.get();
@@ -250,6 +276,10 @@ class SchemaUtils {
         case INT64:
           if (Timestamp.LOGICAL_NAME.equals(valueSchema.name())) {
             return TimestampType.withZone();
+          } else if (DEBEZIUM_NANO_TIMESTAMP_CLASS.equals(valueSchema.name())) {
+            return isTimestampNsField(fieldPath)
+                ? Types.TimestampNanoType.withoutZone()
+                : Types.TimestampNanoType.withZone();
           }
           return LongType.get();
         case FLOAT32:
@@ -257,15 +287,16 @@ class SchemaUtils {
         case FLOAT64:
           return DoubleType.get();
         case ARRAY:
-          Type elementType = toIcebergType(valueSchema.valueSchema());
+          Type elementType = toIcebergType(valueSchema.valueSchema(), childPath(fieldPath, "[]"));
           if (config.schemaForceOptional() || valueSchema.valueSchema().isOptional()) {
             return ListType.ofOptional(nextId(), elementType);
           } else {
             return ListType.ofRequired(nextId(), elementType);
           }
         case MAP:
-          Type keyType = toIcebergType(valueSchema.keySchema());
-          Type valueType = toIcebergType(valueSchema.valueSchema());
+          Type keyType = toIcebergType(valueSchema.keySchema(), childPath(fieldPath, "<key>"));
+          Type valueType =
+              toIcebergType(valueSchema.valueSchema(), childPath(fieldPath, "<value>"));
           if (config.schemaForceOptional() || valueSchema.valueSchema().isOptional()) {
             return MapType.ofOptional(nextId(), nextId(), keyType, valueType);
           } else {
@@ -275,14 +306,30 @@ class SchemaUtils {
           List<NestedField> structFields =
               valueSchema.fields().stream()
                   .map(
-                      field ->
-                          NestedField.builder()
-                              .isOptional(
-                                  config.schemaForceOptional() || field.schema().isOptional())
-                              .withId(nextId())
-                              .ofType(toIcebergType(field.schema()))
-                              .withName(field.name())
-                              .build())
+                      field -> {
+                        String child = childPath(fieldPath, field.name());
+                        Type fieldType = toIcebergType(field.schema(), child);
+
+                        NestedField.Builder builder =
+                            NestedField.builder()
+                                .isOptional(
+                                    config.schemaForceOptional() || field.schema().isOptional())
+                                .withId(nextId())
+                                .ofType(fieldType)
+                                .withName(field.name());
+
+                        if (config.tableDefaultsEnabled()
+                            && field.schema().defaultValue() != null
+                            && SchemaUtils.isPrimitiveDefaultSupported(fieldType)) {
+                          Literal<?> lit =
+                              SchemaUtils.toIcebergLiteral(
+                                  fieldType, field.schema().defaultValue());
+                          if (lit != null) {
+                            builder.withWriteDefault(lit);
+                          }
+                        }
+                        return builder.build();
+                      })
                   .collect(Collectors.toList());
           return StructType.of(structFields);
         case STRING:
@@ -291,10 +338,54 @@ class SchemaUtils {
       }
     }
 
+    private String childPath(String parent, String child) {
+      if (parent == null || parent.isEmpty()) {
+        return child;
+      }
+      return parent + "." + child;
+    }
+
+    private boolean isVariantField(String fieldPath) {
+      if (fieldPath == null) {
+        return false;
+      }
+
+      Collection<String> variantFieldPaths = config.schemaVariantFieldPaths();
+      return variantFieldPaths != null && variantFieldPaths.contains(fieldPath);
+    }
+
+    private boolean isTimestampNsField(String fieldPath) {
+      if (fieldPath == null) {
+        return false;
+      }
+
+      Collection<String> patterns = config.schemaTimestampNsFieldPaths();
+      if (patterns == null || patterns.isEmpty()) {
+        return false;
+      }
+
+      return patterns.stream().anyMatch(pattern -> fieldPathMatches(pattern, fieldPath));
+    }
+
+    private boolean fieldPathMatches(String pattern, String fieldPath) {
+      if ("*".equals(pattern)) {
+        return true;
+      }
+
+      if (pattern.contains(".")) {
+        return pattern.equals(fieldPath);
+      }
+
+      List<String> fieldParts = Splitter.on('.').splitToList(fieldPath);
+      return pattern.equals(fieldParts.get(fieldParts.size() - 1));
+    }
+
     @SuppressWarnings("checkstyle:CyclomaticComplexity")
-    Type inferIcebergType(Object value) {
+    Type inferIcebergType(Object value, String fieldPath) {
       if (value == null) {
-        return null;
+        return unknownOrNull();
+      } else if (isVariantField(fieldPath)) {
+        return Types.VariantType.get();
       } else if (value instanceof String) {
         return StringType.get();
       } else if (value instanceof Boolean) {
@@ -317,10 +408,10 @@ class SchemaUtils {
       } else if (value instanceof List) {
         List<?> list = (List<?>) value;
         if (list.isEmpty()) {
-          return null;
+          return unknownOrNull();
         }
-        Type elementType = inferIcebergType(list.get(0));
-        return elementType == null ? null : ListType.ofOptional(nextId(), elementType);
+        Type elementType = inferIcebergType(list.get(0), childPath(fieldPath, "[]"));
+        return elementType == null ? unknownOrNull() : ListType.ofOptional(nextId(), elementType);
       } else if (value instanceof Map) {
         Map<?, ?> map = (Map<?, ?>) value;
         List<NestedField> structFields =
@@ -328,7 +419,9 @@ class SchemaUtils {
                 .filter(entry -> entry.getKey() != null && entry.getValue() != null)
                 .map(
                     entry -> {
-                      Type valueType = inferIcebergType(entry.getValue());
+                      String name = entry.getKey().toString();
+                      String childPath = childPath(fieldPath, name);
+                      Type valueType = inferIcebergType(entry.getValue(), childPath);
                       return valueType == null
                           ? null
                           : NestedField.optional(nextId(), entry.getKey().toString(), valueType);
@@ -336,16 +429,55 @@ class SchemaUtils {
                 .filter(Objects::nonNull)
                 .collect(Collectors.toList());
         if (structFields.isEmpty()) {
-          return null;
+          return unknownOrNull();
         }
         return StructType.of(structFields);
       } else {
-        return null;
+        return unknownOrNull();
       }
+    }
+
+    private Type unknownOrNull() {
+      return config.evolveUnknownTypeEnabled() ? Types.UnknownType.get() : null;
     }
 
     private int nextId() {
       return fieldId++;
+    }
+  }
+
+  static boolean isPrimitiveDefaultSupported(Type type) {
+    if (type == null || !type.isPrimitiveType()) {
+      return false;
+    }
+    Type.TypeID id = type.typeId();
+    return id != TypeID.VARIANT && id != TypeID.UNKNOWN;
+  }
+
+  static Literal<?> toIcebergLiteral(Type icebergType, Object connectDefault) {
+    if (connectDefault == null || !isPrimitiveDefaultSupported(icebergType)) {
+      return null;
+    }
+    switch (icebergType.typeId()) {
+      case DATE:
+        int days = DateTimeUtil.daysFromInstant(((java.util.Date) connectDefault).toInstant());
+        return Literal.of(days).to(icebergType);
+      case TIME:
+        long timeMicros =
+            DateTimeUtil.microsFromTime(
+                ((java.util.Date) connectDefault)
+                    .toInstant()
+                    .atOffset(ZoneOffset.UTC)
+                    .toLocalTime());
+        return Literal.of(timeMicros).to(icebergType);
+      case TIMESTAMP:
+        long micros = DateTimeUtil.microsFromInstant(((java.util.Date) connectDefault).toInstant());
+        return Literal.of(micros).to(icebergType);
+      case TIMESTAMP_NANO:
+        long nanos = (Long) connectDefault;
+        return Literal.of(nanos).to(icebergType);
+      default:
+        return Expressions.lit(connectDefault).to(icebergType);
     }
   }
 

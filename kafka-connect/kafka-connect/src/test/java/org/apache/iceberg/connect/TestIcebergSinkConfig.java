@@ -57,6 +57,58 @@ public class TestIcebergSinkConfig {
             "iceberg.tables", "db.landing");
     IcebergSinkConfig config = new IcebergSinkConfig(props);
     assertThat(config.commitIntervalMs()).isEqualTo(300_000);
+    assertThat(config.schemaTimestampNsFieldPaths()).isEmpty();
+  }
+
+  @Test
+  public void testSchemaTimestampNsFieldPaths() {
+    IcebergSinkConfig config =
+        new IcebergSinkConfig(
+            propsWith(
+                "iceberg.tables.schema-timestamp-ns-fields",
+                " event_time, after.event_time,*,payload.event_time,event_time "));
+
+    assertThat(config.schemaTimestampNsFieldPaths())
+        .containsExactly("event_time", "after.event_time", "*", "payload.event_time");
+  }
+
+  @Test
+  public void testSchemaTimestampNsFieldPathsRejectInvalidPatterns() {
+    assertThatThrownBy(
+            () ->
+                new IcebergSinkConfig(
+                    propsWith("iceberg.tables.schema-timestamp-ns-fields", "payload.e*")))
+        .isInstanceOf(ConfigException.class)
+        .hasMessageContaining("iceberg.tables.schema-timestamp-ns-fields");
+
+    assertThatThrownBy(
+            () ->
+                new IcebergSinkConfig(
+                    propsWith("iceberg.tables.schema-timestamp-ns-fields", "payload.*")))
+        .isInstanceOf(ConfigException.class)
+        .hasMessageContaining("iceberg.tables.schema-timestamp-ns-fields");
+
+    assertThatThrownBy(
+            () ->
+                new IcebergSinkConfig(
+                    propsWith("iceberg.tables.schema-timestamp-ns-fields", "*.event_time")))
+        .isInstanceOf(ConfigException.class)
+        .hasMessageContaining("iceberg.tables.schema-timestamp-ns-fields");
+
+    assertThatThrownBy(
+            () ->
+                new IcebergSinkConfig(
+                    propsWith("iceberg.tables.schema-timestamp-ns-fields", ".event_time")))
+        .isInstanceOf(ConfigException.class)
+        .hasMessageContaining("iceberg.tables.schema-timestamp-ns-fields");
+  }
+
+  @Test
+  public void testSchemaVariantFieldPathsRejectWildcard() {
+    assertThatThrownBy(
+            () -> new IcebergSinkConfig(propsWith("iceberg.tables.schema-variant-fields", "*")))
+        .isInstanceOf(ConfigException.class)
+        .hasMessageContaining("iceberg.tables.schema-variant-fields");
   }
 
   @Test
@@ -109,5 +161,14 @@ public class TestIcebergSinkConfig {
 
     result = IcebergSinkConfig.checkClassName("org.apache.kafka.clients.producer.KafkaProducer");
     assertThat(result).isFalse();
+  }
+
+  private static Map<String, String> propsWith(String key, String value) {
+    return ImmutableMap.<String, String>builder()
+        .put("iceberg.catalog.type", "rest")
+        .put("topics", "source-topic")
+        .put("iceberg.tables", "db.landing")
+        .put(key, value)
+        .build();
   }
 }

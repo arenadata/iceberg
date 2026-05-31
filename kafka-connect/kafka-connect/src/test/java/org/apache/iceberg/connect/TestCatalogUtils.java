@@ -24,6 +24,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.iceberg.catalog.Catalog;
@@ -33,12 +34,13 @@ import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
+import org.junit.jupiter.params.provider.FieldSource;
 
 public class TestCatalogUtils {
 
   private static final String HADOOP_CONF_TEMPLATE =
       "<configuration><property><name>%s</name><value>%s</value></property></configuration>";
+  public static final List<String> CONFIG_FILES = CatalogUtils.HADOOP_CONF_FILES;
 
   @TempDir private Path tempDir;
 
@@ -79,12 +81,36 @@ public class TestCatalogUtils {
   }
 
   @ParameterizedTest
-  @ValueSource(strings = {"core-site.xml", "hdfs-site.xml", "hive-site.xml"})
+  @FieldSource("CONFIG_FILES")
   public void testLoadCatalogWithHadoopDir(String confFile) throws IOException {
     Path path = tempDir.resolve(confFile);
     String xml = String.format(HADOOP_CONF_TEMPLATE, "file-prop", "file-value");
     Files.write(path, xml.getBytes(StandardCharsets.UTF_8));
 
+    Configuration conf = loadCatalogConfigWithHadoopDir();
+    assertThat(conf).isNotNull();
+
+    // check that the sink config property was added
+    assertThat(conf.get("conf-prop")).isEqualTo("conf-value");
+
+    // check that the config file was loaded
+    assertThat(conf.get("file-prop")).isEqualTo("file-value");
+
+    // check that core-site.xml was loaded
+    assertThat(conf.get("foo")).isEqualTo("bar");
+  }
+
+  @ParameterizedTest
+  @FieldSource("CONFIG_FILES")
+  public void testLoadCatalogWithHadoopDirWithEmptyConfig(String confFile) throws IOException {
+    Path path = tempDir.resolve(confFile);
+    Files.createFile(path);
+
+    Configuration conf = loadCatalogConfigWithHadoopDir();
+    assertThat(conf).isNotNull();
+  }
+
+  public Configuration loadCatalogConfigWithHadoopDir() {
     Map<String, String> props =
         ImmutableMap.of(
             "topics",
@@ -105,13 +131,6 @@ public class TestCatalogUtils {
     Configuration conf = ((TestCatalog) result).conf;
     assertThat(conf).isNotNull();
 
-    // check that the sink config property was added
-    assertThat(conf.get("conf-prop")).isEqualTo("conf-value");
-
-    // check that the config file was loaded
-    assertThat(conf.get("file-prop")).isEqualTo("file-value");
-
-    // check that core-site.xml was loaded
-    assertThat(conf.get("foo")).isEqualTo("bar");
+    return conf;
   }
 }
