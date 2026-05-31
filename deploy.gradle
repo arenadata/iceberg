@@ -134,6 +134,14 @@ subprojects {
           def releasesRepoUrl = project.hasProperty('mavenReleasesRepo') ? "$mavenReleasesRepo" : "$apacheReleasesRepoUrl"
           url = project.hasProperty('release') ? releasesRepoUrl : snapshotsRepoUrl
         }
+        maven {
+          name = 'arenadata'
+          url = uri('https://maven.pkg.github.com/arenadata/iceberg')
+          credentials {
+            username = System.getenv('GITHUB_ACTOR') ?: ''
+            password = System.getenv('GITHUB_TOKEN') ?: ''
+          }
+        }
       }
     }
 
