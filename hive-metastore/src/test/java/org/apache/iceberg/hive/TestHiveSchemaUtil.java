@@ -205,6 +205,20 @@ public class TestHiveSchemaUtil {
     assertThat(schema.asStruct()).isEqualTo(expected.asStruct());
   }
 
+  @Test
+  public void testGeometrySchemaConvertToHiveSchema() {
+    Schema geometrySchema =
+        new Schema(
+            optional(0, "id", Types.LongType.get()),
+            optional(1, "geom", Types.GeometryType.crs84()),
+            optional(2, "geog", Types.GeographyType.crs84()));
+
+    List<FieldSchema> hiveSchema = HiveSchemaUtil.convert(geometrySchema);
+    assertThat(hiveSchema).hasSize(3);
+    assertThat(hiveSchema.get(1).getType()).isEqualTo("binary");
+    assertThat(hiveSchema.get(2).getType()).isEqualTo("binary");
+  }
+
   protected List<FieldSchema> getSupportedFieldSchemas() {
     List<FieldSchema> fields = Lists.newArrayListWithCapacity(10);
     fields.add(new FieldSchema("c_float", serdeConstants.FLOAT_TYPE_NAME, "float comment"));

@@ -129,6 +129,14 @@ subprojects {
             password = project.findProperty("mavenPassword")
           }
         }
+        maven {
+          name = 'arenadata'
+          url = uri('https://maven.pkg.github.com/arenadata/iceberg')
+          credentials {
+            username = System.getenv('GITHUB_ACTOR') ?: ''
+            password = System.getenv('GITHUB_TOKEN') ?: ''
+          }
+        }
       }
     }
 
