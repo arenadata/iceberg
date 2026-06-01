@@ -56,13 +56,32 @@ jobs:
           -PmavenUsername="${GITHUB_ACTOR}" \
           -PmavenPassword="${GITHUB_TOKEN}" \
           -PmavenUrl=https://maven.pkg.github.com/arenadata/iceberg \
-          publishApachePublicationToArenadataRepository
+          publishApachePublicationToArenadataRepository \
+          --no-parallel \
+          --no-configuration-cache
         ./gradlew \
           -DflinkVersions= \
-          -DsparkVersions=3.4,3.5,4.0 \
+          -DsparkVersions=3.4 \
           -DscalaVersion=2.13 \
-          -DkafkaVersions=3 \
+          -DkafkaVersions= \
           -PmavenUsername="${GITHUB_ACTOR}" \
           -PmavenPassword="${GITHUB_TOKEN}" \
           -PmavenUrl=https://maven.pkg.github.com/arenadata/iceberg \
-          publishApachePublicationToArenadataRepository
+          :iceberg-spark:iceberg-spark-3.4_2.13:publishApachePublicationToArenadataRepository \
+          :iceberg-spark:iceberg-spark-extensions-3.4_2.13:publishApachePublicationToArenadataRepository \
+          :iceberg-spark:iceberg-spark-runtime-3.4_2.13:publishApachePublicationToArenadataRepository \
+          --no-parallel \
+          --no-configuration-cache
+        ./gradlew \
+          -DflinkVersions= \
+          -DsparkVersions=3.5 \
+          -DscalaVersion=2.13 \
+          -DkafkaVersions= \
+          -PmavenUsername="${GITHUB_ACTOR}" \
+          -PmavenPassword="${GITHUB_TOKEN}" \
+          -PmavenUrl=https://maven.pkg.github.com/arenadata/iceberg \
+          :iceberg-spark:iceberg-spark-3.5_2.13:publishApachePublicationToArenadataRepository \
+          :iceberg-spark:iceberg-spark-extensions-3.5_2.13:publishApachePublicationToArenadataRepository \
+          :iceberg-spark:iceberg-spark-runtime-3.5_2.13:publishApachePublicationToArenadataRepository \
+          --no-parallel \
+          --no-configuration-cache
