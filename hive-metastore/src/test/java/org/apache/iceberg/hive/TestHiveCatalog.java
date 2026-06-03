@@ -191,6 +191,72 @@ public class TestHiveCatalog extends CatalogTests<HiveCatalog> {
   }
 
   @Test
+  public void testRenameUpdatesLocationWhenEnabled() {
+    HiveCatalog renameCatalog =
+        initCatalog("hive", ImmutableMap.of(CatalogProperties.RENAME_UPDATE_METADATA_LOCATION, "true"));
+    TableIdentifier from = TableIdentifier.of(DB_NAME, "rename_src");
+    TableIdentifier to = TableIdentifier.of(DB_NAME, "rename_dst");
+    try {
+      Table original = renameCatalog.createTable(from, getTestSchema());
+      String originalLocation = original.location();
+      assertThat(originalLocation).endsWith("/rename_src");
+
+      renameCatalog.renameTable(from, to);
+
+      Table renamed = renameCatalog.loadTable(to);
+      assertThat(renamed.location()).endsWith("/rename_dst").isNotEqualTo(originalLocation);
+
+      // Re-creating a table with the old name reuses the old directory without sharing it with the
+      // renamed table.
+      Table recreated = renameCatalog.createTable(from, getTestSchema());
+      assertThat(recreated.location()).isEqualTo(originalLocation);
+      assertThat(recreated.location()).isNotEqualTo(renamed.location());
+    } finally {
+      renameCatalog.dropTable(from, false);
+      renameCatalog.dropTable(to, false);
+    }
+  }
+
+  @Test
+  public void testRenameKeepsExplicitLocationWhenEnabled() {
+    HiveCatalog renameCatalog =
+        initCatalog("hive", ImmutableMap.of(CatalogProperties.RENAME_UPDATE_METADATA_LOCATION, "true"));
+    TableIdentifier from = TableIdentifier.of(DB_NAME, "rename_explicit_src");
+    TableIdentifier to = TableIdentifier.of(DB_NAME, "rename_explicit_dst");
+    String explicitLocation = temp.resolve("explicit-loc").toString();
+    try {
+      Table original =
+          renameCatalog.createTable(
+              from, getTestSchema(), PartitionSpec.unpartitioned(), explicitLocation, null);
+      assertThat(original.location()).isEqualTo(explicitLocation);
+
+      renameCatalog.renameTable(from, to);
+
+      // A table created with an explicit LOCATION is left untouched by rename.
+      assertThat(renameCatalog.loadTable(to).location()).isEqualTo(explicitLocation);
+    } finally {
+      renameCatalog.dropTable(to, false);
+    }
+  }
+
+  @Test
+  public void testRenameKeepsLocationWhenDisabled() {
+    TableIdentifier from = TableIdentifier.of(DB_NAME, "rename_default_src");
+    TableIdentifier to = TableIdentifier.of(DB_NAME, "rename_default_dst");
+    try {
+      Table original = catalog.createTable(from, getTestSchema());
+      String originalLocation = original.location();
+
+      catalog.renameTable(from, to);
+
+      // Default (flag off) behavior keeps the original location, matching the Iceberg spec.
+      assertThat(catalog.loadTable(to).location()).isEqualTo(originalLocation);
+    } finally {
+      catalog.dropTable(to, false);
+    }
+  }
+
+  @Test
   public void testCreateTableBuilder() throws Exception {
     Schema schema = getTestSchema();
     PartitionSpec spec = PartitionSpec.builderFor(schema).bucket("data", 16).build();

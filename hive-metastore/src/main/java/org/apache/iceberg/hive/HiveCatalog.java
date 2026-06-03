@@ -65,6 +65,7 @@ import org.apache.iceberg.relocated.com.google.common.collect.Iterables;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.util.LocationUtil;
+import org.apache.iceberg.util.PropertyUtil;
 import org.apache.iceberg.view.BaseMetastoreViewCatalog;
 import org.apache.iceberg.view.View;
 import org.apache.iceberg.view.ViewBuilder;
@@ -366,6 +367,11 @@ public class HiveCatalog extends BaseMetastoreViewCatalog
     String fromName = from.name();
 
     try {
+      if (contentType == HiveOperationsBase.ContentType.TABLE && tryRelocateRename(from, to)) {
+        LOG.info("Updated metadata and renamed Table from {}, to {}", from, to);
+        return;
+      }
+
       Table table = clients.run(client -> client.getTable(fromDatabase, fromName));
       validateTableIsIcebergTableOrView(contentType, table, CatalogUtil.fullTableName(name, from));
 
@@ -406,6 +412,62 @@ public class HiveCatalog extends BaseMetastoreViewCatalog
     }
   }
 
+  /**
+   * Renames a table by committing a metadata location update through {@link HiveTableOperations} so
+   * that the rename of {@code dbName} / {@code tableName} and the update of {@code
+   * metadata_location} happen in a single HMS {@code alter_table} RPC.
+   *
+   * <p>Controlled by {@link CatalogProperties#RENAME_UPDATE_METADATA_LOCATION}. Only tables sitting at the
+   * default warehouse location of the source identifier are relocated; tables created with an
+   * explicit {@code LOCATION} return {@code false} so the caller falls back to the plain rename
+   * path.
+   *
+   * @return {@code true} if the rename was performed by the relocate path; {@code false} if the
+   *     caller should fall back to the standard {@code alter_table}-only rename.
+   */
+  private boolean tryRelocateRename(TableIdentifier from, TableIdentifier to) {
+    if (!PropertyUtil.propertyAsBoolean(
+        catalogProperties,
+        CatalogProperties.RENAME_UPDATE_METADATA_LOCATION,
+        CatalogProperties.RENAME_UPDATE_LOCATION_DEFAULT)) {
+      return false;
+    }
+
+    String oldTableDefaultLocation = LocationUtil.stripTrailingSlash(defaultWarehouseLocation(from));
+    String newTableDefaultLocation = LocationUtil.stripTrailingSlash(defaultWarehouseLocation(to));
+    if (oldTableDefaultLocation.equals(newTableDefaultLocation)) {
+      return false;
+    }
+
+    HiveTableOperations ops = newTableOps(from, hmsTable -> updateHmsTableName(hmsTable, to));
+
+    TableMetadata current;
+    try {
+      current = ops.current();
+    } catch (NoSuchTableException e) {
+      // let base path handle this exception
+      return false;
+    }
+
+    if (current == null) {
+      return false;
+    }
+
+    if (!LocationUtil.stripTrailingSlash(current.location()).equals(oldTableDefaultLocation)) {
+      LOG.info(
+          "Not updating location of renamed table {} -> {}: table has an explicit location {}",
+          from,
+          to,
+          current.location());
+      return false;
+    }
+
+    // update metadata location + table name via HmsTablePreCommitHandler
+    ops.commit(current, current.updateLocation(newTableDefaultLocation));
+    LOG.info("Updated location of renamed table {} -> {} to {}", from, to, newTableDefaultLocation);
+    return true;
+  }
+
   private void validateTableIsIcebergTableOrView(
       HiveOperationsBase.ContentType contentType, Table table, String fullName) {
     switch (contentType) {
@@ -415,6 +477,11 @@ public class HiveCatalog extends BaseMetastoreViewCatalog
       case VIEW:
         HiveOperationsBase.validateTableIsIcebergView(table, fullName);
     }
+  }
+
+  private void updateHmsTableName(Table hmsTable, TableIdentifier to) {
+    hmsTable.setDbName(to.namespace().level(0));
+    hmsTable.setTableName(to.name());
   }
 
   /**
@@ -692,10 +759,22 @@ public class HiveCatalog extends BaseMetastoreViewCatalog
 
   @Override
   public TableOperations newTableOps(TableIdentifier tableIdentifier) {
+    return newTableOps(tableIdentifier, HmsTablePreCommitHandler.NO_OP_HANDLER);
+  }
+
+  protected HiveTableOperations newTableOps(
+      TableIdentifier tableIdentifier, HmsTablePreCommitHandler hmsTablePreCommitHandler) {
     String dbName = tableIdentifier.namespace().level(0);
     String tableName = tableIdentifier.name();
     return new HiveTableOperations(
-        conf, clients, fileIO, keyManagementClient, name, dbName, tableName);
+        conf,
+        clients,
+        fileIO,
+        keyManagementClient,
+        hmsTablePreCommitHandler,
+        name,
+        dbName,
+        tableName);
   }
 
   @Override
