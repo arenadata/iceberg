@@ -162,4 +162,29 @@ public class CatalogProperties {
 
   public static final String ENCRYPTION_KMS_TYPE = "encryption.kms-type";
   public static final String ENCRYPTION_KMS_IMPL = "encryption.kms-impl";
+
+  /**
+   * Controls whether a table's metadata {@code location} is updated to the new default warehouse
+   * path when a managed table is renamed. When disabled (default), rename only repoints the
+   * metastore entry, matching the Iceberg specification. When enabled, a default-located table is
+   * relocated to the new name's default path so that re-creating a table with the old name does not
+   * share a directory with the renamed table.
+   *
+   * <p><b>Scope of the data-safety guarantee.</b> Iceberg's standard per-file {@code DROP TABLE ...
+   * PURGE} is already safe even when two tables share a directory, because it walks the table's
+   * metadata and deletes only the files it references. The shared-directory hazard that this flag
+   * mitigates is specific to mechanisms that delete the location <i>directory</i> as a whole — most
+   * notably {@link TableProperties#DROP_BASE_DIR_ENABLED} (which calls {@code
+   * io.deletePrefix(location)}), and external directory-level tools (filesystem {@code rm -rf}, S3
+   * lifecycle rules, etc.). When neither of these is in use, this flag is purely cosmetic: it
+   * aligns {@code location} with the new name for parity with Hive / SHOW CREATE TABLE
+   * expectations, but no new data-safety property is unlocked.
+   *
+   * <p><b>Limit.</b> Only writes made <i>after</i> the rename land under the new directory. Data
+   * files written before the rename keep their absolute paths under the old directory, so a
+   * directory-level purge of the old directory will still destroy those pre-rename files.
+   */
+  public static final String RENAME_UPDATE_METADATA_LOCATION = "rename.metadata.location.update";
+
+  public static final boolean RENAME_UPDATE_LOCATION_DEFAULT = false;
 }
