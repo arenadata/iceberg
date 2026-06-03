@@ -417,9 +417,9 @@ public class HiveCatalog extends BaseMetastoreViewCatalog
    * that the rename of {@code dbName} / {@code tableName} and the update of {@code
    * metadata_location} happen in a single HMS {@code alter_table} RPC.
    *
-   * <p>Controlled by {@link CatalogProperties#RENAME_UPDATE_METADATA_LOCATION}. Only tables sitting at the
-   * default warehouse location of the source identifier are relocated; tables created with an
-   * explicit {@code LOCATION} return {@code false} so the caller falls back to the plain rename
+   * <p>Controlled by {@link CatalogProperties#RENAME_UPDATE_METADATA_LOCATION}. Only tables sitting
+   * at the default warehouse location of the source identifier are relocated; tables created with
+   * an explicit {@code LOCATION} return {@code false} so the caller falls back to the plain rename
    * path.
    *
    * @return {@code true} if the rename was performed by the relocate path; {@code false} if the
@@ -433,7 +433,8 @@ public class HiveCatalog extends BaseMetastoreViewCatalog
       return false;
     }
 
-    String oldTableDefaultLocation = LocationUtil.stripTrailingSlash(defaultWarehouseLocation(from));
+    String oldTableDefaultLocation =
+        LocationUtil.stripTrailingSlash(defaultWarehouseLocation(from));
     String newTableDefaultLocation = LocationUtil.stripTrailingSlash(defaultWarehouseLocation(to));
     if (oldTableDefaultLocation.equals(newTableDefaultLocation)) {
       return false;

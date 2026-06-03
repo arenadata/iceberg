@@ -53,7 +53,6 @@ import org.apache.iceberg.exceptions.ValidationException;
 import org.apache.iceberg.hadoop.HadoopCatalog;
 import org.apache.iceberg.hadoop.HadoopTables;
 import org.apache.iceberg.io.FileIO;
-import org.apache.iceberg.io.SupportsPrefixOperations;
 import org.apache.iceberg.relocated.com.google.common.base.Joiner;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.base.Splitter;
@@ -388,12 +387,8 @@ public class SparkCatalog extends BaseCatalog {
   }
 
   private void deleteTableFiles(FileIO io, TableMetadata tableMetadata) {
-    if (CatalogUtil.supportsDirectoryDelete(io, tableMetadata)) {
-      CatalogUtil.deleteTableDirectory((SupportsPrefixOperations) io, tableMetadata);
-      return;
-    }
-
     SparkActions.get().deleteReachableFiles(tableMetadata.metadataFileLocation()).io(io).execute();
+    CatalogUtil.maybeDeleteEmptyDirectory(io, tableMetadata);
   }
 
   private boolean dropTableWithoutPurging(Identifier ident) {

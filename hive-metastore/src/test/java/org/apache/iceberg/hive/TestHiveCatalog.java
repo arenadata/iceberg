@@ -193,7 +193,8 @@ public class TestHiveCatalog extends CatalogTests<HiveCatalog> {
   @Test
   public void testRenameUpdatesLocationWhenEnabled() {
     HiveCatalog renameCatalog =
-        initCatalog("hive", ImmutableMap.of(CatalogProperties.RENAME_UPDATE_METADATA_LOCATION, "true"));
+        initCatalog(
+            "hive", ImmutableMap.of(CatalogProperties.RENAME_UPDATE_METADATA_LOCATION, "true"));
     TableIdentifier from = TableIdentifier.of(DB_NAME, "rename_src");
     TableIdentifier to = TableIdentifier.of(DB_NAME, "rename_dst");
     try {
@@ -220,7 +221,8 @@ public class TestHiveCatalog extends CatalogTests<HiveCatalog> {
   @Test
   public void testRenameKeepsExplicitLocationWhenEnabled() {
     HiveCatalog renameCatalog =
-        initCatalog("hive", ImmutableMap.of(CatalogProperties.RENAME_UPDATE_METADATA_LOCATION, "true"));
+        initCatalog(
+            "hive", ImmutableMap.of(CatalogProperties.RENAME_UPDATE_METADATA_LOCATION, "true"));
     TableIdentifier from = TableIdentifier.of(DB_NAME, "rename_explicit_src");
     TableIdentifier to = TableIdentifier.of(DB_NAME, "rename_explicit_dst");
     String explicitLocation = temp.resolve("explicit-loc").toString();

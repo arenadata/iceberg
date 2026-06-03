@@ -24,6 +24,7 @@ import static org.apache.iceberg.TableProperties.GC_ENABLED;
 import static org.apache.iceberg.TableProperties.GC_ENABLED_DEFAULT;
 
 import java.io.IOException;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -37,6 +38,7 @@ import org.apache.iceberg.exceptions.RuntimeIOException;
 import org.apache.iceberg.exceptions.ValidationException;
 import org.apache.iceberg.hadoop.Configurable;
 import org.apache.iceberg.io.FileIO;
+import org.apache.iceberg.io.FileInfo;
 import org.apache.iceberg.io.StorageCredential;
 import org.apache.iceberg.io.SupportsBulkOperations;
 import org.apache.iceberg.io.SupportsPrefixOperations;
@@ -101,15 +103,26 @@ public class CatalogUtil {
    * @param metadata the last valid TableMetadata instance for a dropped table.
    */
   public static void dropTableData(FileIO io, TableMetadata metadata) {
-    if (supportsDirectoryDelete(io, metadata)) {
-      deleteTableDirectory((SupportsPrefixOperations) io, metadata);
-    } else {
-      deleteTableFiles(io, metadata);
-    }
+    deleteTableFiles(io, metadata);
+    deleteTableDirectoryIfEmpty(io, metadata);
   }
 
-  public static void deleteTableDirectory(SupportsPrefixOperations io, TableMetadata metadata) {
-    io.deletePrefix(metadata.location());
+  /** Remove the table base directory if it's empty. */
+  public static void deleteTableDirectoryIfEmpty(FileIO io, TableMetadata metadata) {
+    if (!supportsDirectoryDelete(io, metadata)) {
+      return;
+    }
+
+    SupportsPrefixOperations prefixIo = (SupportsPrefixOperations) io;
+    Iterator<FileInfo> remaining = prefixIo.listPrefix(metadata.location()).iterator();
+    if (!remaining.hasNext()) {
+      prefixIo.deletePrefix(metadata.location());
+    } else {
+      LOG.info(
+          "Skipping base-directory purge for {}: file {} is not referenced by this table",
+          metadata.location(),
+          remaining.next().location());
+    }
   }
 
   private static void deleteTableFiles(FileIO io, TableMetadata metadata) {
