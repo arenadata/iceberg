@@ -22,6 +22,10 @@ if (project.hasProperty('release') && jdkVersion != '17') {
 }
 
 subprojects {
+  if (it.path == ':iceberg-kafka-connect') {
+    return
+  }
+
   def isBom = it.name == 'iceberg-bom'
   def isOpenApi = it.name == 'iceberg-open-api'
 
