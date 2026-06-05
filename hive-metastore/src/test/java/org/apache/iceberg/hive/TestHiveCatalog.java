@@ -87,6 +87,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.FieldSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 /**
@@ -236,6 +237,40 @@ public class TestHiveCatalog extends CatalogTests<HiveCatalog> {
 
       // A table created with an explicit LOCATION is left untouched by rename.
       assertThat(renameCatalog.loadTable(to).location()).isEqualTo(explicitLocation);
+    } finally {
+      renameCatalog.dropTable(to, false);
+    }
+  }
+
+  @ParameterizedTest
+  @FieldSource("org.apache.iceberg.TableProperties#CUSTOM_WRITE_PATH_PROPERTIES")
+  public void testRenameKeepsLocationWhenCustomWritePathSet(String writePathProperty) {
+    HiveCatalog renameCatalog =
+        initCatalog(
+            "hive", ImmutableMap.of(CatalogProperties.RENAME_UPDATE_METADATA_LOCATION, "true"));
+    String suffix = writePathProperty.replaceAll("[^a-z0-9]", "_");
+    TableIdentifier from = TableIdentifier.of(DB_NAME, "rename_custom_src_" + suffix);
+    TableIdentifier to = TableIdentifier.of(DB_NAME, "rename_custom_dst_" + suffix);
+    String customValue =
+        writePathProperty.equals(TableProperties.WRITE_LOCATION_PROVIDER_IMPL)
+            ? "org.apache.iceberg.LocationProviders$DefaultLocationProvider"
+            : temp.resolve("custom-write-path").toString();
+    try {
+      Table original =
+          renameCatalog.createTable(
+              from,
+              getTestSchema(),
+              PartitionSpec.unpartitioned(),
+              null,
+              ImmutableMap.of(writePathProperty, customValue));
+      String originalLocation = original.location();
+      assertThat(originalLocation).endsWith("/" + from.name());
+
+      renameCatalog.renameTable(from, to);
+
+      Table renamed = renameCatalog.loadTable(to);
+      assertThat(renamed.location()).isEqualTo(originalLocation);
+      assertThat(renamed.properties()).containsEntry(writePathProperty, customValue);
     } finally {
       renameCatalog.dropTable(to, false);
     }

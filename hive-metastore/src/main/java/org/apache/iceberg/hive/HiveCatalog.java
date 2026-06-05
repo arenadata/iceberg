@@ -18,6 +18,8 @@
  */
 package org.apache.iceberg.hive;
 
+import static org.apache.iceberg.TableProperties.CUSTOM_WRITE_PATH_PROPERTIES;
+
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
@@ -463,6 +465,17 @@ public class HiveCatalog extends BaseMetastoreViewCatalog
       return false;
     }
 
+    List<String> customWriteProperties = customWritePathProperties(current.properties());
+    if (!customWriteProperties.isEmpty()) {
+      LOG.info(
+          "Not updating location of renamed table {} -> {}: table sets custom write-path "
+              + "properties {} that override metadata.location for new writes",
+          from,
+          to,
+          customWriteProperties);
+      return false;
+    }
+
     // update metadata location + table name via HmsTablePreCommitHandler
     ops.commit(current, current.updateLocation(newTableDefaultLocation));
     LOG.info("Updated location of renamed table {} -> {} to {}", from, to, newTableDefaultLocation);
@@ -483,6 +496,12 @@ public class HiveCatalog extends BaseMetastoreViewCatalog
   private void updateHmsTableName(Table hmsTable, TableIdentifier to) {
     hmsTable.setDbName(to.namespace().level(0));
     hmsTable.setTableName(to.name());
+  }
+
+  private static List<String> customWritePathProperties(Map<String, String> properties) {
+    return CUSTOM_WRITE_PATH_PROPERTIES.stream()
+        .filter(properties::containsKey)
+        .collect(Collectors.toList());
   }
 
   /**
