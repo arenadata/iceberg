@@ -388,7 +388,7 @@ public class SparkCatalog extends BaseCatalog {
 
   private void deleteTableFiles(FileIO io, TableMetadata tableMetadata) {
     SparkActions.get().deleteReachableFiles(tableMetadata.metadataFileLocation()).io(io).execute();
-    CatalogUtil.maybeDeleteEmptyDirectory(io, tableMetadata);
+    CatalogUtil.deleteTableDirectoryIfEmpty(io, tableMetadata);
   }
 
   private boolean dropTableWithoutPurging(Identifier ident) {
