@@ -23,6 +23,8 @@ import java.util.Map;
 import org.apache.iceberg.encryption.KeyManagementClient;
 
 public class LocalAesKmsClient implements KeyManagementClient {
+  public LocalAesKmsClient() {}
+
   public void initialize(Map<String, String> properties) {}
 
   public ByteBuffer wrapKey(ByteBuffer key, String wrappingKeyId) {
