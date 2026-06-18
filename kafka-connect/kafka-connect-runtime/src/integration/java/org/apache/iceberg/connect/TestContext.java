@@ -18,6 +18,12 @@
  */
 package org.apache.iceberg.connect;
 
+import static org.apache.iceberg.connect.utils.ConnectorUtils.AWS_ACCESS_KEY;
+import static org.apache.iceberg.connect.utils.ConnectorUtils.AWS_REGION;
+import static org.apache.iceberg.connect.utils.ConnectorUtils.AWS_SECRET_KEY;
+import static org.apache.iceberg.connect.utils.ConnectorUtils.CATALOG_PORT;
+import static org.apache.iceberg.connect.utils.ConnectorUtils.MINIO_PORT;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.File;
 import java.time.Duration;
@@ -43,12 +49,7 @@ public class TestContext {
   public static final ObjectMapper MAPPER = new ObjectMapper();
   public static final int CONNECT_PORT = 8083;
 
-  private static final int MINIO_PORT = 9000;
-  private static final int CATALOG_PORT = 8181;
   private static final String BOOTSTRAP_SERVERS = "localhost:29092";
-  private static final String AWS_ACCESS_KEY = "minioadmin";
-  private static final String AWS_SECRET_KEY = "minioadmin";
-  private static final String AWS_REGION = "us-east-1";
 
   public static synchronized TestContext instance() {
     if (instance == null) {

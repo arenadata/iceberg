@@ -16,71 +16,73 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.iceberg.connect;
+package org.apache.iceberg.connect.v3.dto;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
-import java.time.Instant;
-import java.util.Date;
+import java.util.stream.Stream;
 import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.common.DynMethods;
+import org.apache.iceberg.connect.TestContext;
+import org.apache.iceberg.expressions.Literal;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableSet;
 import org.apache.iceberg.types.Types;
 import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
-import org.apache.kafka.connect.data.Timestamp;
 import org.apache.kafka.connect.json.JsonConverter;
 
-public class TestEvent extends BaseTestEvent {
+import static java.lang.String.format;
+import static java.util.stream.Collectors.joining;
 
-  public static final Schema TEST_SCHEMA =
+public class EventExtended extends Event {
+  public static final String INFO_WRITE_DEFAULT = "active";
+  private final String info;
+
+  public static final Schema EVENT_EXTENDED_TABLE_SCHEMA =
       new Schema(
           ImmutableList.of(
               Types.NestedField.required(1, "id", Types.LongType.get()),
-              Types.NestedField.required(2, "type", Types.StringType.get()),
-              Types.NestedField.required(3, "ts", Types.TimestampType.withZone()),
-              Types.NestedField.required(4, "payload", Types.StringType.get())),
+              Types.NestedField.optional(2, "username", Types.StringType.get()),
+              Types.NestedField.optional("info")
+                  .withId(3)
+                  .ofType(Types.StringType.get())
+                  .withInitialDefault(Literal.of("non-active"))
+                  .withWriteDefault(Literal.of(INFO_WRITE_DEFAULT))
+                  .build()),
           ImmutableSet.of(1));
 
-  public static final org.apache.kafka.connect.data.Schema TEST_CONNECT_SCHEMA =
+  public static final org.apache.kafka.connect.data.Schema EVENT_EXTENDED_CONNECT_SCHEMA =
       SchemaBuilder.struct()
           .field("id", org.apache.kafka.connect.data.Schema.INT64_SCHEMA)
-          .field("type", org.apache.kafka.connect.data.Schema.STRING_SCHEMA)
-          .field("ts", Timestamp.SCHEMA)
-          .field("payload", org.apache.kafka.connect.data.Schema.STRING_SCHEMA)
-          .field("op", org.apache.kafka.connect.data.Schema.OPTIONAL_STRING_SCHEMA);
+          .field("username", org.apache.kafka.connect.data.Schema.STRING_SCHEMA)
+          .field("info", org.apache.kafka.connect.data.Schema.OPTIONAL_STRING_SCHEMA);
 
-  public static final PartitionSpec TEST_SPEC =
-      PartitionSpec.builderFor(TEST_SCHEMA).day("ts").build();
+  public static final PartitionSpec EVENT_EXTENDED_SPEC =
+      PartitionSpec.builderFor(EVENT_EXTENDED_TABLE_SCHEMA).build();
 
-  private final String type;
-  private final Instant ts;
-  private final String payload;
-  private final String op;
-
-  public TestEvent(long id, String type, Instant ts, String payload) {
-    this(id, type, ts, payload, null);
+  public EventExtended(Long id, String username, String info) {
+    super(id, username);
+    this.info = info;
   }
 
-  public TestEvent(long id, String type, Instant ts, String payload, String op) {
-    super(id);
-    this.type = type;
-    this.ts = ts;
-    this.payload = payload;
-    this.op = op;
+  public EventExtended(Event event, String info) {
+    this(event.id(), event.username(), info);
   }
 
+  public String info() {
+    return info;
+  }
+
+  @Override
   protected String serialize(boolean useSchema) {
     try {
       Struct value =
-          new Struct(TEST_CONNECT_SCHEMA)
+          new Struct(EVENT_EXTENDED_CONNECT_SCHEMA)
               .put("id", id())
-              .put("type", type)
-              .put("ts", Date.from(ts))
-              .put("payload", payload)
-              .put("op", op);
+              .put("username", username())
+              .put("info", info);
 
       String convertMethod =
           useSchema ? "convertToJsonWithEnvelope" : "convertToJsonWithoutEnvelope";
@@ -89,10 +91,17 @@ public class TestEvent extends BaseTestEvent {
               .hiddenImpl(
                   JsonConverter.class, org.apache.kafka.connect.data.Schema.class, Object.class)
               .build(JSON_CONVERTER)
-              .invoke(TestEvent.TEST_CONNECT_SCHEMA, value);
+              .invoke(EVENT_EXTENDED_CONNECT_SCHEMA, value);
       return TestContext.MAPPER.writeValueAsString(json);
     } catch (JsonProcessingException e) {
       throw new RuntimeException(e);
     }
   }
+
+  @Override
+  public String castToString() {
+    return Stream.of(String.valueOf(id()), username(), info())
+            .collect(joining("|")).toString();
+  }
+
 }
