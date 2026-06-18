@@ -19,6 +19,17 @@ volumes:
   data: {}
 
 services:
+  download-jars:
+    image: curlimages/curl
+    user: root
+    command: >
+      sh -c "
+      mkdir -p /jars &&
+      curl -L -o /jars/aws-java-sdk-bundle-1.12.367.jar
+      https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/1.12.367/aws-java-sdk-bundle-1.12.367.jar
+      "
+    volumes:
+      - ./hive-libs:/jars
   minio:
     image: minio/minio
     hostname: minio
@@ -145,6 +156,8 @@ services:
     depends_on:
       metastore-db:
         condition: service_healthy
+      download-jars:
+        condition: service_completed_successfully
     volumes:
       - ./hive-libs/postgresql-42.7.7.jar:/opt/hive/lib/postgresql-42.7.7.jar:ro
       - ./hive-libs/hadoop-aws-3.3.6.jar:/opt/hive/lib/hadoop-aws-3.3.6.jar:ro
