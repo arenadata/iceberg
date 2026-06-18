@@ -18,14 +18,6 @@
  */
 package org.apache.iceberg.connect.v3;
 
-import static java.lang.String.format;
-import static org.apache.iceberg.connect.utils.ConnectorUtils.V3_AUTO_CREATE_CONNECTOR_CONFIGS;
-import static org.apache.iceberg.connect.utils.ConnectorUtils.addConnectorConfigs;
-import static org.apache.iceberg.connect.utils.IcebergTableUtils.extractTableRecords;
-import static org.apache.iceberg.connect.utils.IcebergTableUtils.extractTableRecordsAsString;
-import static org.apache.iceberg.connect.utils.IcebergTableUtils.loadCatalogTable;
-import static org.assertj.core.api.Assertions.assertThat;
-
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
@@ -34,17 +26,17 @@ import org.apache.iceberg.Table;
 import org.apache.iceberg.connect.v3.dto.Event;
 import org.apache.iceberg.connect.v3.dto.EventExtended;
 import org.apache.iceberg.connect.v3.dto.StructEvent;
-import org.apache.iceberg.data.GenericRecord;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
-import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
 import org.apache.iceberg.types.Types;
-import org.apache.iceberg.variants.ShreddedObject;
-import org.apache.iceberg.variants.Variant;
-import org.apache.iceberg.variants.VariantMetadata;
-import org.apache.iceberg.variants.Variants;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+
+import static org.apache.iceberg.connect.utils.ConnectorUtils.V3_AUTO_CREATE_CONNECTOR_CONFIGS;
+import static org.apache.iceberg.connect.utils.ConnectorUtils.addConnectorConfigs;
+import static org.apache.iceberg.connect.utils.IcebergTableUtils.extractTableRecordsAsString;
+import static org.apache.iceberg.connect.utils.IcebergTableUtils.loadCatalogTable;
+import static org.assertj.core.api.Assertions.assertThat;
 
 public class TestVariant extends IntegrationTestBaseV3 {
   private static final List<? extends Event> KAFKA_VARIANT_EVENTS =

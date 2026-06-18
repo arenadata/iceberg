@@ -25,7 +25,6 @@ import com.github.dockerjava.api.async.ResultCallback;
 import com.github.dockerjava.api.model.Frame;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 
 import static java.lang.String.format;
 import static org.apache.iceberg.connect.utils.ConnectorUtils.AWS_ACCESS_KEY;

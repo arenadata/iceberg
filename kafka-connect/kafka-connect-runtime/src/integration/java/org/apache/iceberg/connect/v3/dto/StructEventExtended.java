@@ -24,21 +24,14 @@ package org.apache.iceberg.connect.v3.dto;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import java.util.stream.Stream;
-import org.apache.iceberg.PartitionSpec;
-import org.apache.iceberg.Schema;
 import org.apache.iceberg.common.DynMethods;
 import org.apache.iceberg.connect.TestContext;
-import org.apache.iceberg.expressions.Literal;
-import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
-import org.apache.iceberg.relocated.com.google.common.collect.ImmutableSet;
-import org.apache.iceberg.types.Types;
 import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.json.JsonConverter;
 
 import static java.lang.String.format;
 import static java.util.stream.Collectors.joining;
-import static org.apache.iceberg.connect.v3.dto.EventExtended.INFO_WRITE_DEFAULT;
 
 public class StructEventExtended extends Event {
     private final InfoExtended info;

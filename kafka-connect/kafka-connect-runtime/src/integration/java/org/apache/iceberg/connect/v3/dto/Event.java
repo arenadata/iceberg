@@ -28,7 +28,6 @@ import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.json.JsonConverter;
 
-import static java.lang.String.format;
 import static java.util.stream.Collectors.joining;
 
 public class Event extends BaseTestEvent {
