@@ -19,6 +19,17 @@ volumes:
   data: {}
 
 services:
+  download-jars:
+    image: curlimages/curl
+    user: root
+    command: >
+      sh -c "
+      mkdir -p /jars &&
+      curl -L -o /jars/aws-java-sdk-bundle-1.12.367.jar
+      https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/1.12.367/aws-java-sdk-bundle-1.12.367.jar
+      "
+    volumes:
+      - ./hive-libs:/jars
   minio:
     image: minio/minio
     hostname: minio
@@ -89,6 +100,10 @@ services:
       - 8083:8083
     volumes:
       - ../build/install:/test/kafka-connect
+      - ./kms/iceberg-test-kms-1.0.0.jar:/test/kafka-connect/iceberg-kafka-connect-runtime/lib/local-kms-client.jar:ro
+      - ./connect-libs/hadoop-aws-3.4.1.jar:/test/kafka-connect/iceberg-kafka-connect-runtime/lib/hadoop-aws-3.4.1.jar:ro
+      - ./connect-libs/s3-transfer-manager-2.42.39.jar:/test/kafka-connect/iceberg-kafka-connect-runtime/lib/s3-transfer-manager-2.42.39.jar:ro
+
     environment:
       CONNECT_REST_ADVERTISED_HOST_NAME: localhost
       CONNECT_REST_PORT: 8083
@@ -106,3 +121,73 @@ services:
       CONNECT_PLUGIN_PATH: /test/kafka-connect
       CONNECT_BOOTSTRAP_SERVERS: kafka:9092
       CONNECT_OFFSET_FLUSH_INTERVAL_MS: 500
+
+  hive-metastore:
+    image: apache/hive:4.0.0
+    ports:
+      - 9083:9083
+    environment:
+      SERVICE_NAME: metastore
+      DB_DRIVER: postgres
+      HIVE_AUX_JARS_PATH: /opt/hadoop/share/hadoop/tools/lib/hadoop-aws-3.3.6.jar:/opt/hadoop/share/hadoop/tools/lib/aws-java-sdk-bundle-1.12.367.jar
+      HADOOP_CLASSPATH: /opt/hadoop/share/hadoop/tools/lib/hadoop-aws-3.3.6.jar:/opt/hadoop/share/hadoop/tools/lib/aws-java-sdk-bundle-1.12.367.jar
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
+      AWS_REGION: us-east-1
+      AWS_DEFAULT_REGION: us-east-1
+      S3_ENDPOINT: http://minio:9000
+      S3_PATH_STYLE_ACCESS: "true"
+      SERVICE_OPTS: >-
+        -Djavax.jdo.option.ConnectionURL=jdbc:postgresql://metastore-db:5432/metastore
+        -Djavax.jdo.option.ConnectionDriverName=org.postgresql.Driver
+        -Djavax.jdo.option.ConnectionUserName=hive
+        -Djavax.jdo.option.ConnectionPassword=hive
+        -Dhive.metastore.warehouse.dir=s3a://warehouse/
+        -Dmetastore.warehouse.dir=s3a://warehouse/
+        -Dfs.s3a.impl=org.apache.hadoop.fs.s3a.S3AFileSystem
+        -Dfs.s3a.endpoint=http://minio:9000
+        -Dfs.s3a.path.style.access=true
+        -Dfs.s3a.access.key=minioadmin
+        -Dfs.s3a.secret.key=minioadmin
+        -Dfs.s3a.aws.credentials.provider=org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider
+        -Dfs.s3a.connection.ssl.enabled=false
+    command: >
+      /opt/hive/bin/hive --service metastore -p 9083
+    depends_on:
+      metastore-db:
+        condition: service_healthy
+      download-jars:
+        condition: service_completed_successfully
+    volumes:
+      - ./hive-libs/postgresql-42.7.7.jar:/opt/hive/lib/postgresql-42.7.7.jar:ro
+      - ./hive-libs/hadoop-aws-3.3.6.jar:/opt/hive/lib/hadoop-aws-3.3.6.jar:ro
+      - ./hive-libs/aws-java-sdk-bundle-1.12.367.jar:/opt/hive/lib/aws-java-sdk-bundle-1.12.367.jar:ro
+      - ./hive-libs/core-site.xml:/opt/hive/conf/core-site.xml:ro
+
+  metastore-db:
+    image: postgres:15
+    ports:
+      - 5433:5432
+    environment:
+      POSTGRES_USER: hive
+      POSTGRES_PASSWORD: hive
+      POSTGRES_DB: metastore
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U hive -d metastore" ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  spark-iceberg:
+    image: apache/spark:latest
+    user: root
+    environment:
+      - AWS_ACCESS_KEY_ID=minioadmin
+      - AWS_SECRET_ACCESS_KEY=minioadmin
+      - AWS_REGION=us-east-1
+    command: tail -f /dev/null
+    volumes:
+      - ../../../aws-bundle/build/libs/iceberg-aws-bundle-1.10.1_arenadata1.jar:/opt/spark/jars/iceberg-aws-bundle-1.10.1_arenadata1.jar
+      - ../../../spark/v4.0/spark-runtime/build/libs/iceberg-spark-runtime-4.0_2.13-1.10.1_arenadata1.jar:/opt/spark/jars/iceberg-spark-runtime-4.0_2.13-1.10.1_arenadata1.jar
+      - ./connect-libs/hadoop-aws-3.4.1.jar:/opt/spark/jars/hadoop-aws-3.4.1.jar
+      - ./connect-libs/s3-transfer-manager-2.42.39.jar:/opt/spark/jars/s3-transfer-manager-2.42.39.jar
