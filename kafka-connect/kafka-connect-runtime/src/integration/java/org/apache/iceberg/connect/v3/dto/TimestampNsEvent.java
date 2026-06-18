@@ -18,6 +18,9 @@
  */
 package org.apache.iceberg.connect.v3.dto;
 
+import static java.lang.String.format;
+import static java.util.stream.Collectors.joining;
+
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import java.util.stream.Stream;
@@ -26,9 +29,6 @@ import org.apache.iceberg.connect.TestContext;
 import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.json.JsonConverter;
-
-import static java.lang.String.format;
-import static java.util.stream.Collectors.joining;
 
 public class TimestampNsEvent extends Event {
   private long eventTime;
@@ -130,8 +130,13 @@ public class TimestampNsEvent extends Event {
   }
 
   public String castToString() {
-    return Stream.of(String.valueOf(id()), username(), format("Record(%s)", userStats().finishTime(),
-                    format("Record(%s)", checkStats().eventTime())))
-            .collect(joining("|")).toString();
+    return Stream.of(
+            String.valueOf(id()),
+            username(),
+            format(
+                "Record(%s)",
+                userStats().finishTime(), format("Record(%s)", checkStats().eventTime())))
+        .collect(joining("|"))
+        .toString();
   }
 }

@@ -25,9 +25,9 @@ import static org.apache.iceberg.connect.utils.ConnectorUtils.MINIO_PORT;
 import static org.apache.iceberg.connect.utils.ConnectorUtils.V3_AUTO_CREATE_CONNECTOR_CONFIGS;
 import static org.apache.iceberg.connect.utils.ConnectorUtils.addConnectorConfigs;
 import static org.apache.iceberg.connect.utils.IcebergTableUtils.S3_CLIENT;
+import static org.apache.iceberg.connect.utils.IcebergTableUtils.extractTableRecords;
 import static org.apache.iceberg.connect.utils.IcebergTableUtils.loadCatalogTable;
 import static org.apache.iceberg.connect.utils.KafkaBaseEventsUtils.KAFKA_BASE_EVENTS;
-import static org.apache.iceberg.connect.utils.IcebergTableUtils.extractTableRecords;
 import static org.apache.iceberg.connect.utils.KafkaBaseEventsUtils.castKafkaBaseEventsToRecords;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -72,7 +72,8 @@ public class TestEncryption extends IntegrationTestBaseV3 {
   public void testEncryption(boolean useSchema) {
     runTest(
         useSchema,
-        addConnectorConfigs(V3_AUTO_CREATE_CONNECTOR_CONFIGS, hiveCatalogConnectorConfigs(testTopic())),
+        addConnectorConfigs(
+            V3_AUTO_CREATE_CONNECTOR_CONFIGS, hiveCatalogConnectorConfigs(testTopic())),
         List.of(HIVE_TABLE_IDENTIFIER),
         KAFKA_BASE_EVENTS);
 
@@ -85,19 +86,22 @@ public class TestEncryption extends IntegrationTestBaseV3 {
         .containsExactlyInAnyOrderElementsOf(List.of("id", "username"));
     List<org.apache.iceberg.data.Record> tableRecords =
         useSchema ? extractRecords(table) : extractTableRecords(table);
-    assertThat(tableRecords).containsExactlyInAnyOrderElementsOf(castKafkaBaseEventsToRecords(schema));
+    assertThat(tableRecords)
+        .containsExactlyInAnyOrderElementsOf(castKafkaBaseEventsToRecords(schema));
   }
 
   @Test
   public void testEncryptionNegative() throws Exception {
     runTest(
-        true, hiveCatalogConnectorConfigs(testTopic()), List.of(HIVE_TABLE_IDENTIFIER), KAFKA_BASE_EVENTS);
+        true,
+        hiveCatalogConnectorConfigs(testTopic()),
+        List.of(HIVE_TABLE_IDENTIFIER),
+        KAFKA_BASE_EVENTS);
     Catalog catalogWithoutEncryptionConfig = new HiveCatalog();
     catalogWithoutEncryptionConfig.initialize("local_hive", hiveCatalogConfigs());
 
     Table table = loadCatalogTable(catalogWithoutEncryptionConfig, HIVE_TABLE_IDENTIFIER);
-    assertThatThrownBy(
-            () -> extractTableRecords(table))
+    assertThatThrownBy(() -> extractTableRecords(table))
         .isInstanceOf(java.lang.RuntimeException.class)
         .hasMessage("Cant create encryption manager, because key management client is not set");
     ((AutoCloseable) catalogWithoutEncryptionConfig).close();
@@ -118,9 +122,9 @@ public class TestEncryption extends IntegrationTestBaseV3 {
   @Override
   protected KafkaConnectUtils.Config createConfig(boolean useSchema) {
     return createCommonConfig(useSchema)
-            .config("iceberg.tables", HIVE_TABLE_IDENTIFIER.toString())
-            .config("iceberg.tables.evolve-schema-enabled", "true")
-            .config("tasks.max", "1");
+        .config("iceberg.tables", HIVE_TABLE_IDENTIFIER.toString())
+        .config("iceberg.tables.evolve-schema-enabled", "true")
+        .config("tasks.max", "1");
   }
 
   private List<org.apache.iceberg.data.Record> extractRecords(Table table) {
@@ -175,25 +179,33 @@ public class TestEncryption extends IntegrationTestBaseV3 {
 
   private static Map<String, String> hiveCatalogConfigs() {
     return Map.of(
-        CatalogProperties.URI, HIVE_METASTORE_URI,
-        CatalogProperties.FILE_IO_IMPL, "org.apache.iceberg.aws.s3.S3FileIO",
-        CatalogProperties.WAREHOUSE_LOCATION, HIVE_WAREHOUSE_LOCATION,
-        "hive.metastore.warehouse.dir", HIVE_WAREHOUSE_LOCATION,
-        "s3.endpoint", "http://localhost:" + MINIO_PORT,
-        "s3.access-key-id", AWS_ACCESS_KEY,
-        "s3.secret-access-key", AWS_SECRET_KEY,
-        "s3.path-style-access", "true",
-        "client.region", AWS_REGION);
+        CatalogProperties.URI,
+        HIVE_METASTORE_URI,
+        CatalogProperties.FILE_IO_IMPL,
+        "org.apache.iceberg.aws.s3.S3FileIO",
+        CatalogProperties.WAREHOUSE_LOCATION,
+        HIVE_WAREHOUSE_LOCATION,
+        "hive.metastore.warehouse.dir",
+        HIVE_WAREHOUSE_LOCATION,
+        "s3.endpoint",
+        "http://localhost:" + MINIO_PORT,
+        "s3.access-key-id",
+        AWS_ACCESS_KEY,
+        "s3.secret-access-key",
+        AWS_SECRET_KEY,
+        "s3.path-style-access",
+        "true",
+        "client.region",
+        AWS_REGION);
   }
 
   private static Map<String, String> hiveCatalogConfigsWithEncryption() {
-    return Stream.of(hiveCatalogConfigs(),
-                    Map.of("encryption.kms-impl", "org.apache.iceberg.connect.utils.encryption.LocalAesKmsClient"))
-            .flatMap(m -> m.entrySet().stream())
-            .collect(Collectors.toMap(
-                    Map.Entry::getKey,
-                    Map.Entry::getValue,
-                    (v1, v2) -> v2));
-
+    return Stream.of(
+            hiveCatalogConfigs(),
+            Map.of(
+                "encryption.kms-impl",
+                "org.apache.iceberg.connect.utils.encryption.LocalAesKmsClient"))
+        .flatMap(m -> m.entrySet().stream())
+        .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue, (v1, v2) -> v2));
   }
 }

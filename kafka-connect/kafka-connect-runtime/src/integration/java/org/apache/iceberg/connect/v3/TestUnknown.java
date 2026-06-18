@@ -20,9 +20,9 @@ package org.apache.iceberg.connect.v3;
 
 import static org.apache.iceberg.connect.utils.ConnectorUtils.V3_AUTO_CREATE_CONNECTOR_CONFIGS;
 import static org.apache.iceberg.connect.utils.ConnectorUtils.addConnectorConfigs;
-import static org.apache.iceberg.connect.utils.KafkaBaseEventsUtils.KAFKA_BASE_EVENTS;
 import static org.apache.iceberg.connect.utils.IcebergTableUtils.extractTableRecords;
 import static org.apache.iceberg.connect.utils.IcebergTableUtils.loadCatalogTable;
+import static org.apache.iceberg.connect.utils.KafkaBaseEventsUtils.KAFKA_BASE_EVENTS;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.List;
@@ -46,15 +46,17 @@ public class TestUnknown extends IntegrationTestBaseV3 {
 
     runTest(
         true,
-            addConnectorConfigs(addConnectorConfigs(context().connectorCatalogProperties(), V3_AUTO_CREATE_CONNECTOR_CONFIGS),
-            Map.of("iceberg.tables.evolve-unknown-type-enabled", String.valueOf(isUnknownSupported))),
+        addConnectorConfigs(
+            addConnectorConfigs(
+                context().connectorCatalogProperties(), V3_AUTO_CREATE_CONNECTOR_CONFIGS),
+            Map.of(
+                "iceberg.tables.evolve-unknown-type-enabled", String.valueOf(isUnknownSupported))),
         List.of(TABLE_IDENTIFIER),
         KAFKA_BASE_EVENTS);
 
     Table table = loadCatalogTable(catalog(), TABLE_IDENTIFIER);
 
-    assertThat(table.schema().columns())
-        .hasSameElementsAs(schema.columns());
+    assertThat(table.schema().columns()).hasSameElementsAs(schema.columns());
 
     assertThat(extractTableRecords(table))
         .containsExactlyInAnyOrderElementsOf(castEventsToRecords(isUnknownSupported));

@@ -18,6 +18,8 @@
  */
 package org.apache.iceberg.connect.v3.dto;
 
+import static java.util.stream.Collectors.joining;
+
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import java.util.stream.Stream;
@@ -27,8 +29,6 @@ import org.apache.iceberg.connect.TestContext;
 import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.json.JsonConverter;
-
-import static java.util.stream.Collectors.joining;
 
 public class Event extends BaseTestEvent {
   private final String username;
@@ -44,8 +44,7 @@ public class Event extends BaseTestEvent {
   }
 
   public String castToString() {
-    return Stream.of(String.valueOf(id()), username())
-            .collect(joining("|")).toString();
+    return Stream.of(String.valueOf(id()), username()).collect(joining("|")).toString();
   }
 
   @Override

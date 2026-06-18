@@ -21,8 +21,8 @@ package org.apache.iceberg.connect.v3;
 import static org.apache.iceberg.connect.utils.ConnectorUtils.addConnectorConfigs;
 import static org.apache.iceberg.connect.utils.IcebergTableUtils.BASE_V3_TABLE_CONFIG;
 import static org.apache.iceberg.connect.utils.IcebergTableUtils.extractTableRecordsAsString;
-import static org.apache.iceberg.connect.v3.dto.EventExtended.INFO_WRITE_DEFAULT;
 import static org.apache.iceberg.connect.utils.IcebergTableUtils.loadCatalogTable;
+import static org.apache.iceberg.connect.v3.dto.EventExtended.INFO_WRITE_DEFAULT;
 import static org.apache.iceberg.connect.v3.dto.StructEvent.EVENT_STRUCT_TABLE_SCHEMA;
 import static org.apache.iceberg.connect.v3.dto.StructEvent.TEST_STRUCT_SPEC;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -48,23 +48,27 @@ public class TestStructDefault extends IntegrationTestBaseV3 {
   @ParameterizedTest
   @MethodSource("argsProvider")
   public void testStructDefault(
-      boolean useSchema, boolean isDefaultsEnabled, String status, List<? extends Event> kafkaEvents) {
+      boolean useSchema,
+      boolean isDefaultsEnabled,
+      String status,
+      List<? extends Event> kafkaEvents) {
     catalog()
         .createTable(
             TABLE_IDENTIFIER, EVENT_STRUCT_TABLE_SCHEMA, TEST_STRUCT_SPEC, BASE_V3_TABLE_CONFIG);
 
     runTest(
         useSchema,
-            addConnectorConfigs(context().connectorCatalogProperties(), ImmutableMap.of(
-            "iceberg.tables.defaults-enabled",
-            String.valueOf(isDefaultsEnabled))),
+        addConnectorConfigs(
+            context().connectorCatalogProperties(),
+            ImmutableMap.of("iceberg.tables.defaults-enabled", String.valueOf(isDefaultsEnabled))),
         List.of(TABLE_IDENTIFIER),
         kafkaEvents);
 
     Table table = loadCatalogTable(catalog(), TABLE_IDENTIFIER);
 
     assertThat(extractTableRecordsAsString(table))
-        .hasSameElementsAs(castStructEventsExtendedToStrings(castStructEventsToStructEventsExtended(status)));
+        .hasSameElementsAs(
+            castStructEventsExtendedToStrings(castStructEventsToStructEventsExtended(status)));
   }
 
   private static Stream<Arguments> argsProvider() {
@@ -81,10 +85,10 @@ public class TestStructDefault extends IntegrationTestBaseV3 {
     return KAFKA_STRUCT_EVENTS.stream()
         .map(
             testStructEvent ->
-                    new StructEventExtended(
-                            testStructEvent.id(),
-                            testStructEvent.username(),
-                            new StructEventExtended.InfoExtended(testStructEvent.info().age(), status)))
+                new StructEventExtended(
+                    testStructEvent.id(),
+                    testStructEvent.username(),
+                    new StructEventExtended.InfoExtended(testStructEvent.info().age(), status)))
         .toList();
   }
 

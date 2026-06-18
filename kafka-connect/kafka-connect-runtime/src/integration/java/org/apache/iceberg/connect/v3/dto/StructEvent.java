@@ -77,8 +77,7 @@ public class StructEvent extends Event {
           ImmutableSet.of(1));
 
   public static final PartitionSpec TEST_STRUCT_SPEC =
-          PartitionSpec.builderFor(EVENT_STRUCT_TABLE_SCHEMA).build();
-
+      PartitionSpec.builderFor(EVENT_STRUCT_TABLE_SCHEMA).build();
 
   @Override
   protected String serialize(boolean useSchema) {
@@ -109,7 +108,8 @@ public class StructEvent extends Event {
   @Override
   public String castToString() {
     return Stream.of(String.valueOf(id()), username(), format("Record(%s)", info().age))
-            .collect(joining("|")).toString();
+        .collect(joining("|"))
+        .toString();
   }
 
   public static class Info {

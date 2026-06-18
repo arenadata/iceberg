@@ -18,6 +18,12 @@
  */
 package org.apache.iceberg.connect.v3;
 
+import static org.apache.iceberg.connect.utils.ConnectorUtils.V3_AUTO_CREATE_CONNECTOR_CONFIGS;
+import static org.apache.iceberg.connect.utils.ConnectorUtils.addConnectorConfigs;
+import static org.apache.iceberg.connect.utils.IcebergTableUtils.extractTableRecordsAsString;
+import static org.apache.iceberg.connect.utils.IcebergTableUtils.loadCatalogTable;
+import static org.assertj.core.api.Assertions.assertThat;
+
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
@@ -32,12 +38,6 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
-import static org.apache.iceberg.connect.utils.ConnectorUtils.V3_AUTO_CREATE_CONNECTOR_CONFIGS;
-import static org.apache.iceberg.connect.utils.ConnectorUtils.addConnectorConfigs;
-import static org.apache.iceberg.connect.utils.IcebergTableUtils.extractTableRecordsAsString;
-import static org.apache.iceberg.connect.utils.IcebergTableUtils.loadCatalogTable;
-import static org.assertj.core.api.Assertions.assertThat;
-
 public class TestVariant extends IntegrationTestBaseV3 {
   private static final List<? extends Event> KAFKA_VARIANT_EVENTS =
       List.of(
@@ -49,18 +49,20 @@ public class TestVariant extends IntegrationTestBaseV3 {
   public void testVariant(boolean useSchema, Schema tableSchema) {
     runTest(
         useSchema,
-        addConnectorConfigs(addConnectorConfigs(context().connectorCatalogProperties(), V3_AUTO_CREATE_CONNECTOR_CONFIGS),
-        Map.of("iceberg.tables.schema-variant-fields", "info")),
+        addConnectorConfigs(
+            addConnectorConfigs(
+                context().connectorCatalogProperties(), V3_AUTO_CREATE_CONNECTOR_CONFIGS),
+            Map.of("iceberg.tables.schema-variant-fields", "info")),
         List.of(TABLE_IDENTIFIER),
         KAFKA_VARIANT_EVENTS);
 
     Table table = loadCatalogTable(catalog(), TABLE_IDENTIFIER);
 
-    assertThat(table.schema().columns())
-        .hasSameElementsAs(tableSchema.columns());
+    assertThat(table.schema().columns()).hasSameElementsAs(tableSchema.columns());
 
     assertThat(extractTableRecordsAsString(table))
-        .hasSameElementsAs(KAFKA_VARIANT_EVENTS.stream().map(event -> event.castToString()).toList());
+        .hasSameElementsAs(
+            KAFKA_VARIANT_EVENTS.stream().map(event -> event.castToString()).toList());
   }
 
   private static Stream<Arguments> argsProvider() {

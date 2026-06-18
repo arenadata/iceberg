@@ -20,12 +20,12 @@ package org.apache.iceberg.connect.v3;
 
 import static org.apache.iceberg.connect.utils.ConnectorUtils.addConnectorConfigs;
 import static org.apache.iceberg.connect.utils.IcebergTableUtils.BASE_V3_TABLE_CONFIG;
+import static org.apache.iceberg.connect.utils.IcebergTableUtils.extractTableRecords;
+import static org.apache.iceberg.connect.utils.IcebergTableUtils.loadCatalogTable;
+import static org.apache.iceberg.connect.utils.KafkaBaseEventsUtils.KAFKA_BASE_EVENTS;
 import static org.apache.iceberg.connect.v3.dto.EventExtended.EVENT_EXTENDED_SPEC;
 import static org.apache.iceberg.connect.v3.dto.EventExtended.EVENT_EXTENDED_TABLE_SCHEMA;
 import static org.apache.iceberg.connect.v3.dto.EventExtended.INFO_WRITE_DEFAULT;
-import static org.apache.iceberg.connect.utils.KafkaBaseEventsUtils.KAFKA_BASE_EVENTS;
-import static org.apache.iceberg.connect.utils.IcebergTableUtils.extractTableRecords;
-import static org.apache.iceberg.connect.utils.IcebergTableUtils.loadCatalogTable;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.List;
@@ -47,12 +47,16 @@ public class TestBaseDefault extends IntegrationTestBaseV3 {
       boolean useSchema, boolean isDefaultsEnabled, String infoValue, List<Event> events) {
     catalog()
         .createTable(
-            TABLE_IDENTIFIER, EVENT_EXTENDED_TABLE_SCHEMA, EVENT_EXTENDED_SPEC, BASE_V3_TABLE_CONFIG);
+            TABLE_IDENTIFIER,
+            EVENT_EXTENDED_TABLE_SCHEMA,
+            EVENT_EXTENDED_SPEC,
+            BASE_V3_TABLE_CONFIG);
 
     runTest(
         useSchema,
-        addConnectorConfigs(context().connectorCatalogProperties(),
-                ImmutableMap.of("iceberg.tables.defaults-enabled", String.valueOf(isDefaultsEnabled))),
+        addConnectorConfigs(
+            context().connectorCatalogProperties(),
+            ImmutableMap.of("iceberg.tables.defaults-enabled", String.valueOf(isDefaultsEnabled))),
         List.of(TABLE_IDENTIFIER),
         events);
 

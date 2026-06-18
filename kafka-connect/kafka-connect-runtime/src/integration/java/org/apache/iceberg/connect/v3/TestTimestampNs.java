@@ -60,7 +60,6 @@ public class TestTimestampNs extends IntegrationTestBaseV3 {
               new TimestampNsEvent.TimestampNsFinishTime(1714821017345600000L),
               new TimestampNsEvent.TimestampNsEventTime(1714821017845600000L)));
 
-
   @ParameterizedTest
   @MethodSource("argsProvider")
   public void testTimestampNs(
@@ -68,7 +67,11 @@ public class TestTimestampNs extends IntegrationTestBaseV3 {
       Type eventTimeType,
       Type finishTimeType,
       Type checkStatsEventTimeType) {
-    runTest(true, addConnectorConfigs(context().connectorCatalogProperties(), connectorCustomConfigs), List.of(TABLE_IDENTIFIER), KAFKA_TIMESTAMP_NS_EVENTS);
+    runTest(
+        true,
+        addConnectorConfigs(context().connectorCatalogProperties(), connectorCustomConfigs),
+        List.of(TABLE_IDENTIFIER),
+        KAFKA_TIMESTAMP_NS_EVENTS);
 
     Schema expectedSchema =
         new Schema(
@@ -90,45 +93,44 @@ public class TestTimestampNs extends IntegrationTestBaseV3 {
 
     Table table = loadCatalogTable(catalog(), TABLE_IDENTIFIER);
 
-    assertThat(table.schema().columns())
-        .hasSameElementsAs(expectedSchema.columns());
+    assertThat(table.schema().columns()).hasSameElementsAs(expectedSchema.columns());
 
     List<org.apache.iceberg.data.Record> presetRecords =
         castEventsToRecords(eventTimeType, finishTimeType, checkStatsEventTimeType);
 
-    assertThat(extractTableRecords(table))
-        .containsExactlyInAnyOrderElementsOf(presetRecords);
+    assertThat(extractTableRecords(table)).containsExactlyInAnyOrderElementsOf(presetRecords);
   }
 
   private static Stream<Arguments> argsProvider() {
     return Stream.of(
         Arguments.of(
-                V3_AUTO_CREATE_CONNECTOR_CONFIGS,
-                Types.TimestampNanoType.withZone(),
-                Types.TimestampNanoType.withZone(),
-                Types.TimestampNanoType.withZone()),
+            V3_AUTO_CREATE_CONNECTOR_CONFIGS,
+            Types.TimestampNanoType.withZone(),
+            Types.TimestampNanoType.withZone(),
+            Types.TimestampNanoType.withZone()),
         Arguments.of(
             addConnectorConfigs(
                 V3_AUTO_CREATE_CONNECTOR_CONFIGS,
                 Map.of("iceberg.tables.schema-timestamp-ns-fields", "event_time")),
-                Types.TimestampNanoType.withoutZone(),
-                Types.TimestampNanoType.withZone(),
-                Types.TimestampNanoType.withoutZone()),
+            Types.TimestampNanoType.withoutZone(),
+            Types.TimestampNanoType.withZone(),
+            Types.TimestampNanoType.withoutZone()),
         Arguments.of(
-                addConnectorConfigs(
-                        V3_AUTO_CREATE_CONNECTOR_CONFIGS,
-                        Map.of(
-                            "iceberg.tables.schema-timestamp-ns-fields",
-                            "check_stats.event_time,user_stats.finish_time")),
-                Types.TimestampNanoType.withZone(),
-                Types.TimestampNanoType.withoutZone(),
-                Types.TimestampNanoType.withoutZone()),
+            addConnectorConfigs(
+                V3_AUTO_CREATE_CONNECTOR_CONFIGS,
+                Map.of(
+                    "iceberg.tables.schema-timestamp-ns-fields",
+                    "check_stats.event_time,user_stats.finish_time")),
+            Types.TimestampNanoType.withZone(),
+            Types.TimestampNanoType.withoutZone(),
+            Types.TimestampNanoType.withoutZone()),
         Arguments.of(
-                addConnectorConfigs(V3_AUTO_CREATE_CONNECTOR_CONFIGS,
-                    Map.of("iceberg.tables.schema-timestamp-ns-fields", "*")),
-                Types.TimestampNanoType.withoutZone(),
-                Types.TimestampNanoType.withoutZone(),
-                Types.TimestampNanoType.withoutZone()));
+            addConnectorConfigs(
+                V3_AUTO_CREATE_CONNECTOR_CONFIGS,
+                Map.of("iceberg.tables.schema-timestamp-ns-fields", "*")),
+            Types.TimestampNanoType.withoutZone(),
+            Types.TimestampNanoType.withoutZone(),
+            Types.TimestampNanoType.withoutZone()));
   }
 
   private List<org.apache.iceberg.data.Record> castEventsToRecords(

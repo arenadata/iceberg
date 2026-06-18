@@ -18,6 +18,8 @@
  */
 package org.apache.iceberg.connect.v3.dto;
 
+import static java.util.stream.Collectors.joining;
+
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import java.util.stream.Stream;
@@ -32,8 +34,6 @@ import org.apache.iceberg.types.Types;
 import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.json.JsonConverter;
-
-import static java.util.stream.Collectors.joining;
 
 public class EventExtended extends Event {
   public static final String INFO_WRITE_DEFAULT = "active";
@@ -99,8 +99,6 @@ public class EventExtended extends Event {
 
   @Override
   public String castToString() {
-    return Stream.of(String.valueOf(id()), username(), info())
-            .collect(joining("|")).toString();
+    return Stream.of(String.valueOf(id()), username(), info()).collect(joining("|")).toString();
   }
-
 }
