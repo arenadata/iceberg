@@ -31,7 +31,9 @@ import static org.apache.iceberg.connect.utils.KafkaBaseEventsUtils.KAFKA_BASE_E
 import static org.apache.iceberg.connect.utils.KafkaBaseEventsUtils.castKafkaBaseEventsToRecords;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.awaitility.Awaitility.await;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -111,6 +113,15 @@ public class TestEncryption extends IntegrationTestBaseV3 {
   protected Catalog initCatalog() {
     Catalog catalog = new HiveCatalog();
     catalog.initialize("local_hive", hiveCatalogConfigsWithEncryption());
+    await()
+        .atMost(Duration.ofSeconds(30))
+        .pollInterval(Duration.ofMillis(500))
+        .ignoreExceptions()
+        .until(
+            () -> {
+              ((SupportsNamespaces) catalog).listNamespaces();
+              return true;
+            });
     return catalog;
   }
 
