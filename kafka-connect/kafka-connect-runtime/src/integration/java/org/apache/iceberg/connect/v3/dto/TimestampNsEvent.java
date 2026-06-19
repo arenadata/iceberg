@@ -31,14 +31,14 @@ import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.json.JsonConverter;
 
 public class TimestampNsEvent extends Event {
-  private long eventTime;
+  private Object eventTime;
   private TimestampNsFinishTime userStats;
   private TimestampNsEventTime checkStats;
 
   public TimestampNsEvent(
       long id,
       String username,
-      long eventTime,
+      Object eventTime,
       TimestampNsFinishTime userStats,
       TimestampNsEventTime checkStats) {
     super(id, username);
@@ -47,7 +47,7 @@ public class TimestampNsEvent extends Event {
     this.checkStats = checkStats;
   }
 
-  public long eventTime() {
+  public Object eventTime() {
     return eventTime;
   }
 
@@ -105,38 +105,38 @@ public class TimestampNsEvent extends Event {
     }
   }
 
-  public static class TimestampNsFinishTime {
-    private long finishTime;
+  public String castToString() {
+    return Stream.of(
+            String.valueOf(id()),
+            username(),
+            String.valueOf(eventTime()),
+            format("Record(%s)", userStats().finishTime()),
+            format("Record(%s)", checkStats().eventTime()))
+        .collect(joining("|"))
+        .toString();
+  }
 
-    public TimestampNsFinishTime(long finishTime) {
+  public static class TimestampNsFinishTime {
+    private Object finishTime;
+
+    public TimestampNsFinishTime(Object finishTime) {
       this.finishTime = finishTime;
     }
 
-    public long finishTime() {
+    public Object finishTime() {
       return finishTime;
     }
   }
 
   public static class TimestampNsEventTime {
-    private long eventTime;
+    private Object eventTime;
 
-    public TimestampNsEventTime(long eventTime) {
+    public TimestampNsEventTime(Object eventTime) {
       this.eventTime = eventTime;
     }
 
-    public long eventTime() {
+    public Object eventTime() {
       return eventTime;
     }
-  }
-
-  public String castToString() {
-    return Stream.of(
-            String.valueOf(id()),
-            username(),
-            format(
-                "Record(%s)",
-                userStats().finishTime(), format("Record(%s)", checkStats().eventTime())))
-        .collect(joining("|"))
-        .toString();
   }
 }

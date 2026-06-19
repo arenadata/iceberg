@@ -21,6 +21,7 @@ package org.apache.iceberg.connect.v3;
 import static org.apache.iceberg.connect.utils.ConnectorUtils.V3_AUTO_CREATE_CONNECTOR_CONFIGS;
 import static org.apache.iceberg.connect.utils.ConnectorUtils.addConnectorConfigs;
 import static org.apache.iceberg.connect.utils.IcebergTableUtils.extractTableRecords;
+import static org.apache.iceberg.connect.utils.IcebergTableUtils.extractTableRecordsAsString;
 import static org.apache.iceberg.connect.utils.IcebergTableUtils.loadCatalogTable;
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -33,7 +34,6 @@ import java.util.stream.Stream;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.connect.v3.dto.TimestampNsEvent;
-import org.apache.iceberg.data.GenericRecord;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableSet;
 import org.apache.iceberg.types.Type;
@@ -95,10 +95,11 @@ public class TestTimestampNs extends IntegrationTestBaseV3 {
 
     assertThat(table.schema().columns()).hasSameElementsAs(expectedSchema.columns());
 
-    List<org.apache.iceberg.data.Record> presetRecords =
-        castEventsToRecords(eventTimeType, finishTimeType, checkStatsEventTimeType);
-
-    assertThat(extractTableRecords(table)).containsExactlyInAnyOrderElementsOf(presetRecords);
+    assertThat(extractTableRecordsAsString(extractTableRecords(table)))
+        .containsExactlyInAnyOrderElementsOf(
+            castEvents(eventTimeType, finishTimeType, checkStatsEventTimeType).stream()
+                .map(event -> event.castToString())
+                .toList());
   }
 
   private static Stream<Arguments> argsProvider() {
@@ -133,53 +134,31 @@ public class TestTimestampNs extends IntegrationTestBaseV3 {
             Types.TimestampNanoType.withoutZone()));
   }
 
-  private List<org.apache.iceberg.data.Record> castEventsToRecords(
-      Type eventTimeType, Type finishTimeType, Type checkStatsEventTimeType) {
-    Schema schema = loadCatalogTable(catalog(), TABLE_IDENTIFIER).schema();
-    return KAFKA_TIMESTAMP_NS_EVENTS.stream()
-        .map(
-            event -> {
-              org.apache.iceberg.data.Record record = GenericRecord.create(schema);
-              record.setField("id", event.id());
-              record.setField("username", event.username());
-              setTimeRecordField(eventTimeType, "event_time", record, event.eventTime());
-              record.setField(
-                  "user_stats",
-                  setNestedRecord(
-                      finishTimeType, "finish_time", event.userStats().finishTime(), "user_stats"));
-              record.setField(
-                  "check_stats",
-                  setNestedRecord(
-                      checkStatsEventTimeType,
-                      "event_time",
-                      event.checkStats().eventTime(),
-                      "check_stats"));
-              return record;
-            })
-        .toList();
-  }
-
-  private void setTimeRecordField(
-      Type timeFieldType,
-      String columnName,
-      org.apache.iceberg.data.Record record,
-      long eventLongValue) {
-    record.setField(
-        columnName,
-        timeFieldType.equals(Types.TimestampNanoType.withZone())
-            ? DateTimeUtil.timestamptzFromMicros(eventLongValue / 1000)
-            : LocalDateTime.ofInstant(
-                Instant.ofEpochSecond(
-                    eventLongValue / 1_000_000_000, eventLongValue % 1_000_000_000),
+  private String setTimeRecordField(Type timeFieldType, long longValue) {
+    return timeFieldType.equals(Types.TimestampNanoType.withZone())
+        ? String.valueOf(DateTimeUtil.timestamptzFromMicros(longValue / 1000))
+        : String.valueOf(
+            LocalDateTime.ofInstant(
+                Instant.ofEpochSecond(longValue / 1_000_000_000, longValue % 1_000_000_000),
                 ZoneId.of("UTC")));
   }
 
-  private org.apache.iceberg.data.Record setNestedRecord(
-      Type timeFieldType, String subFieldName, long eventLongValue, String fieldName) {
-    Types.StructType nestedRecordSchema =
-        loadCatalogTable(catalog(), TABLE_IDENTIFIER).schema().findType(fieldName).asStructType();
-    org.apache.iceberg.data.Record subRecord = GenericRecord.create(nestedRecordSchema);
-    setTimeRecordField(timeFieldType, subFieldName, subRecord, eventLongValue);
-    return subRecord;
+  private List<TimestampNsEvent> castEvents(
+      Type eventTimeType, Type finishTimeType, Type checkStatsEventTimeType) {
+    return KAFKA_TIMESTAMP_NS_EVENTS.stream()
+        .map(
+            timestampNsEvent ->
+                new TimestampNsEvent(
+                    timestampNsEvent.id(),
+                    timestampNsEvent.username(),
+                    setTimeRecordField(eventTimeType, (Long) timestampNsEvent.eventTime()),
+                    new TimestampNsEvent.TimestampNsFinishTime(
+                        setTimeRecordField(
+                            finishTimeType, (Long) timestampNsEvent.userStats().finishTime())),
+                    new TimestampNsEvent.TimestampNsEventTime(
+                        setTimeRecordField(
+                            checkStatsEventTimeType,
+                            (Long) timestampNsEvent.checkStats().eventTime()))))
+        .toList();
   }
 }

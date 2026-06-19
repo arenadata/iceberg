@@ -26,9 +26,9 @@ import static org.apache.iceberg.connect.utils.ConnectorUtils.V3_AUTO_CREATE_CON
 import static org.apache.iceberg.connect.utils.ConnectorUtils.addConnectorConfigs;
 import static org.apache.iceberg.connect.utils.IcebergTableUtils.S3_CLIENT;
 import static org.apache.iceberg.connect.utils.IcebergTableUtils.extractTableRecords;
+import static org.apache.iceberg.connect.utils.IcebergTableUtils.extractTableRecordsAsString;
 import static org.apache.iceberg.connect.utils.IcebergTableUtils.loadCatalogTable;
 import static org.apache.iceberg.connect.utils.KafkaBaseEventsUtils.KAFKA_BASE_EVENTS;
-import static org.apache.iceberg.connect.utils.KafkaBaseEventsUtils.castKafkaBaseEventsToRecords;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.awaitility.Awaitility.await;
@@ -46,10 +46,11 @@ import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.SupportsNamespaces;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.connect.KafkaConnectUtils;
+import org.apache.iceberg.data.GenericRecord;
+import org.apache.iceberg.data.Record;
 import org.apache.iceberg.hive.HiveCatalog;
 import org.apache.iceberg.types.Types;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
@@ -63,6 +64,7 @@ public class TestEncryption extends IntegrationTestBaseV3 {
   private static final TableIdentifier HIVE_TABLE_IDENTIFIER =
       TableIdentifier.of(TEST_DATABASE, TEST_TABLE);
   private static final String BUCKET = "warehouse";
+  private static final String CATALOG_NAME = "local_hive";
 
   @BeforeEach
   public void beforeEach() {
@@ -72,6 +74,7 @@ public class TestEncryption extends IntegrationTestBaseV3 {
   @ParameterizedTest
   @CsvSource({"true", "false"})
   public void testEncryption(boolean useSchema) {
+    catalog().initialize(CATALOG_NAME, hiveCatalogConfigsWithEncryption());
     runTest(
         useSchema,
         addConnectorConfigs(
@@ -80,48 +83,41 @@ public class TestEncryption extends IntegrationTestBaseV3 {
         KAFKA_BASE_EVENTS);
 
     Table table = loadCatalogTable(catalog(), HIVE_TABLE_IDENTIFIER);
+    List<org.apache.iceberg.data.Record> records = extractTableRecords(table);
     Schema schema =
         useSchema
-            ? extractRecords(table).stream().findAny().get().struct().asSchema()
+            ? ((GenericRecord) records.stream().findAny().get().getField("payload"))
+                .struct()
+                .asSchema()
             : table.schema();
     assertThat(schema.columns().stream().map(Types.NestedField::name))
         .containsExactlyInAnyOrderElementsOf(List.of("id", "username"));
-    List<org.apache.iceberg.data.Record> tableRecords =
-        useSchema ? extractRecords(table) : extractTableRecords(table);
-    assertThat(tableRecords)
-        .containsExactlyInAnyOrderElementsOf(castKafkaBaseEventsToRecords(schema));
+    assertThat(castTableRecords(useSchema, records))
+        .containsExactlyInAnyOrderElementsOf(
+            KAFKA_BASE_EVENTS.stream().map(event -> event.castToString()).toList());
   }
 
-  @Test
-  public void testEncryptionNegative() throws Exception {
+  @ParameterizedTest
+  @CsvSource({"true", "false"})
+  public void testEncryptionNegative(boolean useSchema) {
     runTest(
-        true,
-        hiveCatalogConnectorConfigs(testTopic()),
+        useSchema,
+        addConnectorConfigs(
+            V3_AUTO_CREATE_CONNECTOR_CONFIGS, hiveCatalogConnectorConfigs(testTopic())),
         List.of(HIVE_TABLE_IDENTIFIER),
         KAFKA_BASE_EVENTS);
-    Catalog catalogWithoutEncryptionConfig = new HiveCatalog();
-    catalogWithoutEncryptionConfig.initialize("local_hive", hiveCatalogConfigs());
 
-    Table table = loadCatalogTable(catalogWithoutEncryptionConfig, HIVE_TABLE_IDENTIFIER);
-    assertThatThrownBy(() -> extractTableRecords(table))
+    assertThatThrownBy(
+            () -> extractTableRecords(loadCatalogTable(catalog(), HIVE_TABLE_IDENTIFIER)))
         .isInstanceOf(RuntimeException.class)
         .hasMessage("Cant create encryption manager, because key management client is not set");
-    ((AutoCloseable) catalogWithoutEncryptionConfig).close();
   }
 
   @Override
   protected Catalog initCatalog() {
     Catalog catalog = new HiveCatalog();
-    catalog.initialize("local_hive", hiveCatalogConfigsWithEncryption());
-    await()
-        .atMost(Duration.ofSeconds(30))
-        .pollInterval(Duration.ofMillis(500))
-        .ignoreExceptions()
-        .until(
-            () -> {
-              ((SupportsNamespaces) catalog).listNamespaces();
-              return true;
-            });
+    catalog.initialize(CATALOG_NAME, hiveCatalogConfigs());
+    checkHiveCatalogAvailability(catalog);
     return catalog;
   }
 
@@ -138,12 +134,6 @@ public class TestEncryption extends IntegrationTestBaseV3 {
         .config("tasks.max", "1");
   }
 
-  private List<org.apache.iceberg.data.Record> extractRecords(Table table) {
-    return extractTableRecords(table).stream()
-        .map(record -> (org.apache.iceberg.data.Record) record.get(1))
-        .toList();
-  }
-
   @Override
   protected void clearNamespace() {
     ((SupportsNamespaces) catalog()).dropNamespace(Namespace.of(TEST_DATABASE));
@@ -151,6 +141,7 @@ public class TestEncryption extends IntegrationTestBaseV3 {
 
   @Override
   protected void dropTables() {
+    catalog().initialize(CATALOG_NAME, hiveCatalogConfigsWithEncryption());
     catalog().dropTable(HIVE_TABLE_IDENTIFIER);
     S3_CLIENT.deleteBucket((DeleteBucketRequest.builder().bucket(BUCKET).build()));
   }
@@ -218,5 +209,24 @@ public class TestEncryption extends IntegrationTestBaseV3 {
                 "org.apache.iceberg.connect.utils.encryption.LocalAesKmsClient"))
         .flatMap(m -> m.entrySet().stream())
         .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue, (v1, v2) -> v2));
+  }
+
+  private void checkHiveCatalogAvailability(Catalog catalog) {
+    await()
+        .atMost(Duration.ofSeconds(30))
+        .pollInterval(Duration.ofMillis(500))
+        .ignoreExceptions()
+        .until(
+            () -> {
+              ((SupportsNamespaces) catalog).listNamespaces();
+              return true;
+            });
+  }
+
+  private List<String> castTableRecords(boolean useSchema, List<Record> records) {
+    return useSchema
+        ? extractTableRecordsAsString(
+            records.stream().map(rec -> (Record) rec.getField("payload")).toList())
+        : extractTableRecordsAsString(records);
   }
 }

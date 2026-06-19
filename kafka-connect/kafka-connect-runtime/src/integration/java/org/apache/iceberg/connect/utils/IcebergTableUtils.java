@@ -32,6 +32,7 @@ import org.apache.iceberg.Table;
 import org.apache.iceberg.catalog.Catalog;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.data.IcebergGenerics;
+import org.apache.iceberg.data.Record;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.variants.Variant;
 import org.apache.iceberg.variants.VariantObject;
@@ -74,44 +75,36 @@ public class IcebergTableUtils {
     return table.currentSnapshot().snapshotId();
   }
 
-  public static List<String> extractTableRecordsAsString(Table table) {
-    return extractTableRecords(table).stream()
+  public static List<String> extractTableRecordsAsString(List<Record> records) {
+    return records.stream()
         .map(
             record ->
                 StreamSupport.stream(record.struct().fields().spliterator(), false)
                     .map(
-                        f -> {
-                          if (record.getField(f.name()) instanceof Variant) {
-                            VariantValue variant = ((Variant) record.getField((f.name()))).value();
-                            if (variant instanceof VariantObject) {
-                              String allRows =
-                                  StreamSupport.stream(
-                                          ((VariantObject) variant).fieldNames().spliterator(),
-                                          false)
-                                      .map(
-                                          fName ->
-                                              ((VariantObject) variant)
-                                                  .get(fName)
-                                                  .asPrimitive()
-                                                  .get()
-                                                  .toString())
-                                      .collect(Collectors.joining(", "));
-                              return format("Record(%s)", allRows);
-                            } else {
-                              return ((Variant) record.getField((f.name())))
-                                  .value()
-                                  .asPrimitive()
-                                  .get()
-                                  .toString()
-                                  .replace("Struct{", "Record(")
-                                  .replace("}", ")")
-                                  .replaceAll("\\b\\w+=", "");
-                            }
-                          } else {
-                            return String.valueOf(record.getField(f.name()));
-                          }
-                        })
+                        f ->
+                            record.getField(f.name()) instanceof Variant
+                                ? castVariantFieldToString((Variant) record.getField(f.name()))
+                                : String.valueOf(record.getField(f.name())))
                     .collect(Collectors.joining("|")))
         .toList();
+  }
+
+  private static String castVariantFieldToString(Variant variant) {
+    VariantValue variantVal = variant.value();
+    if (variantVal instanceof VariantObject) {
+      String allRows =
+          StreamSupport.stream(((VariantObject) variant).fieldNames().spliterator(), false)
+              .map(fName -> ((VariantObject) variant).get(fName).asPrimitive().get().toString())
+              .collect(Collectors.joining(", "));
+      return format("Record(%s)", allRows);
+    } else {
+      return variantVal
+          .asPrimitive()
+          .get()
+          .toString()
+          .replace("Struct{", "Record(")
+          .replace("}", ")")
+          .replaceAll("\\b\\w+=", "");
+    }
   }
 }

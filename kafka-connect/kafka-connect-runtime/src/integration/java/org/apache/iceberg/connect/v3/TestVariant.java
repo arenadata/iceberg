@@ -20,6 +20,7 @@ package org.apache.iceberg.connect.v3;
 
 import static org.apache.iceberg.connect.utils.ConnectorUtils.V3_AUTO_CREATE_CONNECTOR_CONFIGS;
 import static org.apache.iceberg.connect.utils.ConnectorUtils.addConnectorConfigs;
+import static org.apache.iceberg.connect.utils.IcebergTableUtils.extractTableRecords;
 import static org.apache.iceberg.connect.utils.IcebergTableUtils.extractTableRecordsAsString;
 import static org.apache.iceberg.connect.utils.IcebergTableUtils.loadCatalogTable;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -60,7 +61,7 @@ public class TestVariant extends IntegrationTestBaseV3 {
 
     assertThat(table.schema().columns()).hasSameElementsAs(tableSchema.columns());
 
-    assertThat(extractTableRecordsAsString(table))
+    assertThat(extractTableRecordsAsString(extractTableRecords(table)))
         .hasSameElementsAs(
             KAFKA_VARIANT_EVENTS.stream().map(event -> event.castToString()).toList());
   }

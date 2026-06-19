@@ -20,6 +20,7 @@ package org.apache.iceberg.connect.v3;
 
 import static org.apache.iceberg.connect.utils.ConnectorUtils.addConnectorConfigs;
 import static org.apache.iceberg.connect.utils.IcebergTableUtils.BASE_V3_TABLE_CONFIG;
+import static org.apache.iceberg.connect.utils.IcebergTableUtils.extractTableRecords;
 import static org.apache.iceberg.connect.utils.IcebergTableUtils.extractTableRecordsAsString;
 import static org.apache.iceberg.connect.utils.IcebergTableUtils.loadCatalogTable;
 import static org.apache.iceberg.connect.v3.dto.EventExtended.INFO_WRITE_DEFAULT;
@@ -66,9 +67,11 @@ public class TestStructDefault extends IntegrationTestBaseV3 {
 
     Table table = loadCatalogTable(catalog(), TABLE_IDENTIFIER);
 
-    assertThat(extractTableRecordsAsString(table))
+    assertThat(extractTableRecordsAsString(extractTableRecords(table)))
         .hasSameElementsAs(
-            castStructEventsExtendedToStrings(castStructEventsToStructEventsExtended(status)));
+            castStructEventsToStructEventsExtended(status).stream()
+                .map(event -> event.castToString())
+                .toList());
   }
 
   private static Stream<Arguments> argsProvider() {
@@ -90,9 +93,5 @@ public class TestStructDefault extends IntegrationTestBaseV3 {
                     testStructEvent.username(),
                     new StructEventExtended.InfoExtended(testStructEvent.info().age(), status)))
         .toList();
-  }
-
-  private static List<String> castStructEventsExtendedToStrings(List<StructEventExtended> events) {
-    return events.stream().map(event -> event.castToString()).toList();
   }
 }

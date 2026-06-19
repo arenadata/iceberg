@@ -190,7 +190,7 @@ services:
       - AWS_REGION=us-east-1
     command: tail -f /dev/null
     volumes:
-      - ../../../aws-bundle/build/libs/iceberg-aws-bundle-1.10.1_arenadata1.jar:/opt/spark/jars/iceberg-aws-bundle-1.10.1_arenadata1.jar
-      - ../../../spark/v4.0/spark-runtime/build/libs/iceberg-spark-runtime-4.0_2.13-1.10.1_arenadata1.jar:/opt/spark/jars/iceberg-spark-runtime-4.0_2.13-1.10.1_arenadata1.jar
+      - ../../../aws-bundle/build/libs/iceberg-aws-bundle-${ICEBERG_VERSION}.jar:/opt/spark/jars/iceberg-aws-bundle.jar:ro
+      - ../../../spark/v4.0/spark-runtime/build/libs/iceberg-spark-runtime-4.0_2.13-${ICEBERG_VERSION}.jar:/opt/spark/jars/iceberg-spark-runtime.jar:ro
       - ./connect-libs/hadoop-aws-3.4.1.jar:/opt/spark/jars/hadoop-aws-3.4.1.jar
       - ./connect-libs/s3-transfer-manager-2.42.39.jar:/opt/spark/jars/s3-transfer-manager-2.42.39.jar

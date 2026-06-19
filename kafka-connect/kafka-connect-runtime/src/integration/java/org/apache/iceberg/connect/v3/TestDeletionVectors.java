@@ -25,7 +25,6 @@ import static org.apache.iceberg.connect.utils.IcebergTableUtils.S3_CLIENT;
 import static org.apache.iceberg.connect.utils.IcebergTableUtils.extractTableRecords;
 import static org.apache.iceberg.connect.utils.IcebergTableUtils.loadCatalogTable;
 import static org.apache.iceberg.connect.utils.IcebergTableUtils.loadCatalogTableLocation;
-import static org.apache.iceberg.connect.utils.IcebergTableUtils.refreshTableData;
 import static org.apache.iceberg.connect.utils.KafkaBaseEventsUtils.KAFKA_BASE_EVENTS;
 import static org.apache.iceberg.connect.utils.KafkaBaseEventsUtils.castKafkaBaseEventsToRecords;
 import static org.apache.iceberg.connect.utils.RestCatalogSparkUtil.runSparkSqlQuery;
@@ -66,8 +65,6 @@ public class TestDeletionVectors extends IntegrationTestBaseV3 {
     assertThat(extractTableRecords(table))
         .containsExactlyInAnyOrderElementsOf(castKafkaBaseEventsToRecords(table.schema()));
 
-    long preDeleteTableSnapshot = refreshTableData(table);
-
     runSparkSqlQuery(
         format("DELETE FROM %s.%s WHERE id=2", ICEBERG_REST_CATALOG, TABLE_IDENTIFIER));
 
@@ -78,7 +75,11 @@ public class TestDeletionVectors extends IntegrationTestBaseV3 {
     await()
         .atMost(Duration.ofSeconds(30))
         .pollInterval(Duration.ofMillis(300))
-        .until(() -> refreshTableData(table) != preDeleteTableSnapshot);
+        .untilAsserted(
+            () -> {
+              table.refresh();
+              assertThat(extractTableRecords(table).size()).isEqualTo(1);
+            });
 
     assertThat(
             S3_CLIENT
@@ -90,7 +91,6 @@ public class TestDeletionVectors extends IntegrationTestBaseV3 {
         .isEqualTo(isMergeOnReadEnabled);
 
     List<org.apache.iceberg.data.Record> remainedTableRecords = extractTableRecords(table);
-    assertThat(remainedTableRecords).hasSize(1);
     assertThat(remainedTableRecords.get(0).getField("id")).isEqualTo(1L);
   }
 
