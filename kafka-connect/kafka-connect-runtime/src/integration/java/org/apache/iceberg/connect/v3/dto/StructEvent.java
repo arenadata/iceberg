@@ -18,7 +18,6 @@
  */
 package org.apache.iceberg.connect.v3.dto;
 
-import static java.lang.String.format;
 import static java.util.stream.Collectors.joining;
 import static org.apache.iceberg.connect.v3.dto.EventExtended.INFO_WRITE_DEFAULT;
 
@@ -26,40 +25,39 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import java.util.stream.Stream;
 import org.apache.iceberg.PartitionSpec;
-import org.apache.iceberg.Schema;
 import org.apache.iceberg.common.DynMethods;
 import org.apache.iceberg.connect.TestContext;
 import org.apache.iceberg.expressions.Literal;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableSet;
 import org.apache.iceberg.types.Types;
+import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.json.JsonConverter;
 
-public class StructEvent extends Event {
-  private final Info info;
+public class StructEvent<T extends Info> extends Event {
+  private final T info;
 
-  public StructEvent(long id, String username, Info info) {
+  public StructEvent(long id, String username, T info) {
     super(id, username);
     this.info = info;
   }
 
-  public Info info() {
+  public T info() {
     return info;
   }
 
-  public static final org.apache.kafka.connect.data.Schema EVENT_STRUCT_CONNECT_SCHEMA =
-      SchemaBuilder.struct()
-          .field("id", org.apache.kafka.connect.data.Schema.INT64_SCHEMA)
-          .field("username", org.apache.kafka.connect.data.Schema.STRING_SCHEMA)
-          .field(
-              "info",
-              SchemaBuilder.struct()
-                  .field("age", org.apache.kafka.connect.data.Schema.INT32_SCHEMA));
+  public static org.apache.kafka.connect.data.Schema eventStructConnectSchema(Schema infoSchema) {
+    return SchemaBuilder.struct()
+        .field("id", org.apache.kafka.connect.data.Schema.INT64_SCHEMA)
+        .field("username", org.apache.kafka.connect.data.Schema.STRING_SCHEMA)
+        .field("info", infoSchema)
+        .build();
+  }
 
-  public static final Schema EVENT_STRUCT_TABLE_SCHEMA =
-      new Schema(
+  public static final org.apache.iceberg.Schema EVENT_STRUCT_TABLE_SCHEMA =
+      new org.apache.iceberg.Schema(
           ImmutableList.of(
               Types.NestedField.required(1, "id", Types.LongType.get()),
               Types.NestedField.optional(2, "username", Types.StringType.get()),
@@ -83,13 +81,10 @@ public class StructEvent extends Event {
   protected String serialize(boolean useSchema) {
     try {
       Struct value =
-          new Struct(EVENT_STRUCT_CONNECT_SCHEMA)
+          new Struct(eventStructConnectSchema(info.schema()))
               .put("id", id())
               .put("username", username())
-              .put(
-                  "info",
-                  new Struct(EVENT_STRUCT_CONNECT_SCHEMA.field("info").schema())
-                      .put("age", info.age()));
+              .put("info", info.struct());
 
       String convertMethod =
           useSchema ? "convertToJsonWithEnvelope" : "convertToJsonWithoutEnvelope";
@@ -98,7 +93,7 @@ public class StructEvent extends Event {
               .hiddenImpl(
                   JsonConverter.class, org.apache.kafka.connect.data.Schema.class, Object.class)
               .build(JSON_CONVERTER)
-              .invoke(StructEvent.EVENT_STRUCT_CONNECT_SCHEMA, value);
+              .invoke(eventStructConnectSchema(info.schema()), value);
       return TestContext.MAPPER.writeValueAsString(json);
     } catch (JsonProcessingException e) {
       throw new RuntimeException(e);
@@ -107,20 +102,8 @@ public class StructEvent extends Event {
 
   @Override
   public String castToString() {
-    return Stream.of(String.valueOf(id()), username(), format("Record(%s)", info().age))
+    return Stream.of(String.valueOf(id()), username(), info.castToString())
         .collect(joining("|"))
         .toString();
-  }
-
-  public static class Info {
-    private final int age;
-
-    public Info(int age) {
-      this.age = age;
-    }
-
-    public int age() {
-      return age;
-    }
   }
 }

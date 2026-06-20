@@ -70,11 +70,6 @@ public class IcebergTableUtils {
     return URI.create(table.location()).getPath();
   }
 
-  public static long refreshTableData(Table table) {
-    table.refresh();
-    return table.currentSnapshot().snapshotId();
-  }
-
   public static List<String> extractTableRecordsAsString(List<Record> records) {
     return records.stream()
         .map(
@@ -93,8 +88,8 @@ public class IcebergTableUtils {
     VariantValue variantVal = variant.value();
     if (variantVal instanceof VariantObject) {
       String allRows =
-          StreamSupport.stream(((VariantObject) variant).fieldNames().spliterator(), false)
-              .map(fName -> ((VariantObject) variant).get(fName).asPrimitive().get().toString())
+          StreamSupport.stream(((VariantObject) variantVal).fieldNames().spliterator(), false)
+              .map(fName -> ((VariantObject) variantVal).get(fName).asPrimitive().get().toString())
               .collect(Collectors.joining(", "));
       return format("Record(%s)", allRows);
     } else {

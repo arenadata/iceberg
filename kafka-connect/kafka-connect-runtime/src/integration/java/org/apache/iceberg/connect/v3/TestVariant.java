@@ -32,6 +32,7 @@ import org.apache.iceberg.Schema;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.connect.v3.dto.Event;
 import org.apache.iceberg.connect.v3.dto.EventExtended;
+import org.apache.iceberg.connect.v3.dto.Info;
 import org.apache.iceberg.connect.v3.dto.StructEvent;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.types.Types;
@@ -41,9 +42,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 public class TestVariant extends IntegrationTestBaseV3 {
   private static final List<? extends Event> KAFKA_VARIANT_EVENTS =
-      List.of(
-          new EventExtended(1L, "Sam", "active"),
-          new StructEvent(2, "Susan", new StructEvent.Info(15)));
+      List.of(new EventExtended(1L, "Sam", "active"), new StructEvent<>(2, "Susan", new Info(15)));
 
   @ParameterizedTest
   @MethodSource("argsProvider")

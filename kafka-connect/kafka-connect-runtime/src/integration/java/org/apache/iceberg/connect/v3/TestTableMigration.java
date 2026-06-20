@@ -30,6 +30,7 @@ import java.util.List;
 import java.util.Map;
 import org.apache.iceberg.BaseTable;
 import org.apache.iceberg.Table;
+import org.apache.iceberg.connect.v3.dto.Info;
 import org.apache.iceberg.connect.v3.dto.StructEvent;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -39,7 +40,7 @@ public class TestTableMigration extends IntegrationTestBaseV3 {
   @ParameterizedTest
   @CsvSource({"true", "false"})
   public void testMigration(boolean useSchema) {
-    StructEvent eventOne = new StructEvent(1, "Sam", new StructEvent.Info(15));
+    StructEvent<Info> eventOne = new StructEvent(1, "Sam", new Info(15));
     runTest(
         useSchema,
         addConnectorConfigs(
@@ -58,7 +59,7 @@ public class TestTableMigration extends IntegrationTestBaseV3 {
 
     table.updateProperties().set("format-version", "3").commit();
 
-    StructEvent eventTwo = new StructEvent(2, "Susan", new StructEvent.Info(16));
+    StructEvent<Info> eventTwo = new StructEvent(2, "Susan", new Info(16));
 
     send(testTopic(), eventTwo, useSchema);
 

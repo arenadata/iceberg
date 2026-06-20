@@ -32,8 +32,9 @@ import java.util.List;
 import java.util.stream.Stream;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.connect.v3.dto.Event;
+import org.apache.iceberg.connect.v3.dto.Info;
+import org.apache.iceberg.connect.v3.dto.InfoExtended;
 import org.apache.iceberg.connect.v3.dto.StructEvent;
-import org.apache.iceberg.connect.v3.dto.StructEventExtended;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -41,10 +42,8 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 public class TestStructDefault extends IntegrationTestBaseV3 {
 
-  private static final List<StructEvent> KAFKA_STRUCT_EVENTS =
-      List.of(
-          new StructEvent(1, "Sam", new StructEvent.Info(15)),
-          new StructEvent(2, "Susan", new StructEvent.Info(14)));
+  private static final List<StructEvent<Info>> KAFKA_STRUCT_EVENTS =
+      List.of(new StructEvent(1, "Sam", new Info(15)), new StructEvent(2, "Susan", new Info(14)));
 
   @ParameterizedTest
   @MethodSource("argsProvider")
@@ -84,14 +83,15 @@ public class TestStructDefault extends IntegrationTestBaseV3 {
         Arguments.of(false, false, null, castStructEventsToStructEventsExtended(null)));
   }
 
-  private static List<StructEventExtended> castStructEventsToStructEventsExtended(String status) {
+  private static List<StructEvent<InfoExtended>> castStructEventsToStructEventsExtended(
+      String status) {
     return KAFKA_STRUCT_EVENTS.stream()
         .map(
             testStructEvent ->
-                new StructEventExtended(
+                new StructEvent<>(
                     testStructEvent.id(),
                     testStructEvent.username(),
-                    new StructEventExtended.InfoExtended(testStructEvent.info().age(), status)))
+                    new InfoExtended(testStructEvent.info().age(), status)))
         .toList();
   }
 }
