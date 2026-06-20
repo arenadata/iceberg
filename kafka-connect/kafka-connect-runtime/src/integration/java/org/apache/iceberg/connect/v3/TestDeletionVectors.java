@@ -66,7 +66,9 @@ public class TestDeletionVectors extends IntegrationTestBaseV3 {
         .containsExactlyInAnyOrderElementsOf(castKafkaBaseEventsToRecords(table.schema()));
 
     runSparkSqlQuery(
-        format("DELETE FROM %1$s.%2$s WHERE id=2;REFRESH TABLE %1$s.%2$s;", ICEBERG_REST_CATALOG, TABLE_IDENTIFIER));
+        format(
+            "DELETE FROM %1$s.%2$s WHERE id=2;REFRESH TABLE %1$s.%2$s;",
+            ICEBERG_REST_CATALOG, TABLE_IDENTIFIER));
 
     String tableDataPath =
         format("%s/data/", loadCatalogTableLocation(loadCatalogTable(catalog(), TABLE_IDENTIFIER)))
