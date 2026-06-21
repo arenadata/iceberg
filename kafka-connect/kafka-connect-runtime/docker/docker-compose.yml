@@ -22,14 +22,12 @@ services:
   download-jars:
     image: curlimages/curl
     user: root
-    command: >
-      sh -c "
-      mkdir -p /jars &&
-      curl -L -o /jars/aws-java-sdk-bundle-1.12.367.jar
-      https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/1.12.367/aws-java-sdk-bundle-1.12.367.jar
-      "
+    command: sh -c "/hive-jars/setup-env.sh"
     volumes:
-      - ./hive-libs:/jars
+      - ./hive-libs:/hive-jars
+      - ./connect-libs:/connect-jars
+      - ../../../aws-bundle/build/libs:/aws-bundle-build-source:ro
+      - ../../../spark/v4.0/spark-runtime/build/libs:/spark-runtime-build-source:ro
   minio:
     image: minio/minio
     hostname: minio
@@ -94,7 +92,10 @@ services:
   connect:
     image: confluentinc/cp-kafka-connect:8.1.2
     depends_on:
-      - kafka
+      kafka:
+        condition: service_started
+      download-jars:
+        condition: service_completed_successfully
     hostname: connect
     ports:
       - 8083:8083
@@ -189,8 +190,11 @@ services:
       - AWS_SECRET_ACCESS_KEY=minioadmin
       - AWS_REGION=us-east-1
     command: tail -f /dev/null
+    depends_on:
+      download-jars:
+        condition: service_completed_successfully
     volumes:
-      - ./connect-libs/iceberg-aws-bundle-1.11.0.jar:/opt/spark/jars/iceberg-aws-bundle.jar:ro
-      - ./connect-libs/iceberg-spark-runtime-4.0_2.13-1.11.0.jar:/opt/spark/jars/iceberg-spark-runtime.jar:ro
+      - ./connect-libs/iceberg-aws-bundle.jar:/opt/spark/jars/iceberg-aws-bundle.jar
+      - ./connect-libs/iceberg-spark-runtime.jar:/opt/spark/jars/iceberg-spark-runtime.jar:ro
       - ./connect-libs/hadoop-aws-3.4.1.jar:/opt/spark/jars/hadoop-aws-3.4.1.jar
       - ./connect-libs/s3-transfer-manager-2.42.39.jar:/opt/spark/jars/s3-transfer-manager-2.42.39.jar

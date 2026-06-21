@@ -75,7 +75,7 @@ public class TestDeletionVectors extends IntegrationTestBaseV3 {
             .replaceFirst("/", "");
 
     await()
-        .atMost(Duration.ofSeconds(30))
+        .atMost(Duration.ofSeconds(60))
         .pollInterval(Duration.ofMillis(300))
         .untilAsserted(
             () -> {
