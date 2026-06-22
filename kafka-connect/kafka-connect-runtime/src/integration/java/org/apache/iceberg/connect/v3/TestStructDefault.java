@@ -54,17 +54,17 @@ public class TestStructDefault extends IntegrationTestBaseV3 {
       List<? extends Event> kafkaEvents) {
     catalog()
         .createTable(
-            TABLE_IDENTIFIER, EVENT_STRUCT_TABLE_SCHEMA, TEST_STRUCT_SPEC, BASE_V3_TABLE_CONFIG);
+                TABLE_IDENTIFIER_V3, EVENT_STRUCT_TABLE_SCHEMA, TEST_STRUCT_SPEC, BASE_V3_TABLE_CONFIG);
 
     runTest(
         useSchema,
         addConnectorConfigs(
             context().connectorCatalogProperties(),
             ImmutableMap.of("iceberg.tables.defaults-enabled", String.valueOf(isDefaultsEnabled))),
-        List.of(TABLE_IDENTIFIER),
+        List.of(TABLE_IDENTIFIER_V3),
         kafkaEvents);
 
-    Table table = loadCatalogTable(catalog(), TABLE_IDENTIFIER);
+    Table table = loadCatalogTable(catalog(), TABLE_IDENTIFIER_V3);
 
     assertThat(extractTableRecordsAsString(extractTableRecords(table)))
         .hasSameElementsAs(

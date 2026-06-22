@@ -46,7 +46,7 @@ public class TestBaseDefault extends IntegrationTestBaseV3 {
       boolean useSchema, boolean isDefaultsEnabled, String info, List<Event> events) {
     catalog()
         .createTable(
-            TABLE_IDENTIFIER,
+                TABLE_IDENTIFIER_V3,
             EVENT_EXTENDED_TABLE_SCHEMA,
             EVENT_EXTENDED_SPEC,
             BASE_V3_TABLE_CONFIG);
@@ -56,12 +56,12 @@ public class TestBaseDefault extends IntegrationTestBaseV3 {
         addConnectorConfigs(
             context().connectorCatalogProperties(),
             ImmutableMap.of("iceberg.tables.defaults-enabled", String.valueOf(isDefaultsEnabled))),
-        List.of(TABLE_IDENTIFIER),
+        List.of(TABLE_IDENTIFIER_V3),
         events);
 
     assertThat(
             extractTableRecordsAsString(
-                extractTableRecords(loadCatalogTable(catalog(), TABLE_IDENTIFIER))))
+                extractTableRecords(loadCatalogTable(catalog(), TABLE_IDENTIFIER_V3))))
         .hasSameElementsAs(
             castEventsToEventsExtended(info).stream().map(event -> event.castToString()).toList());
   }

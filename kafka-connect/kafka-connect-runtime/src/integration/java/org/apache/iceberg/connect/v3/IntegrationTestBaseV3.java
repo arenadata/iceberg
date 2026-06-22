@@ -28,8 +28,8 @@ import org.apache.iceberg.connect.v3.dto.Event;
 import org.awaitility.Awaitility;
 
 public abstract class IntegrationTestBaseV3 extends AbstractTestBase {
-  protected static final String TEST_TABLE = "tb1";
-  protected static final TableIdentifier TABLE_IDENTIFIER = TableIdentifier.of(TEST_DB, TEST_TABLE);
+  protected static final String TEST_TABLE_V3 = "tb1";
+  protected static final TableIdentifier TABLE_IDENTIFIER_V3 = TableIdentifier.of(TEST_DB, TEST_TABLE_V3);
 
   protected void runTest(
       boolean useSchema,
@@ -63,13 +63,13 @@ public abstract class IntegrationTestBaseV3 extends AbstractTestBase {
   @Override
   protected KafkaConnectUtils.Config createConfig(boolean useSchema) {
     return createCommonConfig(useSchema)
-        .config("iceberg.tables", TABLE_IDENTIFIER.toString())
+        .config("iceberg.tables", TABLE_IDENTIFIER_V3.toString())
         .config("iceberg.tables.evolve-schema-enabled", "true")
         .config("tasks.max", "1");
   }
 
   @Override
   protected void dropTables() {
-    catalog().dropTable(TABLE_IDENTIFIER);
+    catalog().dropTable(TABLE_IDENTIFIER_V3);
   }
 }

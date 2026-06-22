@@ -57,10 +57,10 @@ public class TestDeletionVectors extends IntegrationTestBaseV3 {
     runTest(
         useSchema,
         addConnectorConfigs(V3_AUTO_CREATE_CONNECTOR_CONFIGS, connectorConfigs),
-        List.of(TABLE_IDENTIFIER),
+        List.of(TABLE_IDENTIFIER_V3),
         KAFKA_BASE_EVENTS);
 
-    Table table = loadCatalogTable(catalog(), TABLE_IDENTIFIER);
+    Table table = loadCatalogTable(catalog(), TABLE_IDENTIFIER_V3);
 
     assertThat(extractTableRecords(table))
         .containsExactlyInAnyOrderElementsOf(castKafkaBaseEventsToRecords(table.schema()));
@@ -68,10 +68,10 @@ public class TestDeletionVectors extends IntegrationTestBaseV3 {
     runSparkSqlQuery(
         format(
             "DELETE FROM %1$s.%2$s WHERE id=2;REFRESH TABLE %1$s.%2$s;",
-            ICEBERG_REST_CATALOG, TABLE_IDENTIFIER));
+            ICEBERG_REST_CATALOG, TABLE_IDENTIFIER_V3));
 
     String tableDataPath =
-        format("%s/data/", loadCatalogTableLocation(loadCatalogTable(catalog(), TABLE_IDENTIFIER)))
+        format("%s/data/", loadCatalogTableLocation(loadCatalogTable(catalog(), TABLE_IDENTIFIER_V3)))
             .replaceFirst("/", "");
 
     await()
@@ -106,6 +106,6 @@ public class TestDeletionVectors extends IntegrationTestBaseV3 {
 
   @Override
   protected void dropTables() {
-    catalog().dropTable(TABLE_IDENTIFIER, true);
+    catalog().dropTable(TABLE_IDENTIFIER_V3, true);
   }
 }

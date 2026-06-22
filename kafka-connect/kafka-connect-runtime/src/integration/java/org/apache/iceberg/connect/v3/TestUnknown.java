@@ -53,10 +53,10 @@ public class TestUnknown extends IntegrationTestBaseV3 {
                 context().connectorCatalogProperties(), V3_AUTO_CREATE_CONNECTOR_CONFIGS),
             Map.of(
                 "iceberg.tables.evolve-unknown-type-enabled", String.valueOf(isUnknownSupported))),
-        List.of(TABLE_IDENTIFIER),
+        List.of(TABLE_IDENTIFIER_V3),
         BASE_NULL_EVENTS);
 
-    Table table = loadCatalogTable(catalog(), TABLE_IDENTIFIER);
+    Table table = loadCatalogTable(catalog(), TABLE_IDENTIFIER_V3);
 
     assertThat(table.schema().columns()).hasSameElementsAs(schema.columns());
 

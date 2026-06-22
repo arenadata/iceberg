@@ -46,6 +46,16 @@ public class IcebergTableUtils {
 
   public static final Map<String, String> BASE_V3_TABLE_CONFIG = Map.of("format-version", "3");
 
+  public static final S3Client S3_CLIENT =
+          S3Client.builder()
+                  .endpointOverride(URI.create("http://localhost:" + MINIO_PORT))
+                  .credentialsProvider(
+                          StaticCredentialsProvider.create(
+                                  AwsBasicCredentials.create(AWS_ACCESS_KEY, AWS_SECRET_KEY)))
+                  .region(Region.US_EAST_1)
+                  .forcePathStyle(true)
+                  .build();
+
   private IcebergTableUtils() {}
 
   public static List<org.apache.iceberg.data.Record> extractTableRecords(Table table) {
@@ -55,16 +65,6 @@ public class IcebergTableUtils {
   public static Table loadCatalogTable(Catalog catalog, TableIdentifier tableIdentifier) {
     return catalog.loadTable(tableIdentifier);
   }
-
-  public static final S3Client S3_CLIENT =
-      S3Client.builder()
-          .endpointOverride(URI.create("http://localhost:" + MINIO_PORT))
-          .credentialsProvider(
-              StaticCredentialsProvider.create(
-                  AwsBasicCredentials.create(AWS_ACCESS_KEY, AWS_SECRET_KEY)))
-          .region(Region.US_EAST_1)
-          .forcePathStyle(true)
-          .build();
 
   public static String loadCatalogTableLocation(Table table) {
     return URI.create(table.location()).getPath();

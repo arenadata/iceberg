@@ -57,12 +57,12 @@ import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
 import software.amazon.awssdk.services.s3.model.DeleteBucketRequest;
 
 public class TestEncryption extends IntegrationTestBaseV3 {
-  private static final String HIVE_METASTORE_URI = "thrift://localhost:9083";
+  private static final String HIVE_METASTORE_PORT = "9083";
   private static final String HIVE_WAREHOUSE_LOCATION = "s3://bucket/warehouse";
   private static final String MINIO_CONNECTOR_ENDPOINT = "http://minio:" + MINIO_PORT;
   private static final String TEST_DATABASE = "test_db";
   private static final TableIdentifier HIVE_TABLE_IDENTIFIER =
-      TableIdentifier.of(TEST_DATABASE, TEST_TABLE);
+      TableIdentifier.of(TEST_DATABASE, TEST_TABLE_V3);
   private static final String BUCKET = "warehouse";
   private static final String CATALOG_NAME = "local_hive";
 
@@ -113,12 +113,96 @@ public class TestEncryption extends IntegrationTestBaseV3 {
         .hasMessage("Cant create encryption manager, because key management client is not set");
   }
 
+  private static Map<String, String> hiveCatalogConfigsWithEncryption() {
+    return Stream.of(
+                    hiveCatalogConfigs(),
+                    Map.of(
+                            "encryption.kms-impl",
+                            "org.apache.iceberg.connect.utils.encryption.LocalAesKmsClient"))
+            .flatMap(m -> m.entrySet().stream())
+            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue, (v1, v2) -> v2));
+  }
+
+  private static Map<String, String> hiveCatalogConfigs() {
+    return Map.of(
+            CatalogProperties.URI,
+            "thrift://localhost:" + HIVE_METASTORE_PORT,
+            CatalogProperties.FILE_IO_IMPL,
+            "org.apache.iceberg.aws.s3.S3FileIO",
+            CatalogProperties.WAREHOUSE_LOCATION,
+            HIVE_WAREHOUSE_LOCATION,
+            "hive.metastore.warehouse.dir",
+            HIVE_WAREHOUSE_LOCATION,
+            "s3.endpoint",
+            "http://localhost:" + MINIO_PORT,
+            "s3.access-key-id",
+            AWS_ACCESS_KEY,
+            "s3.secret-access-key",
+            AWS_SECRET_KEY,
+            "s3.path-style-access",
+            "true",
+            "client.region",
+            AWS_REGION);
+  }
+
+  private static Map<String, Object> hiveCatalogConnectorConfigs(String topic) {
+    return Map.ofEntries(
+            Map.entry("connector.class", "org.apache.iceberg.connect.IcebergSinkConnector"),
+            Map.entry("tasks.max", "1"),
+            Map.entry("topics", topic),
+            Map.entry("iceberg.catalog.type", "hive"),
+            Map.entry("iceberg.catalog.uri", "thrift://hive-metastore:" + HIVE_METASTORE_PORT),
+            Map.entry("iceberg.catalog.warehouse", HIVE_WAREHOUSE_LOCATION),
+            Map.entry("iceberg.tables.auto-create-props.write.object-storage.enabled", "true"),
+            Map.entry("io-impl", "org.apache.iceberg.aws.s3.S3FileIO"),
+            Map.entry("s3.endpoint", MINIO_CONNECTOR_ENDPOINT),
+            Map.entry("s3.access-key-id", AWS_ACCESS_KEY),
+            Map.entry("s3.secret-access-key", AWS_SECRET_KEY),
+            Map.entry("s3.path-style-access", "true"),
+            Map.entry("s3.region", AWS_REGION),
+            Map.entry("iceberg.hadoop.fs.s3.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem"),
+            Map.entry("iceberg.hadoop.fs.s3a.endpoint", MINIO_CONNECTOR_ENDPOINT),
+            Map.entry("iceberg.hadoop.fs.s3a.access.key", AWS_ACCESS_KEY),
+            Map.entry("iceberg.hadoop.fs.s3a.secret.key", AWS_SECRET_KEY),
+            Map.entry("iceberg.hadoop.fs.s3a.path.style.access", "true"),
+            Map.entry("iceberg.hadoop.fs.defaultFS", "s3://bucket/"),
+            Map.entry(
+                    "iceberg.catalog.encryption.kms-impl", "com.example.iceberg.kms.LocalAesKmsClient"),
+            Map.entry(
+                    "iceberg.catalog.encryption.kms.master-key",
+                    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
+            Map.entry("iceberg.tables.auto-create-props.encryption.key-id", "test-master-key-1"),
+            Map.entry("value.converter", "org.apache.kafka.connect.json.JsonConverter"),
+            Map.entry("value.converter.schemas.enable", "false"),
+            Map.entry("consumer.override.auto.offset.reset", "earliest"),
+            Map.entry("iceberg.control.commit.interval-ms", "30000"));
+  }
+
+  private List<String> castTableRecords(boolean useSchema, List<Record> records) {
+    return useSchema
+            ? extractTableRecordsAsString(
+            records.stream().map(rec -> (Record) rec.getField("payload")).toList())
+            : extractTableRecordsAsString(records);
+  }
+
   @Override
   protected Catalog initCatalog() {
     Catalog catalog = new HiveCatalog();
     catalog.initialize(CATALOG_NAME, hiveCatalogConfigs());
     checkHiveCatalogAvailability(catalog);
     return catalog;
+  }
+
+  private void checkHiveCatalogAvailability(Catalog catalog) {
+    await()
+            .atMost(Duration.ofSeconds(30))
+            .pollInterval(Duration.ofMillis(500))
+            .ignoreExceptions()
+            .until(
+                    () -> {
+                      ((SupportsNamespaces) catalog).listNamespaces();
+                      return true;
+                    });
   }
 
   @Override
@@ -144,89 +228,5 @@ public class TestEncryption extends IntegrationTestBaseV3 {
     catalog().initialize(CATALOG_NAME, hiveCatalogConfigsWithEncryption());
     catalog().dropTable(HIVE_TABLE_IDENTIFIER);
     S3_CLIENT.deleteBucket((DeleteBucketRequest.builder().bucket(BUCKET).build()));
-  }
-
-  private static Map<String, Object> hiveCatalogConnectorConfigs(String topic) {
-    return Map.ofEntries(
-        Map.entry("connector.class", "org.apache.iceberg.connect.IcebergSinkConnector"),
-        Map.entry("tasks.max", "1"),
-        Map.entry("topics", topic),
-        Map.entry("iceberg.catalog.type", "hive"),
-        Map.entry("iceberg.catalog.uri", "thrift://hive-metastore:9083"),
-        Map.entry("iceberg.catalog.warehouse", HIVE_WAREHOUSE_LOCATION),
-        Map.entry("iceberg.tables.auto-create-props.write.object-storage.enabled", "true"),
-        Map.entry("io-impl", "org.apache.iceberg.aws.s3.S3FileIO"),
-        Map.entry("s3.endpoint", MINIO_CONNECTOR_ENDPOINT),
-        Map.entry("s3.access-key-id", AWS_ACCESS_KEY),
-        Map.entry("s3.secret-access-key", AWS_SECRET_KEY),
-        Map.entry("s3.path-style-access", "true"),
-        Map.entry("s3.region", AWS_REGION),
-        Map.entry("iceberg.hadoop.fs.s3.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem"),
-        Map.entry("iceberg.hadoop.fs.s3a.endpoint", MINIO_CONNECTOR_ENDPOINT),
-        Map.entry("iceberg.hadoop.fs.s3a.access.key", AWS_ACCESS_KEY),
-        Map.entry("iceberg.hadoop.fs.s3a.secret.key", AWS_SECRET_KEY),
-        Map.entry("iceberg.hadoop.fs.s3a.path.style.access", "true"),
-        Map.entry("iceberg.hadoop.fs.defaultFS", "s3://bucket/"),
-        Map.entry(
-            "iceberg.catalog.encryption.kms-impl", "com.example.iceberg.kms.LocalAesKmsClient"),
-        Map.entry(
-            "iceberg.catalog.encryption.kms.master-key",
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
-        Map.entry("iceberg.tables.auto-create-props.encryption.key-id", "test-master-key-1"),
-        Map.entry("value.converter", "org.apache.kafka.connect.json.JsonConverter"),
-        Map.entry("value.converter.schemas.enable", "false"),
-        Map.entry("consumer.override.auto.offset.reset", "earliest"),
-        Map.entry("iceberg.control.commit.interval-ms", "30000"));
-  }
-
-  private static Map<String, String> hiveCatalogConfigs() {
-    return Map.of(
-        CatalogProperties.URI,
-        HIVE_METASTORE_URI,
-        CatalogProperties.FILE_IO_IMPL,
-        "org.apache.iceberg.aws.s3.S3FileIO",
-        CatalogProperties.WAREHOUSE_LOCATION,
-        HIVE_WAREHOUSE_LOCATION,
-        "hive.metastore.warehouse.dir",
-        HIVE_WAREHOUSE_LOCATION,
-        "s3.endpoint",
-        "http://localhost:" + MINIO_PORT,
-        "s3.access-key-id",
-        AWS_ACCESS_KEY,
-        "s3.secret-access-key",
-        AWS_SECRET_KEY,
-        "s3.path-style-access",
-        "true",
-        "client.region",
-        AWS_REGION);
-  }
-
-  private static Map<String, String> hiveCatalogConfigsWithEncryption() {
-    return Stream.of(
-            hiveCatalogConfigs(),
-            Map.of(
-                "encryption.kms-impl",
-                "org.apache.iceberg.connect.utils.encryption.LocalAesKmsClient"))
-        .flatMap(m -> m.entrySet().stream())
-        .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue, (v1, v2) -> v2));
-  }
-
-  private void checkHiveCatalogAvailability(Catalog catalog) {
-    await()
-        .atMost(Duration.ofSeconds(30))
-        .pollInterval(Duration.ofMillis(500))
-        .ignoreExceptions()
-        .until(
-            () -> {
-              ((SupportsNamespaces) catalog).listNamespaces();
-              return true;
-            });
-  }
-
-  private List<String> castTableRecords(boolean useSchema, List<Record> records) {
-    return useSchema
-        ? extractTableRecordsAsString(
-            records.stream().map(rec -> (Record) rec.getField("payload")).toList())
-        : extractTableRecordsAsString(records);
   }
 }

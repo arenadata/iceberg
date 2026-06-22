@@ -46,10 +46,10 @@ public class TestTableMigration extends IntegrationTestBaseV3 {
         addConnectorConfigs(
             context().connectorCatalogProperties(),
             Map.of("iceberg.tables.auto-create-enabled", "true")),
-        List.of(TABLE_IDENTIFIER),
+        List.of(TABLE_IDENTIFIER_V3),
         List.of(eventOne));
 
-    Table table = loadCatalogTable(catalog(), TABLE_IDENTIFIER);
+    Table table = loadCatalogTable(catalog(), TABLE_IDENTIFIER_V3);
 
     assertThat(((BaseTable) table).operations().current().formatVersion()).isEqualTo(2);
 

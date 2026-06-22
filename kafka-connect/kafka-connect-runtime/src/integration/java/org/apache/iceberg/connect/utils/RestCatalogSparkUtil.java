@@ -69,7 +69,7 @@ public class RestCatalogSparkUtil {
                 query)
             .exec();
 
-    var output = new ByteArrayOutputStream();
+    ByteArrayOutputStream output = new ByteArrayOutputStream();
 
     DOCKER_CLIENT
         .execStartCmd(exec.getId())

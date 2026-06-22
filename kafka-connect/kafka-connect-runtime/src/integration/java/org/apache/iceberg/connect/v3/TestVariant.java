@@ -53,10 +53,10 @@ public class TestVariant extends IntegrationTestBaseV3 {
             addConnectorConfigs(
                 context().connectorCatalogProperties(), V3_AUTO_CREATE_CONNECTOR_CONFIGS),
             Map.of("iceberg.tables.schema-variant-fields", "info")),
-        List.of(TABLE_IDENTIFIER),
+        List.of(TABLE_IDENTIFIER_V3),
         KAFKA_VARIANT_EVENTS);
 
-    Table table = loadCatalogTable(catalog(), TABLE_IDENTIFIER);
+    Table table = loadCatalogTable(catalog(), TABLE_IDENTIFIER_V3);
 
     assertThat(table.schema().columns()).hasSameElementsAs(tableSchema.columns());
 

@@ -26,8 +26,6 @@ services:
     volumes:
       - ./hive-libs:/hive-jars
       - ./connect-libs:/connect-jars
-      - ${GITHUB_WORKSPACE:-../../..}/aws-bundle/build/libs:/aws-bundle-source
-      - ${GITHUB_WORKSPACE:-../../..}/spark/v4.0/spark-runtime/build/libs:/spark-runtime-source
 
   minio:
     image: minio/minio

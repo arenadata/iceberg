@@ -70,7 +70,7 @@ public class TestTimestampNs extends IntegrationTestBaseV3 {
     runTest(
         true,
         addConnectorConfigs(context().connectorCatalogProperties(), connectorCustomConfigs),
-        List.of(TABLE_IDENTIFIER),
+        List.of(TABLE_IDENTIFIER_V3),
         KAFKA_TIMESTAMP_NS_EVENTS);
 
     Schema expectedSchema =
@@ -91,7 +91,7 @@ public class TestTimestampNs extends IntegrationTestBaseV3 {
                         Types.NestedField.required(7, "event_time", checkStatsEventTimeType)))),
             ImmutableSet.of());
 
-    Table table = loadCatalogTable(catalog(), TABLE_IDENTIFIER);
+    Table table = loadCatalogTable(catalog(), TABLE_IDENTIFIER_V3);
 
     assertThat(table.schema().columns()).hasSameElementsAs(expectedSchema.columns());
 
@@ -134,15 +134,6 @@ public class TestTimestampNs extends IntegrationTestBaseV3 {
             Types.TimestampNanoType.withoutZone()));
   }
 
-  private String setTimeRecordField(Type timeFieldType, long longValue) {
-    return timeFieldType.equals(Types.TimestampNanoType.withZone())
-        ? String.valueOf(DateTimeUtil.timestamptzFromMicros(longValue / 1000))
-        : String.valueOf(
-            LocalDateTime.ofInstant(
-                Instant.ofEpochSecond(longValue / 1_000_000_000, longValue % 1_000_000_000),
-                ZoneId.of("UTC")));
-  }
-
   private List<TimestampNsEvent> castEvents(
       Type eventTimeType, Type finishTimeType, Type checkStatsEventTimeType) {
     return KAFKA_TIMESTAMP_NS_EVENTS.stream()
@@ -160,5 +151,14 @@ public class TestTimestampNs extends IntegrationTestBaseV3 {
                             checkStatsEventTimeType,
                             (Long) timestampNsEvent.checkStats().eventTime()))))
         .toList();
+  }
+
+  private String setTimeRecordField(Type timeFieldType, long longValue) {
+    return timeFieldType.equals(Types.TimestampNanoType.withZone())
+            ? String.valueOf(DateTimeUtil.timestamptzFromMicros(longValue / 1000))
+            : String.valueOf(
+            LocalDateTime.ofInstant(
+                    Instant.ofEpochSecond(longValue / 1_000_000_000, longValue % 1_000_000_000),
+                    ZoneId.of("UTC")));
   }
 }
