@@ -27,12 +27,6 @@ curl -f -L -o /connect-jars/hadoop-auth-3.4.1.jar https://repo1.maven.org/maven2
 curl -f -L -o /connect-jars/hadoop-aws-3.4.1.jar https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/3.4.1/hadoop-aws-3.4.1.jar &&
 curl -f -L -o /connect-jars/hadoop-common-3.4.1.jar https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-common/3.4.1/hadoop-common-3.4.1.jar &&
 curl -f -L -o /connect-jars/hive-storage-api-2.7.2.jar https://repo1.maven.org/maven2/org/apache/hive/hive-storage-api/2.7.2/hive-storage-api-2.7.2.jar &&
-curl -f -L -o /connect-jars/s3-transfer-manager-2.42.39.jar https://repo1.maven.org/maven2/software/amazon/awssdk/s3-transfer-manager/2.42.39/s3-transfer-manager-2.42.39.jar &&
-rm -f /connect-jars/iceberg-aws-bundle.jar &&
-rm -f /connect-jars/iceberg-spark-runtime.jar &&
-AWS_BUNDLE_JAR=$(find /aws-bundle-build-source/ -name "iceberg-aws-bundle-*.jar" ! -name "*javadoc*" ! -name "*sources*" ! -name "*tests*") &&
-cp $AWS_BUNDLE_JAR /connect-jars/iceberg-aws-bundle.jar &&
-SPARK_JAR=$(find /spark-runtime-build-source/ -name "iceberg-spark-runtime-*.jar" ! -name "*javadoc*" ! -name "*sources*" ! -name "*tests*") &&
-cp $SPARK_JAR /connect-jars/iceberg-spark-runtime.jar
+curl -f -L -o /connect-jars/s3-transfer-manager-2.42.39.jar https://repo1.maven.org/maven2/software/amazon/awssdk/s3-transfer-manager/2.42.39/s3-transfer-manager-2.42.39.jar
 
 
