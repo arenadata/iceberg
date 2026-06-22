@@ -60,7 +60,6 @@ public class TestContext {
   private TestContext() {
     ComposeContainer container =
         new ComposeContainer(new File("./docker/docker-compose.yml"))
-            .withEnv("ICEBERG_VERSION", System.getProperty("project.version"))
             .withStartupTimeout(Duration.ofMinutes(2))
             .waitingFor("connect", Wait.forHttp("/connectors"));
     container.start();
