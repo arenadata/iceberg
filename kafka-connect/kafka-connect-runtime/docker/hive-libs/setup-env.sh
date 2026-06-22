@@ -27,6 +27,9 @@ curl -f -L -o /connect-jars/hadoop-auth-3.4.1.jar https://repo1.maven.org/maven2
 curl -f -L -o /connect-jars/hadoop-aws-3.4.1.jar https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/3.4.1/hadoop-aws-3.4.1.jar &&
 curl -f -L -o /connect-jars/hadoop-common-3.4.1.jar https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-common/3.4.1/hadoop-common-3.4.1.jar &&
 curl -f -L -o /connect-jars/hive-storage-api-2.7.2.jar https://repo1.maven.org/maven2/org/apache/hive/hive-storage-api/2.7.2/hive-storage-api-2.7.2.jar &&
-curl -f -L -o /connect-jars/s3-transfer-manager-2.42.39.jar https://repo1.maven.org/maven2/software/amazon/awssdk/s3-transfer-manager/2.42.39/s3-transfer-manager-2.42.39.jar
+curl -f -L -o /connect-jars/s3-transfer-manager-2.42.39.jar https://repo1.maven.org/maven2/software/amazon/awssdk/s3-transfer-manager/2.42.39/s3-transfer-manager-2.42.39.jar &&
+curl -f -L -o /connect-jars/iceberg-spark-runtime.jar https://repo1.maven.org/maven2/org/apache/iceberg/iceberg-spark-runtime-4.0_2.13/1.11.0/iceberg-spark-runtime-4.0_2.13-1.11.0.jar &&
+curl -f -L -o /connect-jars/iceberg-aws-bundle.jar https://repo1.maven.org/maven2/org/apache/iceberg/iceberg-aws-bundle/1.11.0/iceberg-aws-bundle-1.11.0.jar
+
 
 
