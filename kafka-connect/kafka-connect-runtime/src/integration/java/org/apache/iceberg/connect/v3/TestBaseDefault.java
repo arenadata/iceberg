@@ -46,7 +46,7 @@ public class TestBaseDefault extends IntegrationTestBaseV3 {
       boolean useSchema, boolean isDefaultsEnabled, String info, List<Event> events) {
     catalog()
         .createTable(
-                TABLE_IDENTIFIER_V3,
+            TABLE_IDENTIFIER_V3,
             EVENT_EXTENDED_TABLE_SCHEMA,
             EVENT_EXTENDED_SPEC,
             BASE_V3_TABLE_CONFIG);

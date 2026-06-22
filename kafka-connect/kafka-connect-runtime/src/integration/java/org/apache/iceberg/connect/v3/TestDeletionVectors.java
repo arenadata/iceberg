@@ -71,7 +71,9 @@ public class TestDeletionVectors extends IntegrationTestBaseV3 {
             ICEBERG_REST_CATALOG, TABLE_IDENTIFIER_V3));
 
     String tableDataPath =
-        format("%s/data/", loadCatalogTableLocation(loadCatalogTable(catalog(), TABLE_IDENTIFIER_V3)))
+        format(
+                "%s/data/",
+                loadCatalogTableLocation(loadCatalogTable(catalog(), TABLE_IDENTIFIER_V3)))
             .replaceFirst("/", "");
 
     await()

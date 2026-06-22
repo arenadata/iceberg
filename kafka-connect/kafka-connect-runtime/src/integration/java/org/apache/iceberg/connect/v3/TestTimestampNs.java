@@ -155,10 +155,10 @@ public class TestTimestampNs extends IntegrationTestBaseV3 {
 
   private String setTimeRecordField(Type timeFieldType, long longValue) {
     return timeFieldType.equals(Types.TimestampNanoType.withZone())
-            ? String.valueOf(DateTimeUtil.timestamptzFromMicros(longValue / 1000))
-            : String.valueOf(
+        ? String.valueOf(DateTimeUtil.timestamptzFromMicros(longValue / 1000))
+        : String.valueOf(
             LocalDateTime.ofInstant(
-                    Instant.ofEpochSecond(longValue / 1_000_000_000, longValue % 1_000_000_000),
-                    ZoneId.of("UTC")));
+                Instant.ofEpochSecond(longValue / 1_000_000_000, longValue % 1_000_000_000),
+                ZoneId.of("UTC")));
   }
 }

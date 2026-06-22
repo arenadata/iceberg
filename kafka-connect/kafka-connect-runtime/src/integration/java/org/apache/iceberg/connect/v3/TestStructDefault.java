@@ -54,7 +54,7 @@ public class TestStructDefault extends IntegrationTestBaseV3 {
       List<? extends Event> kafkaEvents) {
     catalog()
         .createTable(
-                TABLE_IDENTIFIER_V3, EVENT_STRUCT_TABLE_SCHEMA, TEST_STRUCT_SPEC, BASE_V3_TABLE_CONFIG);
+            TABLE_IDENTIFIER_V3, EVENT_STRUCT_TABLE_SCHEMA, TEST_STRUCT_SPEC, BASE_V3_TABLE_CONFIG);
 
     runTest(
         useSchema,

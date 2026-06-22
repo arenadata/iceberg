@@ -29,7 +29,8 @@ import org.awaitility.Awaitility;
 
 public abstract class IntegrationTestBaseV3 extends AbstractTestBase {
   protected static final String TEST_TABLE_V3 = "tb1";
-  protected static final TableIdentifier TABLE_IDENTIFIER_V3 = TableIdentifier.of(TEST_DB, TEST_TABLE_V3);
+  protected static final TableIdentifier TABLE_IDENTIFIER_V3 =
+      TableIdentifier.of(TEST_DB, TEST_TABLE_V3);
 
   protected void runTest(
       boolean useSchema,
