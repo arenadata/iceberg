@@ -214,10 +214,8 @@ public class TestViews extends ExtensionsTestBase {
 
     assertThatThrownBy(() -> sql("SELECT * FROM %s", viewName))
         .isInstanceOf(AnalysisException.class)
-        .hasMessageContaining(
-            String.format(
-                "The table or view `%s`.`%s`.`non_existing` cannot be found",
-                catalogName, NAMESPACE));
+        .hasMessageContaining("The table or view `non_existing` cannot be found")
+        .hasMessageContaining("`%s`.`%s`", catalogName, NAMESPACE);
   }
 
   @TestTemplate
@@ -260,7 +258,10 @@ public class TestViews extends ExtensionsTestBase {
 
     assertThatThrownBy(() -> sql("SELECT * FROM %s", viewName))
         .isInstanceOf(AnalysisException.class)
-        .hasMessageContaining(String.format("Invalid view name: %s", viewName));
+        .hasMessageContaining("[PARSE_SYNTAX_ERROR]")
+        .hasMessageContaining("Syntax error at or near 'invalid'")
+        .hasMessageContaining("SQL of VIEW")
+        .hasMessageContaining(viewName);
   }
 
   @TestTemplate
@@ -525,19 +526,12 @@ public class TestViews extends ExtensionsTestBase {
 
     assertThat(sql(sql)).hasSize(1).containsExactly(row(5.5));
 
-    String expectedErrorMsg =
-        String.format("The routine %s.%s cannot be found", NAMESPACE, functionName);
-    if (SPARK_CATALOG.equals(catalogName)) {
-      // spark session catalog tries to load a V1 function and has a different error msg
-      expectedErrorMsg =
-          String.format(
-              "[ROUTINE_NOT_FOUND] The routine `%s`.`%s` cannot be found", NAMESPACE, functionName);
-    }
-
     // reading from a view that references a TEMP FUNCTION shouldn't be possible
     assertThatThrownBy(() -> sql("SELECT * FROM %s", viewName))
         .isInstanceOf(AnalysisException.class)
-        .hasMessageContaining(expectedErrorMsg);
+        .hasMessageContaining("Cannot resolve routine")
+        .hasMessageContaining("`%s`", functionName)
+        .hasMessageContaining("`%s`.`%s`", catalogName, NAMESPACE);
   }
 
   @TestTemplate
@@ -703,6 +697,9 @@ public class TestViews extends ExtensionsTestBase {
 
   @TestTemplate
   public void fullFunctionIdentifierNotRewrittenLoadFailure() {
+    assumeThat(catalogName)
+        .as("Spark 4.2 resolves spark_catalog.system functions in SparkSessionCatalog")
+        .isNotEqualTo(SPARK_CATALOG);
     String viewName = viewName("fullFunctionIdentifierNotRewrittenLoadFailure");
     String sql = "SELECT spark_catalog.system.bucket(100, 'a') AS bucket_result, 'a' AS value";
 
@@ -726,10 +723,10 @@ public class TestViews extends ExtensionsTestBase {
         .withSchema(schema)
         .create();
 
-    // verify the v1 error message
     assertThatThrownBy(() -> sql("SELECT * FROM %s", viewName))
         .isInstanceOf(AnalysisException.class)
-        .hasMessageContaining("The routine `system`.`bucket` cannot be found");
+        .hasMessageContaining("Cannot resolve routine")
+        .hasMessageContaining("`spark_catalog`.`system`.`bucket`");
   }
 
   private Schema schema(String sql) {
@@ -875,8 +872,7 @@ public class TestViews extends ExtensionsTestBase {
 
     assertThatThrownBy(() -> sql("ALTER VIEW %s RENAME TO %s", viewName, target))
         .isInstanceOf(AnalysisException.class)
-        .hasMessageContaining(
-            String.format("Cannot create view default.%s because it already exists", target));
+        .hasMessageContaining("Cannot create view default.%s because it already exists", target);
   }
 
   @TestTemplate
@@ -900,8 +896,7 @@ public class TestViews extends ExtensionsTestBase {
         catalogName, NAMESPACE, target, catalogName.equals(SPARK_CATALOG) ? " USING iceberg" : "");
     assertThatThrownBy(() -> sql("ALTER VIEW %s RENAME TO %s", viewName, target))
         .isInstanceOf(AnalysisException.class)
-        .hasMessageContaining(
-            String.format("Cannot create view default.%s because it already exists", target));
+        .hasMessageContaining("Cannot create view default.%s because it already exists", target);
   }
 
   @TestTemplate
@@ -994,9 +989,8 @@ public class TestViews extends ExtensionsTestBase {
 
     assertThatThrownBy(() -> sql("CREATE VIEW %s AS SELECT id FROM %s", viewName, tableName))
         .isInstanceOf(AnalysisException.class)
-        .hasMessageContaining(
-            String.format(
-                "Cannot create view %s.%s because it already exists", NAMESPACE, viewName));
+        .hasMessageContaining("Cannot create table or view")
+        .hasMessageContaining(viewName);
 
     // using IF NOT EXISTS should work
     assertThatNoException()
@@ -1040,8 +1034,7 @@ public class TestViews extends ExtensionsTestBase {
             () -> sql("CREATE VIEW %s AS SELECT id FROM %s", viewReferencingTempView, tempView))
         .isInstanceOf(AnalysisException.class)
         .hasMessageContaining(
-            String.format(
-                "Cannot create view %s.%s.%s", catalogName, NAMESPACE, viewReferencingTempView))
+            "Cannot create view %s.%s.%s", catalogName, NAMESPACE, viewReferencingTempView)
         .hasMessageContaining("that references temporary view:")
         .hasMessageContaining(tempView);
   }
@@ -1064,10 +1057,9 @@ public class TestViews extends ExtensionsTestBase {
                     viewReferencingTempView, globalTempView))
         .isInstanceOf(AnalysisException.class)
         .hasMessageContaining(
-            String.format(
-                "Cannot create view %s.%s.%s", catalogName, NAMESPACE, viewReferencingTempView))
+            "Cannot create view %s.%s.%s", catalogName, NAMESPACE, viewReferencingTempView)
         .hasMessageContaining("that references temporary view:")
-        .hasMessageContaining(String.format("%s.%s", "global_temp", globalTempView));
+        .hasMessageContaining("%s.%s", "global_temp", globalTempView);
   }
 
   @TestTemplate
@@ -1083,8 +1075,7 @@ public class TestViews extends ExtensionsTestBase {
     assertThatThrownBy(
             () -> sql("CREATE VIEW %s AS SELECT %s(id) FROM %s", viewName, functionName, tableName))
         .isInstanceOf(AnalysisException.class)
-        .hasMessageContaining(
-            String.format("Cannot create view %s.%s.%s", catalogName, NAMESPACE, viewName))
+        .hasMessageContaining("Cannot create view %s.%s.%s", catalogName, NAMESPACE, viewName)
         .hasMessageContaining("that references temporary function:")
         .hasMessageContaining(functionName);
   }
@@ -1106,8 +1097,7 @@ public class TestViews extends ExtensionsTestBase {
                     viewName, catalogName, NAMESPACE, functionName, tableName))
         .isInstanceOf(AnalysisException.class)
         .hasMessageContaining("Cannot resolve routine")
-        .hasMessageContaining(
-            String.format("`%s`.`%s`.`%s`", catalogName, NAMESPACE, functionName));
+        .hasMessageContaining("`%s`.`%s`.`%s`", catalogName, NAMESPACE, functionName);
 
     // TEMP Function can't be referenced using schema.name
     assertThatThrownBy(
@@ -1117,7 +1107,7 @@ public class TestViews extends ExtensionsTestBase {
                     viewName, NAMESPACE, functionName, tableName))
         .isInstanceOf(AnalysisException.class)
         .hasMessageContaining("Cannot resolve routine")
-        .hasMessageContaining(String.format("`%s`.`%s`", NAMESPACE, functionName));
+        .hasMessageContaining("`%s`.`%s`", NAMESPACE, functionName);
   }
 
   @TestTemplate
@@ -1135,8 +1125,7 @@ public class TestViews extends ExtensionsTestBase {
     assertThatThrownBy(
             () -> sql("CREATE VIEW %s (id, data) AS SELECT id FROM %s", viewName, tableName))
         .isInstanceOf(AnalysisException.class)
-        .hasMessageContaining(
-            String.format("Cannot create view %s.%s.%s", catalogName, NAMESPACE, viewName))
+        .hasMessageContaining("Cannot create view %s.%s.%s", catalogName, NAMESPACE, viewName)
         .hasMessageContaining("not enough data columns")
         .hasMessageContaining("View columns: id, data")
         .hasMessageContaining("Data columns: id");
@@ -1144,8 +1133,7 @@ public class TestViews extends ExtensionsTestBase {
     assertThatThrownBy(
             () -> sql("CREATE VIEW %s (id) AS SELECT id, data FROM %s", viewName, tableName))
         .isInstanceOf(AnalysisException.class)
-        .hasMessageContaining(
-            String.format("Cannot create view %s.%s.%s", catalogName, NAMESPACE, viewName))
+        .hasMessageContaining("Cannot create view %s.%s.%s", catalogName, NAMESPACE, viewName)
         .hasMessageContaining("too many data columns")
         .hasMessageContaining("View columns: id")
         .hasMessageContaining("Data columns: id, data");
@@ -1264,8 +1252,7 @@ public class TestViews extends ExtensionsTestBase {
 
     assertThatThrownBy(() -> sql("CREATE VIEW %s AS %s", viewName, sql))
         .isInstanceOf(AnalysisException.class)
-        .hasMessageContaining(
-            String.format("Cannot create view %s.%s.%s", catalogName, NAMESPACE, viewName))
+        .hasMessageContaining("Cannot create view %s.%s.%s", catalogName, NAMESPACE, viewName)
         .hasMessageContaining("that references temporary view:")
         .hasMessageContaining(tempViewInCTE);
   }
@@ -1286,8 +1273,7 @@ public class TestViews extends ExtensionsTestBase {
 
     assertThatThrownBy(() -> sql("CREATE VIEW %s AS %s", viewName, sql))
         .isInstanceOf(AnalysisException.class)
-        .hasMessageContaining(
-            String.format("Cannot create view %s.%s.%s", catalogName, NAMESPACE, viewName))
+        .hasMessageContaining("Cannot create view %s.%s.%s", catalogName, NAMESPACE, viewName)
         .hasMessageContaining("that references temporary function:")
         .hasMessageContaining(functionName);
   }
@@ -1315,8 +1301,7 @@ public class TestViews extends ExtensionsTestBase {
 
     assertThatThrownBy(() -> sql("CREATE VIEW %s AS %s", viewName, sql))
         .isInstanceOf(AnalysisException.class)
-        .hasMessageContaining(
-            String.format("Cannot create view %s.%s.%s", catalogName, NAMESPACE, viewName))
+        .hasMessageContaining("Cannot create view %s.%s.%s", catalogName, NAMESPACE, viewName)
         .hasMessageContaining("that references temporary view:")
         .hasMessageContaining(tempView);
   }
@@ -1336,10 +1321,9 @@ public class TestViews extends ExtensionsTestBase {
 
     assertThatThrownBy(() -> sql("CREATE VIEW %s AS %s", viewName, sql))
         .isInstanceOf(AnalysisException.class)
-        .hasMessageContaining(
-            String.format("Cannot create view %s.%s.%s", catalogName, NAMESPACE, viewName))
+        .hasMessageContaining("Cannot create view %s.%s.%s", catalogName, NAMESPACE, viewName)
         .hasMessageContaining("that references temporary view:")
-        .hasMessageContaining(String.format("%s.%s", "global_temp", globalTempView));
+        .hasMessageContaining("%s.%s", "global_temp", globalTempView);
   }
 
   @TestTemplate
@@ -1357,8 +1341,7 @@ public class TestViews extends ExtensionsTestBase {
 
     assertThatThrownBy(() -> sql("CREATE VIEW %s AS %s", viewName, sql))
         .isInstanceOf(AnalysisException.class)
-        .hasMessageContaining(
-            String.format("Cannot create view %s.%s.%s", catalogName, NAMESPACE, viewName))
+        .hasMessageContaining("Cannot create view %s.%s.%s", catalogName, NAMESPACE, viewName)
         .hasMessageContaining("that references temporary function:")
         .hasMessageContaining(functionName);
   }
@@ -1381,7 +1364,7 @@ public class TestViews extends ExtensionsTestBase {
 
       assertThatThrownBy(() -> sql(sql))
           .isInstanceOf(AnalysisException.class)
-          .hasMessageContaining(String.format("The table or view `%s` cannot be found", tableName));
+          .hasMessageContaining("The table or view `%s` cannot be found", tableName);
     }
 
     // the underlying SQL in the View should be rewritten to have catalog & namespace
@@ -1408,7 +1391,7 @@ public class TestViews extends ExtensionsTestBase {
 
       assertThatThrownBy(() -> sql(sql))
           .isInstanceOf(AnalysisException.class)
-          .hasMessageContaining(String.format("The table or view `%s` cannot be found", tableName));
+          .hasMessageContaining("The table or view `%s` cannot be found", tableName);
     }
 
     // the underlying SQL in the View should be rewritten to have catalog & namespace
@@ -1642,7 +1625,7 @@ public class TestViews extends ExtensionsTestBase {
     String location = viewCatalog().loadView(TableIdentifier.of(NAMESPACE, viewName)).location();
     String expected =
         String.format(
-            "CREATE VIEW %s.%s.%s (\n"
+            "CREATE VIEW %s.%s (\n"
                 + "  id,\n"
                 + "  data)\n"
                 + "TBLPROPERTIES (\n"
@@ -1650,7 +1633,7 @@ public class TestViews extends ExtensionsTestBase {
                 + "  'location' = '%s',\n"
                 + "  'provider' = 'iceberg')\n"
                 + "AS\n%s\n",
-            catalogName, NAMESPACE, viewName, location, sql);
+            NAMESPACE, viewName, location, sql);
     assertThat(sql("SHOW CREATE TABLE %s", viewName)).containsExactly(row(expected));
   }
 
@@ -1667,7 +1650,7 @@ public class TestViews extends ExtensionsTestBase {
     String location = viewCatalog().loadView(TableIdentifier.of(NAMESPACE, viewName)).location();
     String expected =
         String.format(
-            "CREATE VIEW %s.%s.%s (\n"
+            "CREATE VIEW %s.%s (\n"
                 + "  new_id COMMENT 'ID',\n"
                 + "  new_data COMMENT 'DATA')\n"
                 + "COMMENT 'view comment'\n"
@@ -1678,7 +1661,7 @@ public class TestViews extends ExtensionsTestBase {
                 + "  'location' = '%s',\n"
                 + "  'provider' = 'iceberg')\n"
                 + "AS\n%s\n",
-            catalogName, NAMESPACE, viewName, location, sql);
+            NAMESPACE, viewName, location, sql);
     assertThat(sql("SHOW CREATE TABLE %s", viewName)).containsExactly(row(expected));
   }
 
@@ -2020,8 +2003,7 @@ public class TestViews extends ExtensionsTestBase {
     String cycle = String.format("%s -> %s -> %s", view1, view2, view1);
     assertThatThrownBy(() -> sql("CREATE OR REPLACE VIEW %s AS SELECT * FROM %s", viewOne, view2))
         .isInstanceOf(AnalysisException.class)
-        .hasMessageStartingWith(
-            String.format("Recursive cycle in view detected: %s (cycle: %s)", view1, cycle));
+        .hasMessageStartingWith("Recursive cycle in view detected: %s (cycle: %s)", view1, cycle);
   }
 
   @TestTemplate
@@ -2042,8 +2024,7 @@ public class TestViews extends ExtensionsTestBase {
     String cycle = String.format("%s -> %s -> %s", view1, view2, view1);
     assertThatThrownBy(() -> sql("CREATE OR REPLACE VIEW %s AS SELECT * FROM %s", viewOne, view2))
         .isInstanceOf(AnalysisException.class)
-        .hasMessageStartingWith(
-            String.format("Recursive cycle in view detected: %s (cycle: %s)", view1, cycle));
+        .hasMessageStartingWith("Recursive cycle in view detected: %s (cycle: %s)", view1, cycle);
   }
 
   @TestTemplate
@@ -2064,11 +2045,11 @@ public class TestViews extends ExtensionsTestBase {
 
     // viewOne points to CTE, creating a recursive cycle
     String view1 = String.format("%s.%s.%s", catalogName, NAMESPACE, viewOne);
-    String cycle = String.format("%s -> %s -> %s", view1, viewTwo, view1);
+    String view2 = String.format("%s.%s.%s", catalogName, NAMESPACE, viewTwo);
+    String cycle = String.format("%s -> %s -> %s", view1, view2, view1);
     assertThatThrownBy(() -> sql("CREATE OR REPLACE VIEW %s AS %s", viewOne, sql))
         .isInstanceOf(AnalysisException.class)
-        .hasMessageStartingWith(
-            String.format("Recursive cycle in view detected: %s (cycle: %s)", view1, cycle));
+        .hasMessageStartingWith("Recursive cycle in view detected: %s (cycle: %s)", view1, cycle);
   }
 
   @TestTemplate
@@ -2086,11 +2067,11 @@ public class TestViews extends ExtensionsTestBase {
 
     // viewOne points to subquery expression, creating a recursive cycle
     String view1 = String.format("%s.%s.%s", catalogName, NAMESPACE, viewOne);
-    String cycle = String.format("%s -> %s -> %s", view1, viewTwo, view1);
+    String view2 = String.format("%s.%s.%s", catalogName, NAMESPACE, viewTwo);
+    String cycle = String.format("%s -> %s -> %s", view1, view2, view1);
     assertThatThrownBy(() -> sql("CREATE OR REPLACE VIEW %s AS %s", viewOne, sql))
         .isInstanceOf(AnalysisException.class)
-        .hasMessageStartingWith(
-            String.format("Recursive cycle in view detected: %s (cycle: %s)", view1, cycle));
+        .hasMessageStartingWith("Recursive cycle in view detected: %s (cycle: %s)", view1, cycle);
   }
 
   @TestTemplate

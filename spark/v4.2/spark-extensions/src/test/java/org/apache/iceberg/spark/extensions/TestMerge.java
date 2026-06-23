@@ -2864,7 +2864,7 @@ public abstract class TestMerge extends SparkRowLevelOperationsTestBase {
                         + "WHEN MATCHED THEN "
                         + "  UPDATE SET *"))
         .isInstanceOf(UnsupportedOperationException.class)
-        .hasMessage("MERGE INTO TABLE is not supported temporarily.");
+        .hasMessageContaining("does not support MERGE INTO TABLE");
   }
 
   /**

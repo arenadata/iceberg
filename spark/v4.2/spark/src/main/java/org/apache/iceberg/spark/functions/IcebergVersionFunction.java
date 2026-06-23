@@ -29,7 +29,7 @@ import org.apache.spark.unsafe.types.UTF8String;
 
 /**
  * A function for use in SQL that returns the current Iceberg version, e.g. {@code SELECT
- * system.iceberg_version()} will return a String such as "0.14.0" or "0.15.0-SNAPSHOT"
+ * system.iceberg_version()} will return a String such as "0.14.2" or "0.15.0-SNAPSHOT"
  */
 public class IcebergVersionFunction implements UnboundFunction {
   @Override

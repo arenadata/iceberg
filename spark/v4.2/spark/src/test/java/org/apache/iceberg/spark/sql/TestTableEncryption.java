@@ -108,7 +108,7 @@ public class TestTableEncryption extends CatalogTestBase {
 
     assertThat(currentDataFiles(table)).isNotEmpty();
 
-    sql("INSERT INTO %s VALUES (4, 'd', 4.0), (5, 'e', 5.0), (6, 'f', float('NaN'))", tableName);
+    sql("INSERT INTO %s VALUES (4, 'd', 4.2), (5, 'e', 5.0), (6, 'f', float('NaN'))", tableName);
 
     table.refresh();
     assertThat(currentDataFiles(table)).isNotEmpty();
@@ -116,14 +116,14 @@ public class TestTableEncryption extends CatalogTestBase {
 
   @TestTemplate
   public void testInsertAndDelete() {
-    sql("INSERT INTO %s VALUES (4, 'd', 4.0), (5, 'e', 5.0), (6, 'f', float('NaN'))", tableName);
+    sql("INSERT INTO %s VALUES (4, 'd', 4.2), (5, 'e', 5.0), (6, 'f', float('NaN'))", tableName);
 
     List<Object[]> expected =
         ImmutableList.of(
             row(1L, "a", 1.0F),
             row(2L, "b", 2.0F),
             row(3L, "c", Float.NaN),
-            row(4L, "d", 4.0F),
+            row(4L, "d", 4.2F),
             row(5L, "e", 5.0F),
             row(6L, "f", Float.NaN));
 
@@ -134,7 +134,7 @@ public class TestTableEncryption extends CatalogTestBase {
 
     sql("DELETE FROM %s WHERE id < 4", tableName);
 
-    expected = ImmutableList.of(row(4L, "d", 4.0F), row(5L, "e", 5.0F), row(6L, "f", Float.NaN));
+    expected = ImmutableList.of(row(4L, "d", 4.2F), row(5L, "e", 5.0F), row(6L, "f", Float.NaN));
 
     assertEquals(
         "Should return all expected rows",

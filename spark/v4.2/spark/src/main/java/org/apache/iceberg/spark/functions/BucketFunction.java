@@ -362,5 +362,10 @@ public class BucketFunction implements UnboundFunction {
     public Integer reduce(Integer bucketNo) {
       return bucketNo % this.commonDivisor;
     }
+
+    @Override
+    public DataType resultType() {
+      return DataTypes.IntegerType;
+    }
   }
 }

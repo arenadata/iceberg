@@ -65,6 +65,9 @@ import org.apache.spark.sql.catalyst.util.GenericArrayData;
 import org.apache.spark.sql.catalyst.util.MapData;
 import org.apache.spark.sql.types.DataType;
 import org.apache.spark.sql.types.Decimal;
+import org.apache.spark.sql.types.GeographyType;
+import org.apache.spark.sql.types.GeometryType;
+import org.apache.spark.unsafe.types.BinaryView;
 import org.apache.spark.unsafe.types.CalendarInterval;
 import org.apache.spark.unsafe.types.UTF8String;
 import org.apache.spark.unsafe.types.VariantVal;
@@ -671,6 +674,10 @@ public class SparkParquetReaders {
 
     @Override
     public Object get(int ordinal, DataType dataType) {
+      if (dataType instanceof GeographyType || dataType instanceof GeometryType) {
+        return BinaryView.fromBytes((byte[]) values[ordinal]);
+      }
+
       return values[ordinal];
     }
 
@@ -752,6 +759,11 @@ public class SparkParquetReaders {
     @Override
     public byte[] getBinary(int ordinal) {
       return (byte[]) values[ordinal];
+    }
+
+    @Override
+    public BinaryView getBinaryView(int ordinal) {
+      return isNullAt(ordinal) ? null : BinaryView.fromBytes(getBinary(ordinal));
     }
 
     @Override

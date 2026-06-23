@@ -199,7 +199,7 @@ public class TestSelect extends CatalogTestBase {
     List<Object[]> expected = sql("SELECT * FROM %s", tableName);
 
     // create a second snapshot
-    sql("INSERT INTO %s VALUES (4, 'd', 4.0), (5, 'e', 5.0)", tableName);
+    sql("INSERT INTO %s VALUES (4, 'd', 4.2), (5, 'e', 5.0)", tableName);
 
     String prefix = "snapshot_id_";
     // read the table at the snapshot
@@ -225,7 +225,7 @@ public class TestSelect extends CatalogTestBase {
     List<Object[]> expected = sql("SELECT * FROM %s", tableName);
 
     // create a second snapshot
-    sql("INSERT INTO %s VALUES (4, 'd', 4.0), (5, 'e', 5.0)", tableName);
+    sql("INSERT INTO %s VALUES (4, 'd', 4.2), (5, 'e', 5.0)", tableName);
 
     String prefix = "at_timestamp_";
     // read the table at the snapshot
@@ -250,7 +250,7 @@ public class TestSelect extends CatalogTestBase {
     List<Object[]> expected = sql("SELECT * FROM %s", tableName);
 
     // create a second snapshot
-    sql("INSERT INTO %s VALUES (4, 'd', 4.0), (5, 'e', 5.0)", tableName);
+    sql("INSERT INTO %s VALUES (4, 'd', 4.2), (5, 'e', 5.0)", tableName);
 
     // read the table at the snapshot
     List<Object[]> actual1 = sql("SELECT * FROM %s VERSION AS OF %s", tableName, snapshotId);
@@ -281,7 +281,7 @@ public class TestSelect extends CatalogTestBase {
     List<Object[]> expected = sql("SELECT * FROM %s", tableName);
 
     // create a second snapshot, read the table at the tag
-    sql("INSERT INTO %s VALUES (4, 'd', 4.0), (5, 'e', 5.0)", tableName);
+    sql("INSERT INTO %s VALUES (4, 'd', 4.2), (5, 'e', 5.0)", tableName);
     List<Object[]> actual1 = sql("SELECT * FROM %s VERSION AS OF 'test_tag'", tableName);
     assertEquals("Snapshot at specific tag reference name", expected, actual1);
 
@@ -311,7 +311,7 @@ public class TestSelect extends CatalogTestBase {
 
     // create a second snapshot, read the table at the snapshot
     List<Object[]> actual = sql("SELECT * FROM %s", tableName);
-    sql("INSERT INTO %s VALUES (4, 'd', 4.0), (5, 'e', 5.0)", tableName);
+    sql("INSERT INTO %s VALUES (4, 'd', 4.2), (5, 'e', 5.0)", tableName);
 
     table.refresh();
     long snapshotId2 = table.currentSnapshot().snapshotId();
@@ -337,7 +337,7 @@ public class TestSelect extends CatalogTestBase {
     List<Object[]> expected = sql("SELECT * FROM %s", tableName);
 
     // create a second snapshot, read the table at the branch
-    sql("INSERT INTO %s VALUES (4, 'd', 4.0), (5, 'e', 5.0)", tableName);
+    sql("INSERT INTO %s VALUES (4, 'd', 4.2), (5, 'e', 5.0)", tableName);
     List<Object[]> actual1 = sql("SELECT * FROM %s VERSION AS OF 'test_branch'", tableName);
     assertEquals("Snapshot at specific branch reference name", expected, actual1);
 
@@ -443,7 +443,7 @@ public class TestSelect extends CatalogTestBase {
     List<Object[]> expected = sql("SELECT * FROM %s", tableName);
 
     // create a second snapshot
-    sql("INSERT INTO %s VALUES (4, 'd', 4.0), (5, 'e', 5.0)", tableName);
+    sql("INSERT INTO %s VALUES (4, 'd', 4.2), (5, 'e', 5.0)", tableName);
 
     // read the table at the timestamp in long format i.e 1656507980463.
     List<Object[]> actualWithLongFormat =
@@ -489,7 +489,7 @@ public class TestSelect extends CatalogTestBase {
     String snapshotPrefix = "snapshot_id_";
 
     // create a second snapshot
-    sql("INSERT INTO %s VALUES (4, 'd', 4.0), (5, 'e', 5.0)", tableName);
+    sql("INSERT INTO %s VALUES (4, 'd', 4.2), (5, 'e', 5.0)", tableName);
 
     // using snapshot in table identifier and VERSION AS OF
     assertThatThrownBy(
@@ -538,7 +538,7 @@ public class TestSelect extends CatalogTestBase {
     validationCatalog.loadTable(tableIdent).manageSnapshots().createBranch("b1").commit();
 
     // create a second snapshot
-    sql("INSERT INTO %s VALUES (4, 'd', 4.0), (5, 'e', 5.0)", tableName);
+    sql("INSERT INTO %s VALUES (4, 'd', 4.2), (5, 'e', 5.0)", tableName);
 
     // using branch_b1 in the table identifier and VERSION AS OF
     assertThatThrownBy(
@@ -561,7 +561,7 @@ public class TestSelect extends CatalogTestBase {
         validationCatalog.loadTable(tableIdent).currentSnapshot().timestampMillis() + 2;
 
     // create a second snapshot
-    sql("INSERT INTO %s VALUES (4, 'd', 4.0), (5, 'e', 5.0)", tableName);
+    sql("INSERT INTO %s VALUES (4, 'd', 4.2), (5, 'e', 5.0)", tableName);
 
     assertThatThrownBy(
             () -> {

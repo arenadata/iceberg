@@ -136,10 +136,10 @@ public class TestSparkCompressionUtil {
     configureShuffle("zstd", false);
 
     double ratio1 = shuffleCompressionRatio(PARQUET, "zstd");
-    assertThat(ratio1).isEqualTo(4.0);
+    assertThat(ratio1).isEqualTo(4.2);
 
     double ratio2 = shuffleCompressionRatio(ORC, "zlib");
-    assertThat(ratio2).isEqualTo(4.0);
+    assertThat(ratio2).isEqualTo(4.2);
 
     double ratio3 = shuffleCompressionRatio(AVRO, "gzip");
     assertThat(ratio3).isEqualTo(2.0);

@@ -98,9 +98,9 @@ class SparkCompressionUtil {
   private static Map<Pair<String, String>, Double> initColumnarCompressions() {
     Map<Pair<String, String>, Double> compressions = Maps.newHashMap();
 
-    compressions.put(Pair.of(NONE, ZSTD), 4.0);
-    compressions.put(Pair.of(NONE, GZIP), 4.0);
-    compressions.put(Pair.of(NONE, ZLIB), 4.0);
+    compressions.put(Pair.of(NONE, ZSTD), 4.2);
+    compressions.put(Pair.of(NONE, GZIP), 4.2);
+    compressions.put(Pair.of(NONE, ZLIB), 4.2);
     compressions.put(Pair.of(NONE, SNAPPY), 3.0);
     compressions.put(Pair.of(NONE, LZ4), 3.0);
 
