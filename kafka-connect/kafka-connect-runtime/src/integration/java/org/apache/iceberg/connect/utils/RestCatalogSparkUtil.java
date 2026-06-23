@@ -28,6 +28,8 @@ import static org.apache.iceberg.connect.utils.DockerClientUtil.DOCKER_CLIENT;
 import static org.apache.iceberg.connect.utils.DockerClientUtil.getContainer;
 
 import com.github.dockerjava.api.async.ResultCallback;
+import com.github.dockerjava.api.command.ExecCreateCmdResponse;
+import com.github.dockerjava.api.command.InspectExecResponse;
 import com.github.dockerjava.api.model.Frame;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -38,7 +40,7 @@ public class RestCatalogSparkUtil {
   private RestCatalogSparkUtil() {}
 
   public static String runSparkSqlQuery(String query) throws InterruptedException {
-    var exec =
+    ExecCreateCmdResponse exec =
         DOCKER_CLIENT
             .execCreateCmd(getContainer(SPARK_IMAGE).getId())
             .withAttachStdout(true)
@@ -75,7 +77,6 @@ public class RestCatalogSparkUtil {
         .execStartCmd(exec.getId())
         .exec(
             new ResultCallback.Adapter<Frame>() {
-
               @Override
               public void onNext(Frame frame) {
                 try {
@@ -86,6 +87,13 @@ public class RestCatalogSparkUtil {
               }
             })
         .awaitCompletion();
-    return output.toString();
+    String consoleOutput = output.toString();
+    InspectExecResponse state = DOCKER_CLIENT.inspectExecCmd(exec.getId()).exec();
+    Integer exitCode = state.getExitCode();
+    if (!exitCode.equals(null) && exitCode != 0) {
+      throw new RuntimeException(
+          format("Spark sql query %s failed with error: %s", query, consoleOutput));
+    }
+    return consoleOutput;
   }
 }
