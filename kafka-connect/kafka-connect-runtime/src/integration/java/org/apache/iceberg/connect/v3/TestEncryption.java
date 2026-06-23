@@ -118,7 +118,7 @@ public class TestEncryption extends IntegrationTestBaseV3 {
             hiveCatalogConfigs(),
             Map.of(
                 "encryption.kms-impl",
-                "org.apache.iceberg.connect.utils.encryption.LocalAesKmsClient"))
+                "org.apache.iceberg.connect.service.encryption.LocalAesKmsClient"))
         .flatMap(m -> m.entrySet().stream())
         .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue, (v1, v2) -> v2));
   }
