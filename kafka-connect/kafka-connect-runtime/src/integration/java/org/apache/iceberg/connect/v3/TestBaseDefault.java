@@ -18,21 +18,21 @@
  */
 package org.apache.iceberg.connect.v3;
 
-import static org.apache.iceberg.connect.utils.ConnectorUtils.addConnectorConfigs;
-import static org.apache.iceberg.connect.utils.IcebergTableUtils.BASE_V3_TABLE_CONFIG;
-import static org.apache.iceberg.connect.utils.IcebergTableUtils.extractTableRecords;
-import static org.apache.iceberg.connect.utils.IcebergTableUtils.extractTableRecordsAsString;
-import static org.apache.iceberg.connect.utils.IcebergTableUtils.loadCatalogTable;
-import static org.apache.iceberg.connect.utils.KafkaBaseEventsUtils.KAFKA_BASE_EVENTS;
-import static org.apache.iceberg.connect.v3.dto.EventExtended.EVENT_EXTENDED_SPEC;
-import static org.apache.iceberg.connect.v3.dto.EventExtended.EVENT_EXTENDED_TABLE_SCHEMA;
-import static org.apache.iceberg.connect.v3.dto.EventExtended.INFO_WRITE_DEFAULT;
+import static org.apache.iceberg.connect.service.ConnectorService.addConnectorConfigs;
+import static org.apache.iceberg.connect.service.IcebergTableClient.BASE_V3_TABLE_CONFIG;
+import static org.apache.iceberg.connect.service.IcebergTableClient.extractTableRecords;
+import static org.apache.iceberg.connect.service.IcebergTableClient.extractTableRecordsAsString;
+import static org.apache.iceberg.connect.service.IcebergTableClient.loadCatalogTable;
+import static org.apache.iceberg.connect.service.KafkaBaseEventsService.KAFKA_BASE_EVENTS;
+import static org.apache.iceberg.connect.v3.dto.UserEventExtended.EVENT_EXTENDED_SPEC;
+import static org.apache.iceberg.connect.v3.dto.UserEventExtended.EVENT_EXTENDED_TABLE_SCHEMA;
+import static org.apache.iceberg.connect.v3.dto.UserEventExtended.INFO_WRITE_DEFAULT;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.List;
 import java.util.stream.Stream;
-import org.apache.iceberg.connect.v3.dto.Event;
-import org.apache.iceberg.connect.v3.dto.EventExtended;
+import org.apache.iceberg.connect.v3.dto.UserEvent;
+import org.apache.iceberg.connect.v3.dto.UserEventExtended;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -43,7 +43,7 @@ public class TestBaseDefault extends IntegrationTestBaseV3 {
   @ParameterizedTest
   @MethodSource("argsProvider")
   public void testDefault(
-      boolean useSchema, boolean isDefaultsEnabled, String info, List<Event> events) {
+      boolean useSchema, boolean isDefaultsEnabled, String info, List<UserEvent> events) {
     catalog()
         .createTable(
             TABLE_IDENTIFIER_V3,
@@ -76,7 +76,7 @@ public class TestBaseDefault extends IntegrationTestBaseV3 {
         Arguments.of(false, false, null, castEventsToEventsExtended(null)));
   }
 
-  private static List<EventExtended> castEventsToEventsExtended(String info) {
-    return KAFKA_BASE_EVENTS.stream().map(event -> new EventExtended(event, info)).toList();
+  private static List<UserEventExtended> castEventsToEventsExtended(String info) {
+    return KAFKA_BASE_EVENTS.stream().map(event -> new UserEventExtended(event, info)).toList();
   }
 }

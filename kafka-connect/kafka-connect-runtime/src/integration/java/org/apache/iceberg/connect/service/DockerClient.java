@@ -16,22 +16,27 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.iceberg.connect.utils.encryption;
+package org.apache.iceberg.connect.service;
 
-import java.nio.ByteBuffer;
-import java.util.Map;
-import org.apache.iceberg.encryption.KeyManagementClient;
+import static java.lang.String.format;
 
-public class LocalAesKmsClient implements KeyManagementClient {
-  public LocalAesKmsClient() {}
+import com.github.dockerjava.api.model.Container;
+import java.util.List;
+import java.util.NoSuchElementException;
+import org.testcontainers.DockerClientFactory;
 
-  public void initialize(Map<String, String> properties) {}
+public class DockerClient {
+  public static final com.github.dockerjava.api.DockerClient DOCKER_CLIENT =
+      DockerClientFactory.instance().client();
 
-  public ByteBuffer wrapKey(ByteBuffer key, String wrappingKeyId) {
-    return key;
-  }
+  private DockerClient() {}
 
-  public ByteBuffer unwrapKey(ByteBuffer wrappedKey, String wrappingKeyId) {
-    return wrappedKey;
+  public static Container getContainer(String image) {
+    List<Container> containers = DOCKER_CLIENT.listContainersCmd().withShowAll(true).exec();
+    return containers.stream()
+        .filter(container -> container.getImage().contains(image))
+        .findFirst()
+        .orElseThrow(
+            () -> new NoSuchElementException(format("No container named %s is found", image)));
   }
 }

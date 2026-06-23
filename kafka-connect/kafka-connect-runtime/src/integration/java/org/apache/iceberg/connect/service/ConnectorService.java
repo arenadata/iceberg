@@ -16,16 +16,16 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.iceberg.connect.utils;
+package org.apache.iceberg.connect.service;
 
 import java.util.HashMap;
 import java.util.Map;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-public class ConnectorUtils {
+public class ConnectorService {
 
-  private ConnectorUtils() {}
+  private ConnectorService() {}
 
   public static final int CATALOG_PORT = 8181;
   public static final int MINIO_PORT = 9000;

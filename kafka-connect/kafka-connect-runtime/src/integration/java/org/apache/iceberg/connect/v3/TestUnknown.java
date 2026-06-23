@@ -18,11 +18,11 @@
  */
 package org.apache.iceberg.connect.v3;
 
-import static org.apache.iceberg.connect.utils.ConnectorUtils.V3_AUTO_CREATE_CONNECTOR_CONFIGS;
-import static org.apache.iceberg.connect.utils.ConnectorUtils.addConnectorConfigs;
-import static org.apache.iceberg.connect.utils.IcebergTableUtils.extractTableRecords;
-import static org.apache.iceberg.connect.utils.IcebergTableUtils.extractTableRecordsAsString;
-import static org.apache.iceberg.connect.utils.IcebergTableUtils.loadCatalogTable;
+import static org.apache.iceberg.connect.service.ConnectorService.V3_AUTO_CREATE_CONNECTOR_CONFIGS;
+import static org.apache.iceberg.connect.service.ConnectorService.addConnectorConfigs;
+import static org.apache.iceberg.connect.service.IcebergTableClient.extractTableRecords;
+import static org.apache.iceberg.connect.service.IcebergTableClient.extractTableRecordsAsString;
+import static org.apache.iceberg.connect.service.IcebergTableClient.loadCatalogTable;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.List;
@@ -30,7 +30,7 @@ import java.util.Map;
 import java.util.stream.Stream;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.Table;
-import org.apache.iceberg.connect.v3.dto.Event;
+import org.apache.iceberg.connect.v3.dto.UserEvent;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableSet;
 import org.apache.iceberg.types.Types;
@@ -39,8 +39,8 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 public class TestUnknown extends IntegrationTestBaseV3 {
-  private static final List<Event> BASE_NULL_EVENTS =
-      List.of(new Event(1, null), new Event(2, null));
+  private static final List<UserEvent> BASE_NULL_EVENTS =
+      List.of(new UserEvent(1, null), new UserEvent(2, null));
 
   @ParameterizedTest
   @MethodSource("argsProvider")

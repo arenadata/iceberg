@@ -18,17 +18,17 @@
  */
 package org.apache.iceberg.connect.v3;
 
-import static org.apache.iceberg.connect.utils.ConnectorUtils.AWS_ACCESS_KEY;
-import static org.apache.iceberg.connect.utils.ConnectorUtils.AWS_REGION;
-import static org.apache.iceberg.connect.utils.ConnectorUtils.AWS_SECRET_KEY;
-import static org.apache.iceberg.connect.utils.ConnectorUtils.MINIO_PORT;
-import static org.apache.iceberg.connect.utils.ConnectorUtils.V3_AUTO_CREATE_CONNECTOR_CONFIGS;
-import static org.apache.iceberg.connect.utils.ConnectorUtils.addConnectorConfigs;
-import static org.apache.iceberg.connect.utils.IcebergTableUtils.S3_CLIENT;
-import static org.apache.iceberg.connect.utils.IcebergTableUtils.extractTableRecords;
-import static org.apache.iceberg.connect.utils.IcebergTableUtils.extractTableRecordsAsString;
-import static org.apache.iceberg.connect.utils.IcebergTableUtils.loadCatalogTable;
-import static org.apache.iceberg.connect.utils.KafkaBaseEventsUtils.KAFKA_BASE_EVENTS;
+import static org.apache.iceberg.connect.service.ConnectorService.AWS_ACCESS_KEY;
+import static org.apache.iceberg.connect.service.ConnectorService.AWS_REGION;
+import static org.apache.iceberg.connect.service.ConnectorService.AWS_SECRET_KEY;
+import static org.apache.iceberg.connect.service.ConnectorService.MINIO_PORT;
+import static org.apache.iceberg.connect.service.ConnectorService.V3_AUTO_CREATE_CONNECTOR_CONFIGS;
+import static org.apache.iceberg.connect.service.ConnectorService.addConnectorConfigs;
+import static org.apache.iceberg.connect.service.IcebergTableClient.S3_CLIENT;
+import static org.apache.iceberg.connect.service.IcebergTableClient.extractTableRecords;
+import static org.apache.iceberg.connect.service.IcebergTableClient.extractTableRecordsAsString;
+import static org.apache.iceberg.connect.service.IcebergTableClient.loadCatalogTable;
+import static org.apache.iceberg.connect.service.KafkaBaseEventsService.KAFKA_BASE_EVENTS;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.awaitility.Awaitility.await;

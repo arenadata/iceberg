@@ -18,10 +18,10 @@
  */
 package org.apache.iceberg.connect.v3;
 
-import static org.apache.iceberg.connect.utils.ConnectorUtils.addConnectorConfigs;
-import static org.apache.iceberg.connect.utils.IcebergTableUtils.extractTableRecords;
-import static org.apache.iceberg.connect.utils.IcebergTableUtils.extractTableRecordsAsString;
-import static org.apache.iceberg.connect.utils.IcebergTableUtils.loadCatalogTable;
+import static org.apache.iceberg.connect.service.ConnectorService.addConnectorConfigs;
+import static org.apache.iceberg.connect.service.IcebergTableClient.extractTableRecords;
+import static org.apache.iceberg.connect.service.IcebergTableClient.extractTableRecordsAsString;
+import static org.apache.iceberg.connect.service.IcebergTableClient.loadCatalogTable;
 import static org.assertj.core.api.AssertionsForInterfaceTypes.assertThat;
 import static org.awaitility.Awaitility.await;
 
@@ -31,7 +31,7 @@ import java.util.Map;
 import org.apache.iceberg.BaseTable;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.connect.v3.dto.Info;
-import org.apache.iceberg.connect.v3.dto.StructEvent;
+import org.apache.iceberg.connect.v3.dto.StructUserEvent;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
@@ -40,7 +40,7 @@ public class TestTableMigration extends IntegrationTestBaseV3 {
   @ParameterizedTest
   @CsvSource({"true", "false"})
   public void testMigration(boolean useSchema) {
-    StructEvent<Info> eventOne = new StructEvent(1, "Sam", new Info(15));
+    StructUserEvent<Info> eventOne = new StructUserEvent(1, "Sam", new Info(15));
     runTest(
         useSchema,
         addConnectorConfigs(
@@ -59,7 +59,7 @@ public class TestTableMigration extends IntegrationTestBaseV3 {
 
     table.updateProperties().set("format-version", "3").commit();
 
-    StructEvent<Info> eventTwo = new StructEvent(2, "Susan", new Info(16));
+    StructUserEvent<Info> eventTwo = new StructUserEvent(2, "Susan", new Info(16));
 
     send(testTopic(), eventTwo, useSchema);
 

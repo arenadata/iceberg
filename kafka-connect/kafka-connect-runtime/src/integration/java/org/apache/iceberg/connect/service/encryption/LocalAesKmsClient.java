@@ -16,28 +16,22 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.iceberg.connect.utils;
+package org.apache.iceberg.connect.service.encryption;
 
-import java.util.List;
-import org.apache.iceberg.Schema;
-import org.apache.iceberg.connect.v3.dto.Event;
-import org.apache.iceberg.data.GenericRecord;
+import java.nio.ByteBuffer;
+import java.util.Map;
+import org.apache.iceberg.encryption.KeyManagementClient;
 
-public class KafkaBaseEventsUtils {
-  public static final List<Event> KAFKA_BASE_EVENTS =
-      List.of(new Event(1, "Sam"), new Event(2, "Susan"));
+public class LocalAesKmsClient implements KeyManagementClient {
+  public LocalAesKmsClient() {}
 
-  private KafkaBaseEventsUtils() {}
+  public void initialize(Map<String, String> properties) {}
 
-  public static List<org.apache.iceberg.data.Record> castKafkaBaseEventsToRecords(Schema schema) {
-    return KAFKA_BASE_EVENTS.stream()
-        .map(
-            event -> {
-              org.apache.iceberg.data.Record record = GenericRecord.create(schema);
-              record.setField("id", event.id());
-              record.setField("username", event.username());
-              return record;
-            })
-        .toList();
+  public ByteBuffer wrapKey(ByteBuffer key, String wrappingKeyId) {
+    return key;
+  }
+
+  public ByteBuffer unwrapKey(ByteBuffer wrappedKey, String wrappingKeyId) {
+    return wrappedKey;
   }
 }

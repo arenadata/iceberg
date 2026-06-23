@@ -18,11 +18,11 @@
  */
 package org.apache.iceberg.connect.v3;
 
-import static org.apache.iceberg.connect.utils.ConnectorUtils.V3_AUTO_CREATE_CONNECTOR_CONFIGS;
-import static org.apache.iceberg.connect.utils.ConnectorUtils.addConnectorConfigs;
-import static org.apache.iceberg.connect.utils.IcebergTableUtils.extractTableRecords;
-import static org.apache.iceberg.connect.utils.IcebergTableUtils.extractTableRecordsAsString;
-import static org.apache.iceberg.connect.utils.IcebergTableUtils.loadCatalogTable;
+import static org.apache.iceberg.connect.service.ConnectorService.V3_AUTO_CREATE_CONNECTOR_CONFIGS;
+import static org.apache.iceberg.connect.service.ConnectorService.addConnectorConfigs;
+import static org.apache.iceberg.connect.service.IcebergTableClient.extractTableRecords;
+import static org.apache.iceberg.connect.service.IcebergTableClient.extractTableRecordsAsString;
+import static org.apache.iceberg.connect.service.IcebergTableClient.loadCatalogTable;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.List;
@@ -30,10 +30,10 @@ import java.util.Map;
 import java.util.stream.Stream;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.Table;
-import org.apache.iceberg.connect.v3.dto.Event;
-import org.apache.iceberg.connect.v3.dto.EventExtended;
 import org.apache.iceberg.connect.v3.dto.Info;
-import org.apache.iceberg.connect.v3.dto.StructEvent;
+import org.apache.iceberg.connect.v3.dto.StructUserEvent;
+import org.apache.iceberg.connect.v3.dto.UserEvent;
+import org.apache.iceberg.connect.v3.dto.UserEventExtended;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.types.Types;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -41,8 +41,10 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 public class TestVariant extends IntegrationTestBaseV3 {
-  private static final List<? extends Event> KAFKA_VARIANT_EVENTS =
-      List.of(new EventExtended(1L, "Sam", "active"), new StructEvent<>(2, "Susan", new Info(15)));
+  private static final List<? extends UserEvent> KAFKA_VARIANT_EVENTS =
+      List.of(
+          new UserEventExtended(1L, "Sam", "active"),
+          new StructUserEvent<>(2, "Susan", new Info(15)));
 
   @ParameterizedTest
   @MethodSource("argsProvider")

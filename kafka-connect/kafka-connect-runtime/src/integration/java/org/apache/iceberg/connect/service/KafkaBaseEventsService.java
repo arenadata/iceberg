@@ -16,27 +16,28 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.iceberg.connect.utils;
+package org.apache.iceberg.connect.service;
 
-import static java.lang.String.format;
-
-import com.github.dockerjava.api.DockerClient;
-import com.github.dockerjava.api.model.Container;
 import java.util.List;
-import java.util.NoSuchElementException;
-import org.testcontainers.DockerClientFactory;
+import org.apache.iceberg.Schema;
+import org.apache.iceberg.connect.v3.dto.UserEvent;
+import org.apache.iceberg.data.GenericRecord;
 
-public class DockerClientUtil {
-  public static final DockerClient DOCKER_CLIENT = DockerClientFactory.instance().client();
+public class KafkaBaseEventsService {
+  public static final List<UserEvent> KAFKA_BASE_EVENTS =
+      List.of(new UserEvent(1, "Sam"), new UserEvent(2, "Susan"));
 
-  private DockerClientUtil() {}
+  private KafkaBaseEventsService() {}
 
-  public static Container getContainer(String image) {
-    List<Container> containers = DOCKER_CLIENT.listContainersCmd().withShowAll(true).exec();
-    return containers.stream()
-        .filter(container -> container.getImage().contains(image))
-        .findFirst()
-        .orElseThrow(
-            () -> new NoSuchElementException(format("No container named %s is found", image)));
+  public static List<org.apache.iceberg.data.Record> castKafkaBaseEventsToRecords(Schema schema) {
+    return KAFKA_BASE_EVENTS.stream()
+        .map(
+            event -> {
+              org.apache.iceberg.data.Record record = GenericRecord.create(schema);
+              record.setField("id", event.id());
+              record.setField("username", event.username());
+              return record;
+            })
+        .toList();
   }
 }

@@ -30,7 +30,7 @@ import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.json.JsonConverter;
 
-public class TimestampNsEvent extends Event {
+public class TimestampNsEvent extends UserEvent {
   private Object eventTime;
   private TimestampNsFinishTime userStats;
   private TimestampNsEventTime checkStats;

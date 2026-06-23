@@ -23,13 +23,11 @@
 
 <configuration>
 
-    <!-- 1. Настройка главной файловой системы (указываем ваш MinIO бакет) -->
     <property>
         <name>fs.defaultFS</name>
         <value>s3a://warehouse/</value>
     </property>
 
-    <!-- 2. Привязка классов S3A и S3 драйверов -->
     <property>
         <name>fs.s3a.impl</name>
         <value>org.apache.hadoop.fs.s3a.S3AFileSystem</value>
@@ -39,13 +37,11 @@
         <value>org.apache.hadoop.fs.s3a.S3AFileSystem</value>
     </property>
 
-    <!-- 3. Точка подключения к локальному MinIO внутри Docker-сети -->
     <property>
         <name>fs.s3a.endpoint</name>
         <value>http://minio:9000</value>
     </property>
 
-    <!-- 4. Авторизация в MinIO -->
     <property>
         <name>fs.s3a.access.key</name>
         <value>minioadmin</value>
@@ -55,7 +51,6 @@
         <value>minioadmin</value>
     </property>
 
-    <!-- 5. Критические параметры для совместимости S3A с MinIO -->
     <property>
         <name>fs.s3a.path.style.access</name>
         <value>true</value>
@@ -69,7 +64,6 @@
         <value>org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider</value>
     </property>
 
-    <!-- Включаем поддержку магических коммиттеров для ускорения работы с S3 -->
     <property>
         <name>fs.s3a.committer.name</name>
         <value>magic</value>

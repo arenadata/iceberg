@@ -30,7 +30,7 @@ import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.json.JsonConverter;
 
-public class Event extends BaseTestEvent {
+public class UserEvent extends BaseTestEvent {
   private final String username;
 
   public static final org.apache.kafka.connect.data.Schema EVENT_CONNECT_SCHEMA =
@@ -38,7 +38,7 @@ public class Event extends BaseTestEvent {
           .field("id", org.apache.kafka.connect.data.Schema.INT64_SCHEMA)
           .field("username", org.apache.kafka.connect.data.Schema.OPTIONAL_STRING_SCHEMA);
 
-  public Event(long id, String username) {
+  public UserEvent(long id, String username) {
     super(id);
     this.username = username;
   }
@@ -59,7 +59,7 @@ public class Event extends BaseTestEvent {
               .hiddenImpl(
                   JsonConverter.class, org.apache.kafka.connect.data.Schema.class, Object.class)
               .build(JSON_CONVERTER)
-              .invoke(Event.EVENT_CONNECT_SCHEMA, value);
+              .invoke(UserEvent.EVENT_CONNECT_SCHEMA, value);
       return TestContext.MAPPER.writeValueAsString(json);
     } catch (JsonProcessingException e) {
       throw new RuntimeException(e);

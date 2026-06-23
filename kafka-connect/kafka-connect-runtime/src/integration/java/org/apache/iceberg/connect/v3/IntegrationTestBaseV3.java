@@ -24,7 +24,7 @@ import java.util.Map;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.connect.AbstractTestBase;
 import org.apache.iceberg.connect.KafkaConnectUtils;
-import org.apache.iceberg.connect.v3.dto.Event;
+import org.apache.iceberg.connect.v3.dto.UserEvent;
 import org.awaitility.Awaitility;
 
 public abstract class IntegrationTestBaseV3 extends AbstractTestBase {
@@ -36,7 +36,7 @@ public abstract class IntegrationTestBaseV3 extends AbstractTestBase {
       boolean useSchema,
       Map<String, Object> extraConfig,
       List<TableIdentifier> tableIdentifiers,
-      List<? extends Event> events) {
+      List<? extends UserEvent> events) {
     KafkaConnectUtils.Config connectorConfig = initConnectorConfig(useSchema, extraConfig);
     events.forEach(event -> send(testTopic(), event, useSchema));
 

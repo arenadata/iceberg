@@ -16,16 +16,16 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.iceberg.connect.utils;
+package org.apache.iceberg.connect.service;
 
 import static java.lang.String.format;
-import static org.apache.iceberg.connect.utils.ConnectorUtils.AWS_ACCESS_KEY;
-import static org.apache.iceberg.connect.utils.ConnectorUtils.AWS_REGION;
-import static org.apache.iceberg.connect.utils.ConnectorUtils.AWS_SECRET_KEY;
-import static org.apache.iceberg.connect.utils.ConnectorUtils.CATALOG_PORT;
-import static org.apache.iceberg.connect.utils.ConnectorUtils.MINIO_PORT;
-import static org.apache.iceberg.connect.utils.DockerClientUtil.DOCKER_CLIENT;
-import static org.apache.iceberg.connect.utils.DockerClientUtil.getContainer;
+import static org.apache.iceberg.connect.service.ConnectorService.AWS_ACCESS_KEY;
+import static org.apache.iceberg.connect.service.ConnectorService.AWS_REGION;
+import static org.apache.iceberg.connect.service.ConnectorService.AWS_SECRET_KEY;
+import static org.apache.iceberg.connect.service.ConnectorService.CATALOG_PORT;
+import static org.apache.iceberg.connect.service.ConnectorService.MINIO_PORT;
+import static org.apache.iceberg.connect.service.DockerClient.DOCKER_CLIENT;
+import static org.apache.iceberg.connect.service.DockerClient.getContainer;
 
 import com.github.dockerjava.api.async.ResultCallback;
 import com.github.dockerjava.api.command.ExecCreateCmdResponse;
@@ -34,10 +34,10 @@ import com.github.dockerjava.api.model.Frame;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 
-public class RestCatalogSparkUtil {
+public class RestCatalogSparkClient {
   private static final String SPARK_IMAGE = "apache/spark";
 
-  private RestCatalogSparkUtil() {}
+  private RestCatalogSparkClient() {}
 
   public static String runSparkSqlQuery(String query) throws InterruptedException {
     ExecCreateCmdResponse exec =

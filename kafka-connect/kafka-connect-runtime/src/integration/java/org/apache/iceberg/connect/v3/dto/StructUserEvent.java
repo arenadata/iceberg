@@ -19,7 +19,7 @@
 package org.apache.iceberg.connect.v3.dto;
 
 import static java.util.stream.Collectors.joining;
-import static org.apache.iceberg.connect.v3.dto.EventExtended.INFO_WRITE_DEFAULT;
+import static org.apache.iceberg.connect.v3.dto.UserEventExtended.INFO_WRITE_DEFAULT;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -36,10 +36,10 @@ import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.json.JsonConverter;
 
-public class StructEvent<T extends Info> extends Event {
+public class StructUserEvent<T extends Info> extends UserEvent {
   private final T info;
 
-  public StructEvent(long id, String username, T info) {
+  public StructUserEvent(long id, String username, T info) {
     super(id, username);
     this.info = info;
   }

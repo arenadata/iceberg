@@ -16,12 +16,12 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.iceberg.connect.utils;
+package org.apache.iceberg.connect.service;
 
 import static java.lang.String.format;
-import static org.apache.iceberg.connect.utils.ConnectorUtils.AWS_ACCESS_KEY;
-import static org.apache.iceberg.connect.utils.ConnectorUtils.AWS_SECRET_KEY;
-import static org.apache.iceberg.connect.utils.ConnectorUtils.MINIO_PORT;
+import static org.apache.iceberg.connect.service.ConnectorService.AWS_ACCESS_KEY;
+import static org.apache.iceberg.connect.service.ConnectorService.AWS_SECRET_KEY;
+import static org.apache.iceberg.connect.service.ConnectorService.MINIO_PORT;
 
 import java.net.URI;
 import java.util.List;
@@ -42,7 +42,7 @@ import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
 
-public class IcebergTableUtils {
+public class IcebergTableClient {
 
   public static final Map<String, String> BASE_V3_TABLE_CONFIG = Map.of("format-version", "3");
 
@@ -56,7 +56,7 @@ public class IcebergTableUtils {
           .forcePathStyle(true)
           .build();
 
-  private IcebergTableUtils() {}
+  private IcebergTableClient() {}
 
   public static List<org.apache.iceberg.data.Record> extractTableRecords(Table table) {
     return Lists.newArrayList(IcebergGenerics.read(table).build());

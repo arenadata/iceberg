@@ -35,7 +35,7 @@ import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.json.JsonConverter;
 
-public class EventExtended extends Event {
+public class UserEventExtended extends UserEvent {
   public static final String INFO_WRITE_DEFAULT = "active";
   private final String info;
 
@@ -61,12 +61,12 @@ public class EventExtended extends Event {
   public static final PartitionSpec EVENT_EXTENDED_SPEC =
       PartitionSpec.builderFor(EVENT_EXTENDED_TABLE_SCHEMA).build();
 
-  public EventExtended(Long id, String username, String info) {
+  public UserEventExtended(Long id, String username, String info) {
     super(id, username);
     this.info = info;
   }
 
-  public EventExtended(Event event, String info) {
+  public UserEventExtended(UserEvent event, String info) {
     this(event.id(), event.username(), info);
   }
 
