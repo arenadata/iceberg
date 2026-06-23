@@ -346,6 +346,7 @@ public class TestCreateActions extends CatalogTestBase {
         .write()
         .mode(SaveMode.Overwrite)
         .saveAsTable(dest);
+    markPurgeableForMigration(source);
     List<Object[]> expected1 = sql("select id, %s from %s order by id", colName1, source);
     List<Object[]> expected2 = sql("select id from %s order by id", source);
 
@@ -393,6 +394,7 @@ public class TestCreateActions extends CatalogTestBase {
         .write()
         .mode(SaveMode.Overwrite)
         .saveAsTable(dest);
+    markPurgeableForMigration(source);
     List<Object[]> expected = sql("select id, col2 from %s order by id", source);
 
     // migrate table
@@ -616,6 +618,7 @@ public class TestCreateActions extends CatalogTestBase {
         .parquet(location.toURI().toString())
         .write()
         .saveAsTable(tblName);
+    markPurgeableForMigration(tblName);
     List<Object[]> expectedBeforeAddColumn = sql("SELECT * FROM %s ORDER BY col0", tblName);
     List<Object[]> expectedAfterAddColumn =
         sql("SELECT col0, null, col1, col2, col3 FROM %s ORDER BY col0", tblName);
@@ -654,6 +657,7 @@ public class TestCreateActions extends CatalogTestBase {
         .write()
         .mode(SaveMode.Append)
         .saveAsTable(tblName);
+    markPurgeableForMigration(tblName);
     sql("ALTER TABLE %s ADD COLUMN col3 INT", tblName);
     spark
         .range(6, 10)
@@ -1044,6 +1048,14 @@ public class TestCreateActions extends CatalogTestBase {
 
   private String sourceName(String source) {
     return NAMESPACE + "." + catalog.name() + "_" + type + "_" + source;
+  }
+
+  // On the Arenadata Spark 4.2 fork (4.2.0.1-4.3.0-0) renaming a managed table only updates the
+  // recorded location when 'external.table.purge'='true'. migrateTable renames the source to a
+  // backup before importing, so a managed source table must be marked purgeable for the import to
+  // find its data files.
+  private void markPurgeableForMigration(String table) {
+    sql("ALTER TABLE %s SET TBLPROPERTIES ('external.table.purge'='true')", table);
   }
 
   private String destName(String dest) {
