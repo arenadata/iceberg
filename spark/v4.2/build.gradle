@@ -17,12 +17,12 @@
  * under the License.
  */
 
-String sparkMajorVersion = '4.0'
+String sparkMajorVersion = '4.2'
 String scalaVersion = '2.13'
 
 JavaVersion javaVersion = JavaVersion.current()
 if (javaVersion != JavaVersion.VERSION_17 && javaVersion != JavaVersion.VERSION_21) {
-  throw new GradleException("Spark 4.0 build requires JDK 17 or 21 but was executed with JDK " + javaVersion)
+  throw new GradleException("Spark 4.2 build requires JDK 17 or 21 but was executed with JDK " + javaVersion)
 }
 
 def sparkProjects = [
@@ -38,7 +38,21 @@ configure(sparkProjects) {
         force "com.fasterxml.jackson.module:jackson-module-scala_${scalaVersion}:${libs.versions.jackson215.get()}"
         force "com.fasterxml.jackson.core:jackson-databind:${libs.versions.jackson215.get()}"
         force "com.fasterxml.jackson.core:jackson-core:${libs.versions.jackson215.get()}"
+        // The Spark 4.2 base calls Netty's PlatformDependent.hasDirectByteBufferAddress, added in
+        // Netty 4.2.12 (SPARK-56817 ships 4.2.13). iceberg-arrow otherwise pins Netty to 4.2.4
+        // (gradle/libs.versions.toml), which lacks the method and fails at runtime with
+        // NoSuchMethodError. Force the 4.2.x Netty modules to 4.2.13 for the Spark 4.2 build only,
+        // leaving the shared pin (and other Spark versions) untouched.
+        force "io.netty:netty-buffer:4.2.13.Final"
+        force "io.netty:netty-common:4.2.13.Final"
       }
+    }
+  }
+  plugins.withType(ScalaPlugin.class) {
+    tasks.withType(ScalaCompile) {
+      sourceCompatibility = "17"
+      targetCompatibility = "17"
+      scalaCompileOptions.additionalParameters = ["-target:17"]
     }
   }
 }
@@ -260,7 +274,7 @@ project(":iceberg-spark:iceberg-spark-runtime-${sparkMajorVersion}_${scalaVersio
     }
 
     integrationImplementation "org.scala-lang.modules:scala-collection-compat_${scalaVersion}:${libs.versions.scala.collection.compat.get()}"
-    integrationImplementation "org.apache.spark:spark-hive_${scalaVersion}:${libs.versions.spark40.get()}"
+    integrationImplementation "org.apache.spark:spark-hive_${scalaVersion}:${libs.versions.spark42.get()}"
     integrationImplementation libs.junit.jupiter
     integrationImplementation libs.junit.platform.launcher
     integrationImplementation libs.slf4j.simple

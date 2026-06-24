@@ -214,10 +214,8 @@ public class TestViews extends ExtensionsTestBase {
 
     assertThatThrownBy(() -> sql("SELECT * FROM %s", viewName))
         .isInstanceOf(AnalysisException.class)
-        .hasMessageContaining(
-            String.format(
-                "The table or view `%s`.`%s`.`non_existing` cannot be found",
-                catalogName, NAMESPACE));
+        .hasMessageContaining("The table or view `non_existing` cannot be found")
+        .hasMessageContaining("`%s`.`%s`", catalogName, NAMESPACE);
   }
 
   @TestTemplate
@@ -528,19 +526,12 @@ public class TestViews extends ExtensionsTestBase {
 
     assertThat(sql(sql)).hasSize(1).containsExactly(row(5.5));
 
-    String expectedErrorMsg =
-        String.format("The routine %s.%s cannot be found", NAMESPACE, functionName);
-    if (SPARK_CATALOG.equals(catalogName)) {
-      // spark session catalog tries to load a V1 function and has a different error msg
-      expectedErrorMsg =
-          String.format(
-              "[ROUTINE_NOT_FOUND] The routine `%s`.`%s` cannot be found", NAMESPACE, functionName);
-    }
-
     // reading from a view that references a TEMP FUNCTION shouldn't be possible
     assertThatThrownBy(() -> sql("SELECT * FROM %s", viewName))
         .isInstanceOf(AnalysisException.class)
-        .hasMessageContaining(expectedErrorMsg);
+        .hasMessageContaining("Cannot resolve routine")
+        .hasMessageContaining("`%s`", functionName)
+        .hasMessageContaining("`%s`.`%s`", catalogName, NAMESPACE);
   }
 
   @TestTemplate
@@ -881,8 +872,7 @@ public class TestViews extends ExtensionsTestBase {
 
     assertThatThrownBy(() -> sql("ALTER VIEW %s RENAME TO %s", viewName, target))
         .isInstanceOf(AnalysisException.class)
-        .hasMessageContaining(
-            String.format("Cannot create view default.%s because it already exists", target));
+        .hasMessageContaining("Cannot create view default.%s because it already exists", target);
   }
 
   @TestTemplate
@@ -906,8 +896,7 @@ public class TestViews extends ExtensionsTestBase {
         catalogName, NAMESPACE, target, catalogName.equals(SPARK_CATALOG) ? " USING iceberg" : "");
     assertThatThrownBy(() -> sql("ALTER VIEW %s RENAME TO %s", viewName, target))
         .isInstanceOf(AnalysisException.class)
-        .hasMessageContaining(
-            String.format("Cannot create view default.%s because it already exists", target));
+        .hasMessageContaining("Cannot create view default.%s because it already exists", target);
   }
 
   @TestTemplate
@@ -1000,9 +989,8 @@ public class TestViews extends ExtensionsTestBase {
 
     assertThatThrownBy(() -> sql("CREATE VIEW %s AS SELECT id FROM %s", viewName, tableName))
         .isInstanceOf(AnalysisException.class)
-        .hasMessageContaining(
-            String.format(
-                "Cannot create view %s.%s because it already exists", NAMESPACE, viewName));
+        .hasMessageContaining("Cannot create table or view")
+        .hasMessageContaining(viewName);
 
     // using IF NOT EXISTS should work
     assertThatNoException()
@@ -1087,8 +1075,7 @@ public class TestViews extends ExtensionsTestBase {
     assertThatThrownBy(
             () -> sql("CREATE VIEW %s AS SELECT %s(id) FROM %s", viewName, functionName, tableName))
         .isInstanceOf(AnalysisException.class)
-        .hasMessageContaining(
-            String.format("Cannot create view %s.%s.%s", catalogName, NAMESPACE, viewName))
+        .hasMessageContaining("Cannot create view %s.%s.%s", catalogName, NAMESPACE, viewName)
         .hasMessageContaining("that references temporary function:")
         .hasMessageContaining(functionName);
   }
@@ -1110,8 +1097,7 @@ public class TestViews extends ExtensionsTestBase {
                     viewName, catalogName, NAMESPACE, functionName, tableName))
         .isInstanceOf(AnalysisException.class)
         .hasMessageContaining("Cannot resolve routine")
-        .hasMessageContaining(
-            String.format("`%s`.`%s`.`%s`", catalogName, NAMESPACE, functionName));
+        .hasMessageContaining("`%s`.`%s`.`%s`", catalogName, NAMESPACE, functionName);
 
     // TEMP Function can't be referenced using schema.name
     assertThatThrownBy(
@@ -1139,8 +1125,7 @@ public class TestViews extends ExtensionsTestBase {
     assertThatThrownBy(
             () -> sql("CREATE VIEW %s (id, data) AS SELECT id FROM %s", viewName, tableName))
         .isInstanceOf(AnalysisException.class)
-        .hasMessageContaining(
-            String.format("Cannot create view %s.%s.%s", catalogName, NAMESPACE, viewName))
+        .hasMessageContaining("Cannot create view %s.%s.%s", catalogName, NAMESPACE, viewName)
         .hasMessageContaining("not enough data columns")
         .hasMessageContaining("View columns: id, data")
         .hasMessageContaining("Data columns: id");
@@ -1148,8 +1133,7 @@ public class TestViews extends ExtensionsTestBase {
     assertThatThrownBy(
             () -> sql("CREATE VIEW %s (id) AS SELECT id, data FROM %s", viewName, tableName))
         .isInstanceOf(AnalysisException.class)
-        .hasMessageContaining(
-            String.format("Cannot create view %s.%s.%s", catalogName, NAMESPACE, viewName))
+        .hasMessageContaining("Cannot create view %s.%s.%s", catalogName, NAMESPACE, viewName)
         .hasMessageContaining("too many data columns")
         .hasMessageContaining("View columns: id")
         .hasMessageContaining("Data columns: id, data");
@@ -1268,8 +1252,7 @@ public class TestViews extends ExtensionsTestBase {
 
     assertThatThrownBy(() -> sql("CREATE VIEW %s AS %s", viewName, sql))
         .isInstanceOf(AnalysisException.class)
-        .hasMessageContaining(
-            String.format("Cannot create view %s.%s.%s", catalogName, NAMESPACE, viewName))
+        .hasMessageContaining("Cannot create view %s.%s.%s", catalogName, NAMESPACE, viewName)
         .hasMessageContaining("that references temporary view:")
         .hasMessageContaining(tempViewInCTE);
   }
@@ -1290,8 +1273,7 @@ public class TestViews extends ExtensionsTestBase {
 
     assertThatThrownBy(() -> sql("CREATE VIEW %s AS %s", viewName, sql))
         .isInstanceOf(AnalysisException.class)
-        .hasMessageContaining(
-            String.format("Cannot create view %s.%s.%s", catalogName, NAMESPACE, viewName))
+        .hasMessageContaining("Cannot create view %s.%s.%s", catalogName, NAMESPACE, viewName)
         .hasMessageContaining("that references temporary function:")
         .hasMessageContaining(functionName);
   }
@@ -1319,8 +1301,7 @@ public class TestViews extends ExtensionsTestBase {
 
     assertThatThrownBy(() -> sql("CREATE VIEW %s AS %s", viewName, sql))
         .isInstanceOf(AnalysisException.class)
-        .hasMessageContaining(
-            String.format("Cannot create view %s.%s.%s", catalogName, NAMESPACE, viewName))
+        .hasMessageContaining("Cannot create view %s.%s.%s", catalogName, NAMESPACE, viewName)
         .hasMessageContaining("that references temporary view:")
         .hasMessageContaining(tempView);
   }
@@ -1340,10 +1321,9 @@ public class TestViews extends ExtensionsTestBase {
 
     assertThatThrownBy(() -> sql("CREATE VIEW %s AS %s", viewName, sql))
         .isInstanceOf(AnalysisException.class)
-        .hasMessageContaining(
-            String.format("Cannot create view %s.%s.%s", catalogName, NAMESPACE, viewName))
+        .hasMessageContaining("Cannot create view %s.%s.%s", catalogName, NAMESPACE, viewName)
         .hasMessageContaining("that references temporary view:")
-        .hasMessageContaining(String.format("%s.%s", "global_temp", globalTempView));
+        .hasMessageContaining("%s.%s", "global_temp", globalTempView);
   }
 
   @TestTemplate
@@ -1361,8 +1341,7 @@ public class TestViews extends ExtensionsTestBase {
 
     assertThatThrownBy(() -> sql("CREATE VIEW %s AS %s", viewName, sql))
         .isInstanceOf(AnalysisException.class)
-        .hasMessageContaining(
-            String.format("Cannot create view %s.%s.%s", catalogName, NAMESPACE, viewName))
+        .hasMessageContaining("Cannot create view %s.%s.%s", catalogName, NAMESPACE, viewName)
         .hasMessageContaining("that references temporary function:")
         .hasMessageContaining(functionName);
   }
