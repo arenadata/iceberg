@@ -39,6 +39,7 @@ import org.apache.spark.sql.connector.catalog.CatalogExtension;
 import org.apache.spark.sql.connector.catalog.CatalogPlugin;
 import org.apache.spark.sql.connector.catalog.FunctionCatalog;
 import org.apache.spark.sql.connector.catalog.Identifier;
+import org.apache.spark.sql.connector.catalog.MetadataTable;
 import org.apache.spark.sql.connector.catalog.NamespaceChange;
 import org.apache.spark.sql.connector.catalog.StagedTable;
 import org.apache.spark.sql.connector.catalog.StagingTableCatalog;
@@ -46,9 +47,8 @@ import org.apache.spark.sql.connector.catalog.SupportsNamespaces;
 import org.apache.spark.sql.connector.catalog.Table;
 import org.apache.spark.sql.connector.catalog.TableCatalog;
 import org.apache.spark.sql.connector.catalog.TableChange;
-import org.apache.spark.sql.connector.catalog.View;
+import org.apache.spark.sql.connector.catalog.TableViewCatalog;
 import org.apache.spark.sql.connector.catalog.ViewCatalog;
-import org.apache.spark.sql.connector.catalog.ViewChange;
 import org.apache.spark.sql.connector.catalog.ViewInfo;
 import org.apache.spark.sql.connector.catalog.functions.UnboundFunction;
 import org.apache.spark.sql.connector.expressions.Transform;
@@ -147,6 +147,36 @@ public class SparkSessionCatalog<
       return icebergCatalog.loadTable(ident);
     } catch (NoSuchTableException e) {
       return getSessionCatalog().loadTable(ident);
+    }
+  }
+
+  @Override
+  public Table loadTableOrView(Identifier ident) throws NoSuchTableException {
+    try {
+      return loadTableOrView(icebergCatalog, ident);
+    } catch (NoSuchTableException e) {
+      return loadTableOrView(getSessionCatalog(), ident);
+    }
+  }
+
+  private Table loadTableOrView(TableCatalog catalog, Identifier ident)
+      throws NoSuchTableException {
+    if (catalog instanceof TableViewCatalog) {
+      return ((TableViewCatalog) catalog).loadTableOrView(ident);
+    }
+
+    try {
+      return catalog.loadTable(ident);
+    } catch (NoSuchTableException tableException) {
+      if (catalog instanceof ViewCatalog) {
+        try {
+          return new MetadataTable(((ViewCatalog) catalog).loadView(ident), ident.toString());
+        } catch (NoSuchViewException viewException) {
+          throw tableException;
+        }
+      }
+
+      throw tableException;
     }
   }
 
@@ -432,7 +462,13 @@ public class SparkSessionCatalog<
   }
 
   @Override
-  public View loadView(Identifier ident) throws NoSuchViewException {
+  public boolean viewExists(Identifier ident) {
+    return (asViewCatalog != null && asViewCatalog.viewExists(ident))
+        || (isViewCatalog() && getSessionCatalog().viewExists(ident));
+  }
+
+  @Override
+  public ViewInfo loadView(Identifier ident) throws NoSuchViewException {
     if (null != asViewCatalog && asViewCatalog.viewExists(ident)) {
       return asViewCatalog.loadView(ident);
     } else if (isViewCatalog() && getSessionCatalog().viewExists(ident)) {
@@ -443,16 +479,17 @@ public class SparkSessionCatalog<
   }
 
   @Override
-  public View createView(ViewInfo viewInfo)
+  public ViewInfo createView(Identifier ident, ViewInfo viewInfo)
       throws ViewAlreadyExistsException, NoSuchNamespaceException {
     if (viewInfo == null) {
       return null;
     }
 
+    ViewInfo normalizedViewInfo = normalizeViewInfoCurrentCatalog(catalogName, viewInfo);
     if (null != asViewCatalog) {
-      return asViewCatalog.createView(viewInfo);
+      return asViewCatalog.createView(ident, normalizedViewInfo);
     } else if (isViewCatalog()) {
-      return getSessionCatalog().createView(viewInfo);
+      return getSessionCatalog().createView(ident, normalizedViewInfo);
     }
 
     throw new UnsupportedOperationException(

@@ -16,7 +16,6 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-
 package org.apache.spark.sql.catalyst.analysis
 
 import org.apache.spark.sql.AnalysisException
@@ -29,25 +28,31 @@ import org.apache.spark.sql.catalyst.plans.logical.View
 import org.apache.spark.sql.catalyst.plans.logical.views.CreateIcebergView
 import org.apache.spark.sql.catalyst.plans.logical.views.ResolvedV2View
 import org.apache.spark.sql.connector.catalog.ViewCatalog
-import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.util.SchemaUtils
 
+/**
+ * Checks Iceberg-specific view behavior that Spark 4.2's ViewCatalog path does not enforce yet,
+ * including Iceberg's ALTER VIEW AS policy and recursive replacement validation.
+ */
 object CheckViews extends (LogicalPlan => Unit) {
 
   import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
 
   override def apply(plan: LogicalPlan): Unit = {
     plan foreach {
-      case CreateIcebergView(resolvedIdent@ResolvedIdentifier(_: ViewCatalog, _), _, query, columnAliases, _,
-      _, _, _, _, replace, _) =>
-        verifyColumnCount(resolvedIdent, columnAliases, query)
-        SchemaUtils.checkColumnNameDuplication(query.schema.fieldNames, SQLConf.get.resolver)
-        if (replace) {
-          val viewIdent: Seq[String] = resolvedIdent.catalog.name() +: resolvedIdent.identifier.asMultipartIdentifier
-          checkCyclicViewReference(viewIdent, query, Seq(viewIdent))
+      case c: CreateIcebergView =>
+        c.child match {
+          case resolvedIdent @ ResolvedIdentifier(_: ViewCatalog, _) =>
+            verifyColumnCount(resolvedIdent, c.columnAliases, c.query)
+            if (c.replace) {
+              val viewIdent: Seq[String] =
+                resolvedIdent.catalog.name() +: resolvedIdent.identifier.asMultipartIdentifier
+              checkCyclicViewReference(viewIdent, c.query, Seq(viewIdent))
+            }
+
+          case _ => // OK
         }
 
-      case AlterViewAs(ResolvedV2View(_, _), _, _) =>
+      case AlterViewAs(ResolvedV2View(_, _), _, _, _, _) =>
         throw new IcebergAnalysisException(
           "ALTER VIEW <viewName> AS is not supported. Use CREATE OR REPLACE VIEW instead")
 
@@ -55,7 +60,10 @@ object CheckViews extends (LogicalPlan => Unit) {
     }
   }
 
-  private def verifyColumnCount(ident: ResolvedIdentifier, columns: Seq[String], query: LogicalPlan): Unit = {
+  private def verifyColumnCount(
+      ident: ResolvedIdentifier,
+      columns: Seq[String],
+      query: LogicalPlan): Unit = {
     if (columns.nonEmpty) {
       if (columns.length > query.output.length) {
         throw new AnalysisException(
@@ -76,11 +84,11 @@ object CheckViews extends (LogicalPlan => Unit) {
   }
 
   private def checkCyclicViewReference(
-    viewIdent: Seq[String],
-    plan: LogicalPlan,
-    cyclePath: Seq[Seq[String]]): Unit = {
+      viewIdent: Seq[String],
+      plan: LogicalPlan,
+      cyclePath: Seq[Seq[String]]): Unit = {
     plan match {
-      case sub@SubqueryAlias(_, Project(_, _)) =>
+      case sub @ SubqueryAlias(_, Project(_, _)) =>
         val currentViewIdent: Seq[String] = sub.identifier.qualifier :+ sub.identifier.name
         checkIfRecursiveView(viewIdent, currentViewIdent, cyclePath, sub.children)
       case v1View: View =>
@@ -99,15 +107,17 @@ object CheckViews extends (LogicalPlan => Unit) {
   }
 
   private def checkIfRecursiveView(
-    viewIdent: Seq[String],
-    currentViewIdent: Seq[String],
-    cyclePath: Seq[Seq[String]],
-    children: Seq[LogicalPlan]
-  ): Unit = {
+      viewIdent: Seq[String],
+      currentViewIdent: Seq[String],
+      cyclePath: Seq[Seq[String]],
+      children: Seq[LogicalPlan]): Unit = {
     val newCyclePath = cyclePath :+ currentViewIdent
     if (currentViewIdent == viewIdent) {
-      throw new IcebergAnalysisException(String.format("Recursive cycle in view detected: %s (cycle: %s)",
-        viewIdent.asIdentifier, newCyclePath.map(p => p.mkString(".")).mkString(" -> ")))
+      throw new IcebergAnalysisException(
+        String.format(
+          "Recursive cycle in view detected: %s (cycle: %s)",
+          viewIdent.asIdentifier,
+          newCyclePath.map(p => p.mkString(".")).mkString(" -> ")))
     } else {
       children.foreach { c =>
         checkCyclicViewReference(viewIdent, c, newCyclePath)

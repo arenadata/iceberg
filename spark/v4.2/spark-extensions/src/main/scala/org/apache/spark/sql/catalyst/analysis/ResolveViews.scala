@@ -16,11 +16,9 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-
 package org.apache.spark.sql.catalyst.analysis
 
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.catalyst.FunctionIdentifier
 import org.apache.spark.sql.catalyst.analysis.ViewUtil.IcebergViewHelper
 import org.apache.spark.sql.catalyst.expressions.Alias
 import org.apache.spark.sql.catalyst.expressions.SubqueryExpression
@@ -35,11 +33,16 @@ import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.trees.CurrentOrigin
 import org.apache.spark.sql.catalyst.trees.Origin
 import org.apache.spark.sql.connector.catalog.CatalogManager
+import org.apache.spark.sql.connector.catalog.CatalogPlugin
 import org.apache.spark.sql.connector.catalog.LookupCatalog
-import org.apache.spark.sql.connector.catalog.View
+import org.apache.spark.sql.connector.catalog.ViewInfo
 import org.apache.spark.sql.errors.QueryCompilationErrors
-import org.apache.spark.sql.types.MetadataBuilder
 
+/**
+ * Spark 4.2 has ViewCatalog APIs, but Iceberg still needs this rule to load Iceberg-backed
+ * ViewInfo relations and qualify identifiers in stored view SQL using the view's default catalog
+ * and namespace.
+ */
 case class ResolveViews(spark: SparkSession) extends Rule[LogicalPlan] with LookupCatalog {
 
   import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
@@ -47,69 +50,51 @@ case class ResolveViews(spark: SparkSession) extends Rule[LogicalPlan] with Look
   protected lazy val catalogManager: CatalogManager = spark.sessionState.catalogManager
 
   override def apply(plan: LogicalPlan): LogicalPlan = plan resolveOperators {
-    case u@UnresolvedRelation(nameParts, _, _)
-      if catalogManager.v1SessionCatalog.isTempView(nameParts) =>
+    case u @ UnresolvedRelation(nameParts, _, _)
+        if catalogManager.v1SessionCatalog.isTempView(nameParts) =>
       u
 
-    case u@UnresolvedRelation(parts@CatalogAndIdentifier(catalog, ident), _, _) =>
-      ViewUtil.loadView(catalog, ident)
-        .map(createViewRelation(parts, _))
+    case u @ UnresolvedRelation(parts @ CatalogAndIdentifier(catalog, ident), _, _) =>
+      ViewUtil
+        .loadView(catalog, ident)
+        .map(createViewRelation(parts, catalog, _))
         .getOrElse(u)
 
-    case u@UnresolvedTableOrView(CatalogAndIdentifier(catalog, ident), _, _) =>
-      ViewUtil.loadView(catalog, ident)
+    case u @ UnresolvedTableOrView(CatalogAndIdentifier(catalog, ident), _, _, _) =>
+      ViewUtil
+        .loadView(catalog, ident)
         .map(_ => ResolvedV2View(catalog.asViewCatalog, ident))
         .getOrElse(u)
 
-    case c@CreateIcebergView(ResolvedIdentifier(_, _), _, query, columnAliases, columnComments, _, _, _, _, _, _)
-      if query.resolved && !c.rewritten =>
-      val aliased = aliasColumns(query, columnAliases, columnComments)
-      c.copy(query = aliased, queryColumnNames = query.schema.fieldNames, rewritten = true)
+    case c: CreateIcebergView if c.query.resolved && !c.rewritten =>
+      c.copy(rewritten = true)
   }
 
-  private def aliasColumns(
-    plan: LogicalPlan,
-    columnAliases: Seq[String],
-    columnComments: Seq[Option[String]]): LogicalPlan = {
-    if (columnAliases.isEmpty || columnAliases.length != plan.output.length) {
-      plan
-    } else {
-      val projectList = plan.output.zipWithIndex.map { case (attr, pos) =>
-        if (columnComments.apply(pos).isDefined) {
-          val meta = new MetadataBuilder().putString("comment", columnComments.apply(pos).get).build()
-          Alias(attr, columnAliases.apply(pos))(explicitMetadata = Some(meta))
-        } else {
-          Alias(attr, columnAliases.apply(pos))()
-        }
-      }
-      Project(projectList, plan)
-    }
-  }
-
-
-  private def createViewRelation(nameParts: Seq[String], view: View): LogicalPlan = {
-    val parsed = parseViewText(nameParts.quoted, view.query)
+  private def createViewRelation(
+      nameParts: Seq[String],
+      catalog: CatalogPlugin,
+      view: ViewInfo): LogicalPlan = {
+    val parsed = parseViewText(nameParts.quoted, view.queryText)
 
     // Apply any necessary rewrites to preserve correct resolution
-    val viewCatalogAndNamespace: Seq[String] = view.currentCatalog +: view.currentNamespace.toSeq
-    val rewritten = rewriteIdentifiers(parsed, viewCatalogAndNamespace);
+    val viewCatalogAndNamespace: Seq[String] =
+      Option(view.currentCatalog).getOrElse(catalog.name()) +: view.currentNamespace.toSeq
+    val rewritten = rewriteIdentifiers(parsed, viewCatalogAndNamespace)
 
     // Apply the field aliases and column comments
     // This logic differs from how Spark handles views in SessionCatalog.fromCatalogTable.
     // This is more strict because it doesn't allow resolution by field name.
     val aliases = view.schema.fields.zipWithIndex.map { case (expected, pos) =>
       val attr = GetColumnByOrdinal(pos, expected.dataType)
-      Alias(UpCast(attr, expected.dataType), expected.name)(explicitMetadata = Some(expected.metadata))
-    }
+      Alias(UpCast(attr, expected.dataType), expected.name)(explicitMetadata =
+        Some(expected.metadata))
+    }.toIndexedSeq
 
     SubqueryAlias(nameParts, Project(aliases, rewritten))
   }
 
   private def parseViewText(name: String, viewText: String): LogicalPlan = {
-    val origin = Origin(
-      objectType = Some("VIEW"),
-      objectName = Some(name)
-    )
+    val origin = Origin(objectType = Some("VIEW"), objectName = Some(name))
 
     try {
       CurrentOrigin.withOrigin(origin) {
@@ -122,26 +107,24 @@ case class ResolveViews(spark: SparkSession) extends Rule[LogicalPlan] with Look
   }
 
   private def rewriteIdentifiers(
-    plan: LogicalPlan,
-    catalogAndNamespace: Seq[String]): LogicalPlan = {
-    // Substitute CTEs and Unresolved Ordinals within the view, then rewrite unresolved functions and relations
+      plan: LogicalPlan,
+      catalogAndNamespace: Seq[String]): LogicalPlan = {
+    // Rewrite unresolved functions and relations
     qualifyTableIdentifiers(
-      qualifyFunctionIdentifiers(
-        SubstituteUnresolvedOrdinals.apply(CTESubstitution.apply(plan)),
-        catalogAndNamespace),
+      qualifyFunctionIdentifiers(CTESubstitution.apply(plan), catalogAndNamespace),
       catalogAndNamespace)
   }
 
   private def qualifyFunctionIdentifiers(
-    plan: LogicalPlan,
-    catalogAndNamespace: Seq[String]): LogicalPlan = plan transformExpressions {
-    case u@UnresolvedFunction(Seq(name), _, _, _, _, _, _) =>
+      plan: LogicalPlan,
+      catalogAndNamespace: Seq[String]): LogicalPlan = plan transformExpressions {
+    case u @ UnresolvedFunction(Seq(name), _, _, _, _, _, _) =>
       if (!isBuiltinFunction(name)) {
         u.copy(nameParts = catalogAndNamespace :+ name)
       } else {
         u
       }
-    case u@UnresolvedFunction(parts, _, _, _, _, _, _) if !isCatalog(parts.head) =>
+    case u @ UnresolvedFunction(parts, _, _, _, _, _, _) if !isCatalog(parts.head) =>
       u.copy(nameParts = catalogAndNamespace.head +: parts)
   }
 
@@ -149,17 +132,16 @@ case class ResolveViews(spark: SparkSession) extends Rule[LogicalPlan] with Look
    * Qualify table identifiers with default catalog and namespace if necessary.
    */
   private def qualifyTableIdentifiers(
-    child: LogicalPlan,
-    catalogAndNamespace: Seq[String]): LogicalPlan =
+      child: LogicalPlan,
+      catalogAndNamespace: Seq[String]): LogicalPlan =
     child transform {
-      case u@UnresolvedRelation(Seq(table), _, _) =>
+      case u @ UnresolvedRelation(Seq(table), _, _) =>
         u.copy(multipartIdentifier = catalogAndNamespace :+ table)
-      case u@UnresolvedRelation(parts, _, _) if !isCatalog(parts.head) =>
+      case u @ UnresolvedRelation(parts, _, _) if !isCatalog(parts.head) =>
         u.copy(multipartIdentifier = catalogAndNamespace.head +: parts)
       case other =>
-        other.transformExpressions {
-          case subquery: SubqueryExpression =>
-            subquery.withNewPlan(qualifyTableIdentifiers(subquery.plan, catalogAndNamespace))
+        other.transformExpressions { case subquery: SubqueryExpression =>
+          subquery.withNewPlan(qualifyTableIdentifiers(subquery.plan, catalogAndNamespace))
         }
     }
 
@@ -168,6 +150,6 @@ case class ResolveViews(spark: SparkSession) extends Rule[LogicalPlan] with Look
   }
 
   private def isBuiltinFunction(name: String): Boolean = {
-    catalogManager.v1SessionCatalog.isBuiltinFunction(FunctionIdentifier(name))
+    catalogManager.v1SessionCatalog.isBuiltinFunction(name)
   }
 }

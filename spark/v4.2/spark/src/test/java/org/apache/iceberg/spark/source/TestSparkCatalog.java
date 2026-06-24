@@ -62,6 +62,11 @@ public class TestSparkCatalog<
     return new SparkTable(table, false);
   }
 
+  @Override
+  public Table loadTableOrView(Identifier ident) throws NoSuchTableException {
+    return loadTable(ident);
+  }
+
   public static void clearTables() {
     TABLE_MAP.clear();
   }

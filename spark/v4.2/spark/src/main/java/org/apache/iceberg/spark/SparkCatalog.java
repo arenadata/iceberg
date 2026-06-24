@@ -71,7 +71,7 @@ import org.apache.iceberg.spark.source.StagedSparkTable;
 import org.apache.iceberg.util.Pair;
 import org.apache.iceberg.util.PropertyUtil;
 import org.apache.iceberg.util.SnapshotUtil;
-import org.apache.iceberg.view.UpdateViewProperties;
+import org.apache.iceberg.view.ViewBuilder;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.analysis.NamespaceAlreadyExistsException;
 import org.apache.spark.sql.catalyst.analysis.NoSuchNamespaceException;
@@ -80,6 +80,7 @@ import org.apache.spark.sql.catalyst.analysis.NoSuchViewException;
 import org.apache.spark.sql.catalyst.analysis.TableAlreadyExistsException;
 import org.apache.spark.sql.catalyst.analysis.ViewAlreadyExistsException;
 import org.apache.spark.sql.connector.catalog.Identifier;
+import org.apache.spark.sql.connector.catalog.MetadataTable;
 import org.apache.spark.sql.connector.catalog.NamespaceChange;
 import org.apache.spark.sql.connector.catalog.StagedTable;
 import org.apache.spark.sql.connector.catalog.Table;
@@ -88,8 +89,6 @@ import org.apache.spark.sql.connector.catalog.TableChange;
 import org.apache.spark.sql.connector.catalog.TableChange.ColumnChange;
 import org.apache.spark.sql.connector.catalog.TableChange.RemoveProperty;
 import org.apache.spark.sql.connector.catalog.TableChange.SetProperty;
-import org.apache.spark.sql.connector.catalog.View;
-import org.apache.spark.sql.connector.catalog.ViewChange;
 import org.apache.spark.sql.connector.catalog.ViewInfo;
 import org.apache.spark.sql.connector.expressions.Transform;
 import org.apache.spark.sql.types.StructType;
@@ -134,6 +133,12 @@ public class SparkCatalog extends BaseCatalog {
   private static final Pattern TAG = Pattern.compile("tag_(.*)");
   private static final String REWRITE = "rewrite";
 
+  private enum ViewCommit {
+    CREATE,
+    REPLACE,
+    CREATE_OR_REPLACE
+  }
+
   private String catalogName = null;
   private Catalog icebergCatalog = null;
   private boolean cacheEnabled = CatalogProperties.CACHE_ENABLED_DEFAULT;
@@ -174,6 +179,19 @@ public class SparkCatalog extends BaseCatalog {
       return load(ident);
     } catch (org.apache.iceberg.exceptions.NoSuchTableException e) {
       throw new NoSuchTableException(ident);
+    }
+  }
+
+  @Override
+  public Table loadTableOrView(Identifier ident) throws NoSuchTableException {
+    try {
+      return loadTable(ident);
+    } catch (NoSuchTableException tableException) {
+      try {
+        return new MetadataTable(loadView(ident), ident.toString());
+      } catch (NoSuchViewException viewException) {
+        throw tableException;
+      }
     }
   }
 
@@ -565,11 +583,11 @@ public class SparkCatalog extends BaseCatalog {
   }
 
   @Override
-  public View loadView(Identifier ident) throws NoSuchViewException {
+  public ViewInfo loadView(Identifier ident) throws NoSuchViewException {
     if (null != asViewCatalog) {
       try {
         org.apache.iceberg.view.View view = asViewCatalog.loadView(buildIdentifier(ident));
-        return new SparkView(catalogName, view);
+        return SparkView.toViewInfo(catalogName, view);
       } catch (org.apache.iceberg.exceptions.NoSuchViewException e) {
         throw new NoSuchViewException(ident);
       }

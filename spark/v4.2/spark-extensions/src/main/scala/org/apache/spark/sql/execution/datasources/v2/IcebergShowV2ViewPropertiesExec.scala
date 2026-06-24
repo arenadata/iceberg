@@ -16,40 +16,51 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-
 package org.apache.spark.sql.execution.datasources.v2
 
 import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.analysis.ViewUtil
 import org.apache.spark.sql.catalyst.expressions.Attribute
-import org.apache.spark.sql.connector.catalog.View
-import org.apache.spark.sql.connector.catalog.ViewCatalog
+import org.apache.spark.sql.connector.catalog.Identifier
+import org.apache.spark.sql.connector.catalog.ViewInfo
 import org.apache.spark.sql.execution.LeafExecNode
-import scala.collection.JavaConverters._
+import scala.jdk.CollectionConverters._
 
-case class ShowV2ViewPropertiesExec(
-  output: Seq[Attribute],
-  view: View,
-  propertyKey: Option[String]) extends V2CommandExec with LeafExecNode {
+/**
+ * Executes SHOW TBLPROPERTIES for Spark V2 views.
+ *
+ * Uses a custom command instead of Spark's built-in implementation so Iceberg reserved metadata is
+ * filtered from user-visible view properties.
+ */
+case class IcebergShowV2ViewPropertiesExec(
+    output: Seq[Attribute],
+    catalogName: String,
+    ident: Identifier,
+    view: ViewInfo,
+    propertyKey: Option[String])
+    extends V2CommandExec
+    with LeafExecNode {
+
+  import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
 
   override protected def run(): Seq[InternalRow] = {
     propertyKey match {
       case Some(p) =>
-        val propValue = properties.getOrElse(p,
-          s"View ${view.name()} does not have property: $p")
+        val propValue =
+          properties.getOrElse(p, s"View ${catalogName}.${ident.quoted} does not have property: $p")
         Seq(toCatalystRow(p, propValue))
       case None =>
-        properties.map {
-          case (k, v) => toCatalystRow(k, v)
+        properties.map { case (k, v) =>
+          toCatalystRow(k, v)
         }.toSeq
     }
   }
 
-
   private def properties = {
-    view.properties.asScala.toMap -- ViewCatalog.RESERVED_PROPERTIES.asScala
+    view.properties.asScala.toMap -- ViewUtil.RESERVED_PROPERTIES
   }
 
   override def simpleString(maxFields: Int): String = {
-    s"ShowV2ViewPropertiesExec"
+    s"IcebergShowV2ViewPropertiesExec"
   }
 }

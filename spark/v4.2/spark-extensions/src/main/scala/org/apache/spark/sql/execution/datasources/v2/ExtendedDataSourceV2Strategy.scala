@@ -16,19 +16,15 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-
 package org.apache.spark.sql.execution.datasources.v2
 
 import org.apache.iceberg.spark.Spark3Util
 import org.apache.iceberg.spark.SparkCatalog
 import org.apache.iceberg.spark.SparkSessionCatalog
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.analysis.IcebergAnalysisException
 import org.apache.spark.sql.catalyst.analysis.ResolvedIdentifier
 import org.apache.spark.sql.catalyst.analysis.ResolvedNamespace
-import org.apache.spark.sql.catalyst.expressions.Expression
-import org.apache.spark.sql.catalyst.expressions.GenericInternalRow
 import org.apache.spark.sql.catalyst.expressions.PredicateHelper
 import org.apache.spark.sql.catalyst.plans.logical.AddPartitionField
 import org.apache.spark.sql.catalyst.plans.logical.CreateOrReplaceBranch
@@ -67,11 +63,28 @@ case class ExtendedDataSourceV2Strategy(spark: SparkSession) extends Strategy wi
       AddPartitionFieldExec(catalog, ident, transform, name) :: Nil
 
     case CreateOrReplaceBranch(
-        IcebergCatalogAndIdentifier(catalog, ident), branch, branchOptions, create, replace, ifNotExists) =>
-      CreateOrReplaceBranchExec(catalog, ident, branch, branchOptions, create, replace, ifNotExists) :: Nil
+          IcebergCatalogAndIdentifier(catalog, ident),
+          branch,
+          branchOptions,
+          create,
+          replace,
+          ifNotExists) =>
+      CreateOrReplaceBranchExec(
+        catalog,
+        ident,
+        branch,
+        branchOptions,
+        create,
+        replace,
+        ifNotExists) :: Nil
 
     case CreateOrReplaceTag(
-        IcebergCatalogAndIdentifier(catalog, ident), tag, tagOptions, create, replace, ifNotExists) =>
+          IcebergCatalogAndIdentifier(catalog, ident),
+          tag,
+          tagOptions,
+          create,
+          replace,
+          ifNotExists) =>
       CreateOrReplaceTagExec(catalog, ident, tag, tagOptions, create, replace, ifNotExists) :: Nil
 
     case DropBranch(IcebergCatalogAndIdentifier(catalog, ident), branch, ifExists) =>
@@ -83,7 +96,11 @@ case class ExtendedDataSourceV2Strategy(spark: SparkSession) extends Strategy wi
     case DropPartitionField(IcebergCatalogAndIdentifier(catalog, ident), transform) =>
       DropPartitionFieldExec(catalog, ident, transform) :: Nil
 
-    case ReplacePartitionField(IcebergCatalogAndIdentifier(catalog, ident), transformFrom, transformTo, name) =>
+    case ReplacePartitionField(
+          IcebergCatalogAndIdentifier(catalog, ident),
+          transformFrom,
+          transformTo,
+          name) =>
       ReplacePartitionFieldExec(catalog, ident, transformFrom, transformTo, name) :: Nil
 
     case SetIdentifierFields(IcebergCatalogAndIdentifier(catalog, ident), fields) =>
@@ -93,57 +110,94 @@ case class ExtendedDataSourceV2Strategy(spark: SparkSession) extends Strategy wi
       DropIdentifierFieldsExec(catalog, ident, fields) :: Nil
 
     case SetWriteDistributionAndOrdering(
-        IcebergCatalogAndIdentifier(catalog, ident), distributionMode, ordering) =>
+          IcebergCatalogAndIdentifier(catalog, ident),
+          distributionMode,
+          ordering) =>
       SetWriteDistributionAndOrderingExec(catalog, ident, distributionMode, ordering) :: Nil
 
     case OrderAwareCoalesce(numPartitions, coalescer, child) =>
       OrderAwareCoalesceExec(numPartitions, coalescer, planLater(child)) :: Nil
 
-    case RenameTable(ResolvedV2View(oldCatalog: ViewCatalog, oldIdent), newName, isView@true) =>
+    case RenameTable(ResolvedV2View(oldCatalog: ViewCatalog, oldIdent), newName, isView @ true) =>
       val newIdent = Spark3Util.catalogAndIdentifier(spark, newName.toList.asJava)
       if (oldCatalog.name != newIdent.catalog().name()) {
         throw new IcebergAnalysisException(
           s"Cannot move view between catalogs: from=${oldCatalog.name} and to=${newIdent.catalog().name()}")
       }
-      RenameV2ViewExec(oldCatalog, oldIdent, newIdent.identifier()) :: Nil
+
+      val targetIdent = qualifyViewRenameTarget(oldIdent, newIdent.identifier())
+      RenameV2ViewExec(oldCatalog, oldIdent, targetIdent) :: Nil
 
     case DropIcebergView(ResolvedIdentifier(viewCatalog: ViewCatalog, ident), ifExists) =>
       DropV2ViewExec(viewCatalog, ident, ifExists) :: Nil
 
-    case CreateIcebergView(ResolvedIdentifier(viewCatalog: ViewCatalog, ident), queryText, query,
-    columnAliases, columnComments, queryColumnNames, comment, properties, allowExisting, replace, _) =>
+    case CreateIcebergView(
+          ResolvedIdentifier(viewCatalog: ViewCatalog, ident),
+          queryText,
+          query,
+          columnAliases,
+          columnComments,
+          _,
+          comment,
+          collation,
+          properties,
+          allowExisting,
+          replace,
+          viewSchemaMode,
+          _,
+          _) =>
       CreateV2ViewExec(
-        catalog = viewCatalog,
-        ident = ident,
-        queryText = queryText,
-        columnAliases = columnAliases,
-        columnComments = columnComments,
-        queryColumnNames = queryColumnNames,
-        viewSchema = query.schema,
-        comment = comment,
-        properties = properties,
-        allowExisting = allowExisting,
-        replace = replace) :: Nil
+        viewCatalog,
+        ident,
+        columnAliases.zip(columnComments),
+        comment,
+        collation,
+        properties,
+        queryText,
+        query,
+        allowExisting,
+        replace,
+        viewSchemaMode) :: Nil
 
-    case DescribeRelation(ResolvedV2View(catalog, ident), _, isExtended, output) =>
-      DescribeV2ViewExec(output, catalog.loadView(ident), isExtended) :: Nil
+    case DescribeRelation(ResolvedV2View(catalog, ident), isExtended, output) =>
+      IcebergDescribeV2ViewExec(
+        output,
+        catalog.name(),
+        ident,
+        catalog.loadView(ident),
+        isExtended) :: Nil
 
     case ShowTableProperties(ResolvedV2View(catalog, ident), propertyKey, output) =>
-      ShowV2ViewPropertiesExec(output, catalog.loadView(ident), propertyKey) :: Nil
+      IcebergShowV2ViewPropertiesExec(
+        output,
+        catalog.name(),
+        ident,
+        catalog.loadView(ident),
+        propertyKey) :: Nil
 
     case ShowIcebergViews(ResolvedNamespace(catalog: ViewCatalog, namespace, _), pattern, output) =>
       ShowV2ViewsExec(output, catalog, namespace, pattern) :: Nil
 
     case ShowCreateTable(ResolvedV2View(catalog, ident), _, output) =>
-      ShowCreateV2ViewExec(output, catalog.loadView(ident)) :: Nil
+      IcebergShowCreateV2ViewExec(output, ident, catalog.loadView(ident)) :: Nil
 
     case SetViewProperties(ResolvedV2View(catalog, ident), properties) =>
-      AlterV2ViewSetPropertiesExec(catalog, ident, properties) :: Nil
+      IcebergAlterV2ViewSetPropertiesExec(catalog, ident, properties) :: Nil
 
     case UnsetViewProperties(ResolvedV2View(catalog, ident), propertyKeys, ifExists) =>
-      AlterV2ViewUnsetPropertiesExec(catalog, ident, propertyKeys, ifExists) :: Nil
+      IcebergAlterV2ViewUnsetPropertiesExec(catalog, ident, propertyKeys, ifExists) :: Nil
 
     case _ => Nil
+  }
+
+  private def qualifyViewRenameTarget(
+      sourceIdent: Identifier,
+      targetIdent: Identifier): Identifier = {
+    if (targetIdent.namespace().isEmpty) {
+      Identifier.of(sourceIdent.namespace(), targetIdent.name())
+    } else {
+      targetIdent
+    }
   }
 
   private object IcebergCatalogAndIdentifier {

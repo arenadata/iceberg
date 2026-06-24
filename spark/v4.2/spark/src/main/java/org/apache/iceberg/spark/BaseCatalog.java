@@ -18,6 +18,7 @@
  */
 package org.apache.iceberg.spark;
 
+import java.util.Objects;
 import org.apache.iceberg.spark.procedures.SparkProcedures;
 import org.apache.iceberg.spark.procedures.SparkProcedures.ProcedureBuilder;
 import org.apache.iceberg.spark.source.HasIcebergCatalog;
@@ -26,7 +27,8 @@ import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.catalog.ProcedureCatalog;
 import org.apache.spark.sql.connector.catalog.StagingTableCatalog;
 import org.apache.spark.sql.connector.catalog.SupportsNamespaces;
-import org.apache.spark.sql.connector.catalog.ViewCatalog;
+import org.apache.spark.sql.connector.catalog.TableViewCatalog;
+import org.apache.spark.sql.connector.catalog.ViewInfo;
 import org.apache.spark.sql.connector.catalog.procedures.UnboundProcedure;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 
@@ -36,8 +38,7 @@ abstract class BaseCatalog
         SupportsNamespaces,
         HasIcebergCatalog,
         SupportsFunctions,
-        ViewCatalog,
-        SupportsReplaceView {
+        TableViewCatalog {
   private static final String USE_NULLABLE_QUERY_SCHEMA_CTAS_RTAS = "use-nullable-query-schema";
   private static final boolean USE_NULLABLE_QUERY_SCHEMA_CTAS_RTAS_DEFAULT = true;
 
@@ -58,6 +59,17 @@ abstract class BaseCatalog
     }
 
     throw new RuntimeException("Procedure " + ident + " not found");
+  }
+
+  @Override
+  public Identifier[] listProcedures(String[] namespace) {
+    if (isSystemNamespace(namespace)) {
+      return SparkProcedures.names().stream()
+          .map(name -> Identifier.of(namespace, name))
+          .toArray(Identifier[]::new);
+    } else {
+      return new Identifier[0];
+    }
   }
 
   @Override
@@ -86,6 +98,31 @@ abstract class BaseCatalog
   @Override
   public boolean useNullableQuerySchema() {
     return useNullableQuerySchema;
+  }
+
+  protected ViewInfo normalizeViewInfoCurrentCatalog(String catalogName, ViewInfo viewInfo) {
+    if (viewInfo == null || !Objects.equals(catalogName, viewInfo.currentCatalog())) {
+      return viewInfo;
+    }
+
+    ViewInfo.Builder builder =
+        new ViewInfo.Builder()
+            .withQueryText(viewInfo.queryText())
+            .withCurrentNamespace(viewInfo.currentNamespace())
+            .withSchema(viewInfo.schema())
+            .withSchemaMode(viewInfo.schemaMode())
+            .withQueryColumnNames(viewInfo.queryColumnNames())
+            .withProperties(viewInfo.properties());
+
+    if (viewInfo.sqlConfigs() != null) {
+      builder.withSqlConfigs(viewInfo.sqlConfigs());
+    }
+
+    if (viewInfo.viewDependencies() != null) {
+      builder.withViewDependencies(viewInfo.viewDependencies());
+    }
+
+    return builder.build();
   }
 
   private static boolean isSystemNamespace(String[] namespace) {

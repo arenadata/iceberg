@@ -51,6 +51,8 @@ import org.apache.spark.sql.types.Decimal;
 import org.apache.spark.sql.types.DecimalType;
 import org.apache.spark.sql.types.DoubleType;
 import org.apache.spark.sql.types.FloatType;
+import org.apache.spark.sql.types.GeographyType;
+import org.apache.spark.sql.types.GeometryType;
 import org.apache.spark.sql.types.IntegerType;
 import org.apache.spark.sql.types.LongType;
 import org.apache.spark.sql.types.MapType;
@@ -58,6 +60,7 @@ import org.apache.spark.sql.types.ShortType;
 import org.apache.spark.sql.types.StringType;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.types.TimestampType;
+import org.apache.spark.unsafe.types.BinaryView;
 import org.apache.spark.unsafe.types.CalendarInterval;
 import org.apache.spark.unsafe.types.UTF8String;
 import org.apache.spark.unsafe.types.VariantVal;
@@ -234,6 +237,11 @@ class StructInternalRow extends InternalRow {
     throw new UnsupportedOperationException("Unsupported method: getVariant");
   }
 
+  @Override
+  public BinaryView getBinaryView(int ordinal) {
+    return isNullAt(ordinal) ? null : BinaryView.fromBytes(getBinaryInternal(ordinal));
+  }
+
   private MapData getMapInternal(int ordinal) {
     return mapToMapData(
         type.fields().get(ordinal).type().asMapType(), struct.get(ordinal, Map.class));
@@ -276,6 +284,8 @@ class StructInternalRow extends InternalRow {
       return getInt(ordinal);
     } else if (dataType instanceof TimestampType) {
       return getLong(ordinal);
+    } else if (dataType instanceof GeographyType || dataType instanceof GeometryType) {
+      return BinaryView.fromBytes(getBinaryInternal(ordinal));
     }
     return null;
   }

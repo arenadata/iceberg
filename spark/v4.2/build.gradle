@@ -70,7 +70,7 @@ project(":iceberg-spark:iceberg-spark-${sparkMajorVersion}_${scalaVersion}") {
 
     compileOnly libs.errorprone.annotations
     compileOnly libs.avro.avro
-    compileOnly("org.apache.spark:spark-hive_${scalaVersion}:${libs.versions.spark40.get()}") {
+    compileOnly("org.apache.spark:spark-hive_${scalaVersion}:${libs.versions.spark42.get()}") {
       exclude group: 'org.apache.avro', module: 'avro'
       exclude group: 'org.apache.arrow'
       exclude group: 'org.apache.parquet'
@@ -160,7 +160,7 @@ project(":iceberg-spark:iceberg-spark-extensions-${sparkMajorVersion}_${scalaVer
     compileOnly project(':iceberg-core')
     compileOnly project(':iceberg-common')
     compileOnly project(":iceberg-spark:iceberg-spark-${sparkMajorVersion}_${scalaVersion}")
-    compileOnly("org.apache.spark:spark-hive_${scalaVersion}:${libs.versions.spark40.get()}") {
+    compileOnly("org.apache.spark:spark-hive_${scalaVersion}:${libs.versions.spark42.get()}") {
       exclude group: 'org.apache.avro', module: 'avro'
       exclude group: 'org.apache.arrow'
       exclude group: 'org.apache.parquet'
