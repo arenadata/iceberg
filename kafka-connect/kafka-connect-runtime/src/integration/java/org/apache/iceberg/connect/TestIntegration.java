@@ -171,7 +171,7 @@ public class TestIntegration extends IntegrationTestBase {
   }
 
   @Override
-  void dropTables() {
+  protected void dropTables() {
     catalog().dropTable(TableIdentifier.of(TEST_DB, TEST_TABLE));
   }
 }

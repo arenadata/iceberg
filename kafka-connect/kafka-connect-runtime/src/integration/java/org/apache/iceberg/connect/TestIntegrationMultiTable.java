@@ -82,7 +82,7 @@ public class TestIntegrationMultiTable extends IntegrationTestBase {
   }
 
   @Override
-  void dropTables() {
+  protected void dropTables() {
     catalog().dropTable(TableIdentifier.of(TEST_DB, TEST_TABLE1));
     catalog().dropTable(TableIdentifier.of(TEST_DB, TEST_TABLE2));
   }
