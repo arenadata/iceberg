@@ -24,7 +24,7 @@ import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.util.escapeSingleQuotedString
 import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.connector.catalog.TableCatalog
-import org.apache.spark.sql.connector.catalog.ViewInfo
+import org.apache.spark.sql.connector.catalog.View
 import org.apache.spark.sql.execution.LeafExecNode
 import scala.jdk.CollectionConverters._
 
@@ -38,7 +38,7 @@ case class IcebergDescribeV2ViewExec(
     output: Seq[Attribute],
     catalogName: String,
     ident: Identifier,
-    view: ViewInfo,
+    view: View,
     isExtended: Boolean)
     extends V2CommandExec
     with LeafExecNode {

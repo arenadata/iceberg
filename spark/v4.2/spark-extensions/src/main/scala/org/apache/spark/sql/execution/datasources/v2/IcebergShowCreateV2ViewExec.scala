@@ -24,7 +24,7 @@ import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.util.escapeSingleQuotedString
 import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.connector.catalog.TableCatalog
-import org.apache.spark.sql.connector.catalog.ViewInfo
+import org.apache.spark.sql.connector.catalog.View
 import org.apache.spark.sql.execution.LeafExecNode
 import scala.jdk.CollectionConverters._
 
@@ -34,7 +34,7 @@ import scala.jdk.CollectionConverters._
  * Uses a custom command instead of Spark's built-in implementation so generated view DDL omits
  * Iceberg reserved metadata properties.
  */
-case class IcebergShowCreateV2ViewExec(output: Seq[Attribute], ident: Identifier, view: ViewInfo)
+case class IcebergShowCreateV2ViewExec(output: Seq[Attribute], ident: Identifier, view: View)
     extends V2CommandExec
     with LeafExecNode {
 
@@ -51,20 +51,20 @@ case class IcebergShowCreateV2ViewExec(output: Seq[Attribute], ident: Identifier
     Seq(toCatalystRow(builder.toString))
   }
 
-  private def showColumns(view: ViewInfo, builder: StringBuilder): Unit = {
+  private def showColumns(view: View, builder: StringBuilder): Unit = {
     val columns = concatByMultiLines(
       view.schema.fields
         .map(x => s"${x.name}${x.getComment().map(c => s" COMMENT '$c'").getOrElse("")}"))
     builder ++= columns
   }
 
-  private def showComment(view: ViewInfo, builder: StringBuilder): Unit = {
+  private def showComment(view: View, builder: StringBuilder): Unit = {
     Option(view.properties.get(TableCatalog.PROP_COMMENT))
       .map("COMMENT '" + escapeSingleQuotedString(_) + "'\n")
       .foreach(builder.append)
   }
 
-  private def showProperties(view: ViewInfo, builder: StringBuilder): Unit = {
+  private def showProperties(view: View, builder: StringBuilder): Unit = {
     val showProps = view.properties.asScala.toMap -- ViewUtil.RESERVED_PROPERTIES
     if (showProps.nonEmpty) {
       val props = conf.redactOptions(showProps).toSeq.sortBy(_._1).map { case (key, value) =>

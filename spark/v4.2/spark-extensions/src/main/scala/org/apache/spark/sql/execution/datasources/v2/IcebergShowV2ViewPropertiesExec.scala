@@ -22,7 +22,7 @@ import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.analysis.ViewUtil
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.connector.catalog.Identifier
-import org.apache.spark.sql.connector.catalog.ViewInfo
+import org.apache.spark.sql.connector.catalog.View
 import org.apache.spark.sql.execution.LeafExecNode
 import scala.jdk.CollectionConverters._
 
@@ -36,7 +36,7 @@ case class IcebergShowV2ViewPropertiesExec(
     output: Seq[Attribute],
     catalogName: String,
     ident: Identifier,
-    view: ViewInfo,
+    view: View,
     propertyKey: Option[String])
     extends V2CommandExec
     with LeafExecNode {

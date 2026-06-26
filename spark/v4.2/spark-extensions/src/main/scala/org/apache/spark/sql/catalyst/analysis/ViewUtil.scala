@@ -21,8 +21,8 @@ package org.apache.spark.sql.catalyst.analysis
 import org.apache.spark.sql.connector.catalog.CatalogPlugin
 import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.connector.catalog.TableCatalog
+import org.apache.spark.sql.connector.catalog.View
 import org.apache.spark.sql.connector.catalog.ViewCatalog
-import org.apache.spark.sql.connector.catalog.ViewInfo
 import org.apache.spark.sql.errors.QueryCompilationErrors
 import org.apache.spark.sql.types.StructType
 import scala.jdk.CollectionConverters._
@@ -38,7 +38,7 @@ object ViewUtil {
       PROP_CREATE_ENGINE_VERSION,
       PROP_ENGINE_VERSION)
 
-  def loadView(catalog: CatalogPlugin, ident: Identifier): Option[ViewInfo] = catalog match {
+  def loadView(catalog: CatalogPlugin, ident: Identifier): Option[View] = catalog match {
     case viewCatalog: ViewCatalog =>
       try {
         Option(viewCatalog.loadView(ident))
@@ -58,8 +58,8 @@ object ViewUtil {
       currentNamespace: Array[String],
       viewSchema: StructType,
       queryColumnNames: Seq[String],
-      properties: Map[String, String]): ViewInfo = {
-    new ViewInfo.Builder()
+      properties: Map[String, String]): View = {
+    new View.Builder()
       .withQueryText(queryText)
       .withCurrentCatalog(currentCatalog)
       .withCurrentNamespace(currentNamespace)
@@ -69,8 +69,8 @@ object ViewUtil {
       .build()
   }
 
-  def withProperties(viewInfo: ViewInfo, properties: Map[String, String]): ViewInfo = {
-    val builder = new ViewInfo.Builder()
+  def withProperties(viewInfo: View, properties: Map[String, String]): View = {
+    val builder = new View.Builder()
       .withQueryText(viewInfo.queryText)
       .withCurrentCatalog(viewInfo.currentCatalog)
       .withCurrentNamespace(viewInfo.currentNamespace)

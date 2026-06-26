@@ -25,10 +25,10 @@ import org.apache.iceberg.spark.source.HasIcebergCatalog;
 import org.apache.iceberg.util.PropertyUtil;
 import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.catalog.ProcedureCatalog;
+import org.apache.spark.sql.connector.catalog.RelationCatalog;
 import org.apache.spark.sql.connector.catalog.StagingTableCatalog;
 import org.apache.spark.sql.connector.catalog.SupportsNamespaces;
-import org.apache.spark.sql.connector.catalog.TableViewCatalog;
-import org.apache.spark.sql.connector.catalog.ViewInfo;
+import org.apache.spark.sql.connector.catalog.View;
 import org.apache.spark.sql.connector.catalog.procedures.UnboundProcedure;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 
@@ -38,7 +38,7 @@ abstract class BaseCatalog
         SupportsNamespaces,
         HasIcebergCatalog,
         SupportsFunctions,
-        TableViewCatalog {
+        RelationCatalog {
   private static final String USE_NULLABLE_QUERY_SCHEMA_CTAS_RTAS = "use-nullable-query-schema";
   private static final boolean USE_NULLABLE_QUERY_SCHEMA_CTAS_RTAS_DEFAULT = true;
 
@@ -100,26 +100,26 @@ abstract class BaseCatalog
     return useNullableQuerySchema;
   }
 
-  protected ViewInfo normalizeViewInfoCurrentCatalog(String catalogName, ViewInfo viewInfo) {
-    if (viewInfo == null || !Objects.equals(catalogName, viewInfo.currentCatalog())) {
-      return viewInfo;
+  protected View normalizeViewCurrentCatalog(String catalogName, View view) {
+    if (view == null || !Objects.equals(catalogName, view.currentCatalog())) {
+      return view;
     }
 
-    ViewInfo.Builder builder =
-        new ViewInfo.Builder()
-            .withQueryText(viewInfo.queryText())
-            .withCurrentNamespace(viewInfo.currentNamespace())
-            .withSchema(viewInfo.schema())
-            .withSchemaMode(viewInfo.schemaMode())
-            .withQueryColumnNames(viewInfo.queryColumnNames())
-            .withProperties(viewInfo.properties());
+    View.Builder builder =
+        new View.Builder()
+            .withQueryText(view.queryText())
+            .withCurrentNamespace(view.currentNamespace())
+            .withSchema(view.schema())
+            .withSchemaMode(view.schemaMode())
+            .withQueryColumnNames(view.queryColumnNames())
+            .withProperties(view.properties());
 
-    if (viewInfo.sqlConfigs() != null) {
-      builder.withSqlConfigs(viewInfo.sqlConfigs());
+    if (view.sqlConfigs() != null) {
+      builder.withSqlConfigs(view.sqlConfigs());
     }
 
-    if (viewInfo.viewDependencies() != null) {
-      builder.withViewDependencies(viewInfo.viewDependencies());
+    if (view.viewDependencies() != null) {
+      builder.withViewDependencies(view.viewDependencies());
     }
 
     return builder.build();

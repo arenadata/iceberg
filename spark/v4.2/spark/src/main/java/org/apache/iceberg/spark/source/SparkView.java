@@ -32,10 +32,10 @@ import org.apache.iceberg.view.SQLViewRepresentation;
 import org.apache.iceberg.view.View;
 import org.apache.iceberg.view.ViewOperations;
 import org.apache.spark.sql.connector.catalog.TableCatalog;
-import org.apache.spark.sql.connector.catalog.ViewInfo;
 
 /**
- * Converts Iceberg view metadata to Spark's {@link ViewInfo} representation.
+ * Converts Iceberg view metadata to Spark's {@link org.apache.spark.sql.connector.catalog.View}
+ * representation.
  *
  * <p>Keeps this conversion in Iceberg instead of relying on Spark's built-in view handling so
  * reserved properties and Iceberg defaults are exposed consistently to Spark commands.
@@ -53,14 +53,15 @@ public class SparkView {
 
   private SparkView() {}
 
-  public static ViewInfo toViewInfo(String catalogName, View icebergView) {
+  public static org.apache.spark.sql.connector.catalog.View toView(
+      String catalogName, View icebergView) {
     SQLViewRepresentation sqlRepr = icebergView.sqlFor("spark");
     Preconditions.checkState(sqlRepr != null, "Cannot load SQL for view %s", icebergView.name());
 
     Namespace defaultNamespace = icebergView.currentVersion().defaultNamespace();
     String defaultCatalog = icebergView.currentVersion().defaultCatalog();
 
-    return new ViewInfo.Builder()
+    return new org.apache.spark.sql.connector.catalog.View.Builder()
         .withQueryText(sqlRepr.sql())
         .withCurrentCatalog(defaultCatalog != null ? defaultCatalog : catalogName)
         .withCurrentNamespace(defaultNamespace != null ? defaultNamespace.levels() : new String[0])

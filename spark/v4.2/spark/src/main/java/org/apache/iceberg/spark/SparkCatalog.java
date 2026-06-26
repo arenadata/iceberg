@@ -80,8 +80,8 @@ import org.apache.spark.sql.catalyst.analysis.NoSuchViewException;
 import org.apache.spark.sql.catalyst.analysis.TableAlreadyExistsException;
 import org.apache.spark.sql.catalyst.analysis.ViewAlreadyExistsException;
 import org.apache.spark.sql.connector.catalog.Identifier;
-import org.apache.spark.sql.connector.catalog.MetadataTable;
 import org.apache.spark.sql.connector.catalog.NamespaceChange;
+import org.apache.spark.sql.connector.catalog.Relation;
 import org.apache.spark.sql.connector.catalog.StagedTable;
 import org.apache.spark.sql.connector.catalog.Table;
 import org.apache.spark.sql.connector.catalog.TableCatalog;
@@ -89,7 +89,7 @@ import org.apache.spark.sql.connector.catalog.TableChange;
 import org.apache.spark.sql.connector.catalog.TableChange.ColumnChange;
 import org.apache.spark.sql.connector.catalog.TableChange.RemoveProperty;
 import org.apache.spark.sql.connector.catalog.TableChange.SetProperty;
-import org.apache.spark.sql.connector.catalog.ViewInfo;
+import org.apache.spark.sql.connector.catalog.View;
 import org.apache.spark.sql.connector.expressions.Transform;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
@@ -183,12 +183,12 @@ public class SparkCatalog extends BaseCatalog {
   }
 
   @Override
-  public Table loadTableOrView(Identifier ident) throws NoSuchTableException {
+  public Relation loadRelation(Identifier ident) throws NoSuchTableException {
     try {
       return loadTable(ident);
     } catch (NoSuchTableException tableException) {
       try {
-        return new MetadataTable(loadView(ident), ident.toString());
+        return loadView(ident);
       } catch (NoSuchViewException viewException) {
         throw tableException;
       }
@@ -583,11 +583,11 @@ public class SparkCatalog extends BaseCatalog {
   }
 
   @Override
-  public ViewInfo loadView(Identifier ident) throws NoSuchViewException {
+  public View loadView(Identifier ident) throws NoSuchViewException {
     if (null != asViewCatalog) {
       try {
         org.apache.iceberg.view.View view = asViewCatalog.loadView(buildIdentifier(ident));
-        return SparkView.toViewInfo(catalogName, view);
+        return SparkView.toView(catalogName, view);
       } catch (org.apache.iceberg.exceptions.NoSuchViewException e) {
         throw new NoSuchViewException(ident);
       }
@@ -597,19 +597,19 @@ public class SparkCatalog extends BaseCatalog {
   }
 
   @Override
-  public ViewInfo createView(Identifier ident, ViewInfo viewInfo)
+  public View createView(Identifier ident, View view)
       throws ViewAlreadyExistsException, NoSuchNamespaceException {
     try {
-      return commitView(ident, viewInfo, ViewCommit.CREATE);
+      return commitView(ident, view, ViewCommit.CREATE);
     } catch (NoSuchViewException e) {
       throw unexpectedViewCommitException("create", ident, "reported that the view is missing", e);
     }
   }
 
   @Override
-  public ViewInfo replaceView(Identifier ident, ViewInfo viewInfo) throws NoSuchViewException {
+  public View replaceView(Identifier ident, View view) throws NoSuchViewException {
     try {
-      return commitView(ident, viewInfo, ViewCommit.REPLACE);
+      return commitView(ident, view, ViewCommit.REPLACE);
     } catch (NoSuchNamespaceException e) {
       throw unexpectedViewCommitException(
           "replace", ident, "reported that the namespace is missing", e);
@@ -620,10 +620,10 @@ public class SparkCatalog extends BaseCatalog {
   }
 
   @Override
-  public ViewInfo createOrReplaceView(Identifier ident, ViewInfo viewInfo)
+  public View createOrReplaceView(Identifier ident, View view)
       throws ViewAlreadyExistsException, NoSuchNamespaceException {
     try {
-      return commitView(ident, viewInfo, ViewCommit.CREATE_OR_REPLACE);
+      return commitView(ident, view, ViewCommit.CREATE_OR_REPLACE);
     } catch (NoSuchViewException e) {
       throw unexpectedViewCommitException(
           "create or replace", ident, "reported that the view is missing", e);
@@ -638,54 +638,54 @@ public class SparkCatalog extends BaseCatalog {
         cause);
   }
 
-  private ViewInfo commitView(Identifier ident, ViewInfo viewInfo, ViewCommit viewCommit)
+  private View commitView(Identifier ident, View view, ViewCommit viewCommit)
       throws ViewAlreadyExistsException, NoSuchNamespaceException, NoSuchViewException {
-    Preconditions.checkArgument(viewInfo != null, "Invalid view metadata: null");
+    Preconditions.checkArgument(view != null, "Invalid view metadata: null");
 
     if (null == asViewCatalog) {
       throw new UnsupportedOperationException(
           "View operations are not supported by catalog: " + catalogName);
     }
 
-    ViewInfo normalizedViewInfo = normalizeViewInfoCurrentCatalog(catalogName, viewInfo);
-    String[] currentNamespace = normalizedViewInfo.currentNamespace();
-    Map<String, String> properties = normalizedViewInfo.properties();
-    Schema icebergSchema = SparkSchemaUtil.convert(normalizedViewInfo.schema());
+    View normalizedView = normalizeViewCurrentCatalog(catalogName, view);
+    String[] currentNamespace = normalizedView.currentNamespace();
+    Map<String, String> properties = normalizedView.properties();
+    Schema icebergSchema = SparkSchemaUtil.convert(normalizedView.schema());
     ImmutableMap.Builder<String, String> propsBuilder = ImmutableMap.builder();
     Spark3Util.rebuildCreateProperties(properties).entrySet().stream()
         .filter(entry -> !SparkView.RESERVED_PROPERTIES.contains(entry.getKey()))
         .forEach(propsBuilder::put);
     propsBuilder.put(
-        SparkView.QUERY_COLUMN_NAMES, COMMA_JOINER.join(normalizedViewInfo.queryColumnNames()));
+        SparkView.QUERY_COLUMN_NAMES, COMMA_JOINER.join(normalizedView.queryColumnNames()));
     Map<String, String> props = propsBuilder.buildKeepingLast();
 
     try {
       ViewBuilder builder =
           asViewCatalog
               .buildView(buildIdentifier(ident))
-              .withDefaultCatalog(normalizedViewInfo.currentCatalog())
+              .withDefaultCatalog(normalizedView.currentCatalog())
               .withDefaultNamespace(Namespace.of(currentNamespace))
-              .withQuery("spark", normalizedViewInfo.queryText())
+              .withQuery("spark", normalizedView.queryText())
               .withSchema(icebergSchema)
               .withLocation(properties.get(TableCatalog.PROP_LOCATION))
               .withProperties(props);
 
-      org.apache.iceberg.view.View view;
+      org.apache.iceberg.view.View icebergView;
       switch (viewCommit) {
         case CREATE:
-          view = builder.create();
+          icebergView = builder.create();
           break;
         case REPLACE:
-          view = builder.replace();
+          icebergView = builder.replace();
           break;
         case CREATE_OR_REPLACE:
-          view = builder.createOrReplace();
+          icebergView = builder.createOrReplace();
           break;
         default:
           throw new IllegalArgumentException("Unsupported view commit operation: " + viewCommit);
       }
 
-      return SparkView.toViewInfo(catalogName, view);
+      return SparkView.toView(catalogName, icebergView);
     } catch (org.apache.iceberg.exceptions.NoSuchNamespaceException e) {
       throw new NoSuchNamespaceException(ident.namespace());
     } catch (AlreadyExistsException e) {
