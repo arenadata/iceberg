@@ -81,7 +81,6 @@ import org.apache.spark.sql.catalyst.analysis.TableAlreadyExistsException;
 import org.apache.spark.sql.catalyst.analysis.ViewAlreadyExistsException;
 import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.catalog.NamespaceChange;
-import org.apache.spark.sql.connector.catalog.Relation;
 import org.apache.spark.sql.connector.catalog.StagedTable;
 import org.apache.spark.sql.connector.catalog.Table;
 import org.apache.spark.sql.connector.catalog.TableCatalog;
@@ -179,19 +178,6 @@ public class SparkCatalog extends BaseCatalog {
       return load(ident);
     } catch (org.apache.iceberg.exceptions.NoSuchTableException e) {
       throw new NoSuchTableException(ident);
-    }
-  }
-
-  @Override
-  public Relation loadRelation(Identifier ident) throws NoSuchTableException {
-    try {
-      return loadTable(ident);
-    } catch (NoSuchTableException tableException) {
-      try {
-        return loadView(ident);
-      } catch (NoSuchViewException viewException) {
-        throw tableException;
-      }
     }
   }
 
@@ -586,8 +572,8 @@ public class SparkCatalog extends BaseCatalog {
   public View loadView(Identifier ident) throws NoSuchViewException {
     if (null != asViewCatalog) {
       try {
-        org.apache.iceberg.view.View view = asViewCatalog.loadView(buildIdentifier(ident));
-        return SparkView.toView(catalogName, view);
+        org.apache.iceberg.view.View icebergView = asViewCatalog.loadView(buildIdentifier(ident));
+        return SparkView.toView(catalogName, icebergView);
       } catch (org.apache.iceberg.exceptions.NoSuchViewException e) {
         throw new NoSuchViewException(ident);
       }

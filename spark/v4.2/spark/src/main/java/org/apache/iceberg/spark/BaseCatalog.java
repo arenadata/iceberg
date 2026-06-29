@@ -23,8 +23,11 @@ import org.apache.iceberg.spark.procedures.SparkProcedures;
 import org.apache.iceberg.spark.procedures.SparkProcedures.ProcedureBuilder;
 import org.apache.iceberg.spark.source.HasIcebergCatalog;
 import org.apache.iceberg.util.PropertyUtil;
+import org.apache.spark.sql.catalyst.analysis.NoSuchTableException;
+import org.apache.spark.sql.catalyst.analysis.NoSuchViewException;
 import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.catalog.ProcedureCatalog;
+import org.apache.spark.sql.connector.catalog.Relation;
 import org.apache.spark.sql.connector.catalog.RelationCatalog;
 import org.apache.spark.sql.connector.catalog.StagingTableCatalog;
 import org.apache.spark.sql.connector.catalog.SupportsNamespaces;
@@ -100,6 +103,20 @@ abstract class BaseCatalog
     return useNullableQuerySchema;
   }
 
+  @Override
+  public Relation loadRelation(Identifier ident) throws NoSuchTableException {
+    try {
+      return loadTable(ident);
+    } catch (NoSuchTableException e) {
+      try {
+        return loadView(ident);
+      } catch (NoSuchViewException viewException) {
+        e.addSuppressed(viewException);
+        throw e;
+      }
+    }
+  }
+
   protected View normalizeViewCurrentCatalog(String catalogName, View view) {
     if (view == null || !Objects.equals(catalogName, view.currentCatalog())) {
       return view;
@@ -108,6 +125,7 @@ abstract class BaseCatalog
     View.Builder builder =
         new View.Builder()
             .withQueryText(view.queryText())
+            .withCurrentCatalog(null)
             .withCurrentNamespace(view.currentNamespace())
             .withSchema(view.schema())
             .withSchemaMode(view.schemaMode())

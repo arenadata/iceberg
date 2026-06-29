@@ -40,8 +40,6 @@ import org.apache.spark.sql.connector.catalog.CatalogPlugin;
 import org.apache.spark.sql.connector.catalog.FunctionCatalog;
 import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.catalog.NamespaceChange;
-import org.apache.spark.sql.connector.catalog.Relation;
-import org.apache.spark.sql.connector.catalog.RelationCatalog;
 import org.apache.spark.sql.connector.catalog.StagedTable;
 import org.apache.spark.sql.connector.catalog.StagingTableCatalog;
 import org.apache.spark.sql.connector.catalog.SupportsNamespaces;
@@ -147,36 +145,6 @@ public class SparkSessionCatalog<
       return icebergCatalog.loadTable(ident);
     } catch (NoSuchTableException e) {
       return getSessionCatalog().loadTable(ident);
-    }
-  }
-
-  @Override
-  public Relation loadRelation(Identifier ident) throws NoSuchTableException {
-    try {
-      return loadRelation(icebergCatalog, ident);
-    } catch (NoSuchTableException e) {
-      return loadRelation(getSessionCatalog(), ident);
-    }
-  }
-
-  private Relation loadRelation(TableCatalog catalog, Identifier ident)
-      throws NoSuchTableException {
-    if (catalog instanceof RelationCatalog) {
-      return ((RelationCatalog) catalog).loadRelation(ident);
-    }
-
-    try {
-      return catalog.loadTable(ident);
-    } catch (NoSuchTableException tableException) {
-      if (catalog instanceof ViewCatalog) {
-        try {
-          return ((ViewCatalog) catalog).loadView(ident);
-        } catch (NoSuchViewException viewException) {
-          throw tableException;
-        }
-      }
-
-      throw tableException;
     }
   }
 
