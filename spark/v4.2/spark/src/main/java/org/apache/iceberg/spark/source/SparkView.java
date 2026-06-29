@@ -29,13 +29,12 @@ import org.apache.iceberg.relocated.com.google.common.collect.ImmutableSet;
 import org.apache.iceberg.spark.SparkSchemaUtil;
 import org.apache.iceberg.view.BaseView;
 import org.apache.iceberg.view.SQLViewRepresentation;
-import org.apache.iceberg.view.View;
 import org.apache.iceberg.view.ViewOperations;
 import org.apache.spark.sql.connector.catalog.TableCatalog;
-import org.apache.spark.sql.connector.catalog.ViewInfo;
+import org.apache.spark.sql.connector.catalog.View;
 
 /**
- * Converts Iceberg view metadata to Spark's {@link ViewInfo} representation.
+ * Converts Iceberg view metadata to Spark's {@link View} representation.
  *
  * <p>Keeps this conversion in Iceberg instead of relying on Spark's built-in view handling so
  * reserved properties and Iceberg defaults are exposed consistently to Spark commands.
@@ -53,14 +52,14 @@ public class SparkView {
 
   private SparkView() {}
 
-  public static ViewInfo toViewInfo(String catalogName, View icebergView) {
+  public static View toView(String catalogName, org.apache.iceberg.view.View icebergView) {
     SQLViewRepresentation sqlRepr = icebergView.sqlFor("spark");
     Preconditions.checkState(sqlRepr != null, "Cannot load SQL for view %s", icebergView.name());
 
     Namespace defaultNamespace = icebergView.currentVersion().defaultNamespace();
     String defaultCatalog = icebergView.currentVersion().defaultCatalog();
 
-    return new ViewInfo.Builder()
+    return new View.Builder()
         .withQueryText(sqlRepr.sql())
         .withCurrentCatalog(defaultCatalog != null ? defaultCatalog : catalogName)
         .withCurrentNamespace(defaultNamespace != null ? defaultNamespace.levels() : new String[0])
@@ -77,7 +76,7 @@ public class SparkView {
         : new String[0];
   }
 
-  private static Map<String, String> properties(View icebergView) {
+  private static Map<String, String> properties(org.apache.iceberg.view.View icebergView) {
     ImmutableMap.Builder<String, String> propsBuilder = ImmutableMap.builder();
 
     propsBuilder.put(TableCatalog.PROP_PROVIDER, "iceberg");

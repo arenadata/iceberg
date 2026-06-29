@@ -28,6 +28,7 @@ import org.apache.iceberg.spark.SparkSessionCatalog;
 import org.apache.spark.sql.catalyst.analysis.NoSuchTableException;
 import org.apache.spark.sql.connector.catalog.FunctionCatalog;
 import org.apache.spark.sql.connector.catalog.Identifier;
+import org.apache.spark.sql.connector.catalog.Relation;
 import org.apache.spark.sql.connector.catalog.SupportsNamespaces;
 import org.apache.spark.sql.connector.catalog.Table;
 import org.apache.spark.sql.connector.catalog.TableCatalog;
@@ -63,7 +64,7 @@ public class TestSparkCatalog<
   }
 
   @Override
-  public Table loadTableOrView(Identifier ident) throws NoSuchTableException {
+  public Relation loadRelation(Identifier ident) throws NoSuchTableException {
     return loadTable(ident);
   }
 

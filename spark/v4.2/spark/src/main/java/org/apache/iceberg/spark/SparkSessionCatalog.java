@@ -39,7 +39,6 @@ import org.apache.spark.sql.connector.catalog.CatalogExtension;
 import org.apache.spark.sql.connector.catalog.CatalogPlugin;
 import org.apache.spark.sql.connector.catalog.FunctionCatalog;
 import org.apache.spark.sql.connector.catalog.Identifier;
-import org.apache.spark.sql.connector.catalog.MetadataTable;
 import org.apache.spark.sql.connector.catalog.NamespaceChange;
 import org.apache.spark.sql.connector.catalog.StagedTable;
 import org.apache.spark.sql.connector.catalog.StagingTableCatalog;
@@ -47,9 +46,8 @@ import org.apache.spark.sql.connector.catalog.SupportsNamespaces;
 import org.apache.spark.sql.connector.catalog.Table;
 import org.apache.spark.sql.connector.catalog.TableCatalog;
 import org.apache.spark.sql.connector.catalog.TableChange;
-import org.apache.spark.sql.connector.catalog.TableViewCatalog;
+import org.apache.spark.sql.connector.catalog.View;
 import org.apache.spark.sql.connector.catalog.ViewCatalog;
-import org.apache.spark.sql.connector.catalog.ViewInfo;
 import org.apache.spark.sql.connector.catalog.functions.UnboundFunction;
 import org.apache.spark.sql.connector.expressions.Transform;
 import org.apache.spark.sql.types.StructType;
@@ -147,36 +145,6 @@ public class SparkSessionCatalog<
       return icebergCatalog.loadTable(ident);
     } catch (NoSuchTableException e) {
       return getSessionCatalog().loadTable(ident);
-    }
-  }
-
-  @Override
-  public Table loadTableOrView(Identifier ident) throws NoSuchTableException {
-    try {
-      return loadTableOrView(icebergCatalog, ident);
-    } catch (NoSuchTableException e) {
-      return loadTableOrView(getSessionCatalog(), ident);
-    }
-  }
-
-  private Table loadTableOrView(TableCatalog catalog, Identifier ident)
-      throws NoSuchTableException {
-    if (catalog instanceof TableViewCatalog) {
-      return ((TableViewCatalog) catalog).loadTableOrView(ident);
-    }
-
-    try {
-      return catalog.loadTable(ident);
-    } catch (NoSuchTableException tableException) {
-      if (catalog instanceof ViewCatalog) {
-        try {
-          return new MetadataTable(((ViewCatalog) catalog).loadView(ident), ident.toString());
-        } catch (NoSuchViewException viewException) {
-          throw tableException;
-        }
-      }
-
-      throw tableException;
     }
   }
 
@@ -468,7 +436,7 @@ public class SparkSessionCatalog<
   }
 
   @Override
-  public ViewInfo loadView(Identifier ident) throws NoSuchViewException {
+  public View loadView(Identifier ident) throws NoSuchViewException {
     if (null != asViewCatalog && asViewCatalog.viewExists(ident)) {
       return asViewCatalog.loadView(ident);
     } else if (isViewCatalog() && getSessionCatalog().viewExists(ident)) {
@@ -479,17 +447,17 @@ public class SparkSessionCatalog<
   }
 
   @Override
-  public ViewInfo createView(Identifier ident, ViewInfo viewInfo)
+  public View createView(Identifier ident, View view)
       throws ViewAlreadyExistsException, NoSuchNamespaceException {
-    if (viewInfo == null) {
+    if (view == null) {
       return null;
     }
 
-    ViewInfo normalizedViewInfo = normalizeViewInfoCurrentCatalog(catalogName, viewInfo);
+    View normalizedView = normalizeViewCurrentCatalog(catalogName, view);
     if (null != asViewCatalog) {
-      return asViewCatalog.createView(ident, normalizedViewInfo);
+      return asViewCatalog.createView(ident, normalizedView);
     } else if (isViewCatalog()) {
-      return getSessionCatalog().createView(ident, normalizedViewInfo);
+      return getSessionCatalog().createView(ident, normalizedView);
     }
 
     throw new UnsupportedOperationException(
@@ -497,25 +465,25 @@ public class SparkSessionCatalog<
   }
 
   @Override
-  public ViewInfo replaceView(Identifier ident, ViewInfo viewInfo) throws NoSuchViewException {
-    ViewInfo normalizedViewInfo = normalizeViewInfoCurrentCatalog(catalogName, viewInfo);
+  public View replaceView(Identifier ident, View view) throws NoSuchViewException {
+    View normalizedView = normalizeViewCurrentCatalog(catalogName, view);
     if (null != asViewCatalog && asViewCatalog.viewExists(ident)) {
-      return asViewCatalog.replaceView(ident, normalizedViewInfo);
+      return asViewCatalog.replaceView(ident, normalizedView);
     } else if (isViewCatalog() && getSessionCatalog().viewExists(ident)) {
-      return getSessionCatalog().replaceView(ident, normalizedViewInfo);
+      return getSessionCatalog().replaceView(ident, normalizedView);
     }
 
     throw new NoSuchViewException(ident);
   }
 
   @Override
-  public ViewInfo createOrReplaceView(Identifier ident, ViewInfo viewInfo)
+  public View createOrReplaceView(Identifier ident, View view)
       throws ViewAlreadyExistsException, NoSuchNamespaceException {
-    ViewInfo normalizedViewInfo = normalizeViewInfoCurrentCatalog(catalogName, viewInfo);
+    View normalizedView = normalizeViewCurrentCatalog(catalogName, view);
     if (null != asViewCatalog) {
-      return asViewCatalog.createOrReplaceView(ident, normalizedViewInfo);
+      return asViewCatalog.createOrReplaceView(ident, normalizedView);
     } else if (isViewCatalog()) {
-      return getSessionCatalog().createOrReplaceView(ident, normalizedViewInfo);
+      return getSessionCatalog().createOrReplaceView(ident, normalizedView);
     }
 
     throw new UnsupportedOperationException(

@@ -35,12 +35,12 @@ import org.apache.spark.sql.catalyst.trees.Origin
 import org.apache.spark.sql.connector.catalog.CatalogManager
 import org.apache.spark.sql.connector.catalog.CatalogPlugin
 import org.apache.spark.sql.connector.catalog.LookupCatalog
-import org.apache.spark.sql.connector.catalog.ViewInfo
+import org.apache.spark.sql.connector.catalog.View
 import org.apache.spark.sql.errors.QueryCompilationErrors
 
 /**
  * Spark 4.2 has ViewCatalog APIs, but Iceberg still needs this rule to load Iceberg-backed
- * ViewInfo relations and qualify identifiers in stored view SQL using the view's default catalog
+ * View relations and qualify identifiers in stored view SQL using the view's default catalog
  * and namespace.
  */
 case class ResolveViews(spark: SparkSession) extends Rule[LogicalPlan] with LookupCatalog {
@@ -73,7 +73,7 @@ case class ResolveViews(spark: SparkSession) extends Rule[LogicalPlan] with Look
   private def createViewRelation(
       nameParts: Seq[String],
       catalog: CatalogPlugin,
-      view: ViewInfo): LogicalPlan = {
+      view: View): LogicalPlan = {
     val parsed = parseViewText(nameParts.quoted, view.queryText)
 
     // Apply any necessary rewrites to preserve correct resolution
