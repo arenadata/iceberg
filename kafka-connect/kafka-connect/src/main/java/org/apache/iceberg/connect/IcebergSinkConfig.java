@@ -39,6 +39,7 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Properties;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import org.apache.iceberg.IcebergBuild;
@@ -69,6 +70,10 @@ public class IcebergSinkConfig extends AbstractConfig {
 
   public static final String INTERNAL_TRANSACTIONAL_SUFFIX_PROP =
       "iceberg.coordinator.transactional.suffix";
+  public static final String METADATA_LINEAGE_REPUBLISH_WINDOW_MS_PROP =
+      "iceberg.metadata.lineage.republish-window-ms";
+  public static final String METADATA_LINEAGE_FORCE_REPUBLISH_ON_START_PROP =
+      "iceberg.metadata.lineage.force-republish-on-start";
   private static final String ROUTE_REGEX = "route-regex";
   private static final String ID_COLUMNS = "id-columns";
   private static final String PARTITION_BY = "partition-by";
@@ -149,6 +154,10 @@ public class IcebergSinkConfig extends AbstractConfig {
   private static final String DEFAULT_CATALOG_NAME = "iceberg";
   private static final String DEFAULT_CONTROL_TOPIC = "control-iceberg";
   public static final String DEFAULT_CONTROL_GROUP_PREFIX = "cg-control-";
+
+  private static final long METADATA_LINEAGE_REPUBLISH_WINDOW_MS_DEFAULT =
+      TimeUnit.HOURS.toMillis(24);
+  private static final boolean METADATA_LINEAGE_FORCE_REPUBLISH_ON_START_DEFAULT = false;
 
   public static final int SCHEMA_UPDATE_RETRIES = 2; // 3 total attempts
   public static final int CREATE_TABLE_RETRIES = 2; // 3 total attempts
@@ -285,6 +294,20 @@ public class IcebergSinkConfig extends AbstractConfig {
         120000L,
         Importance.LOW,
         "config to control coordinator executor keep alive time");
+    configDef.define(
+        METADATA_LINEAGE_REPUBLISH_WINDOW_MS_PROP,
+        ConfigDef.Type.LONG,
+        METADATA_LINEAGE_REPUBLISH_WINDOW_MS_DEFAULT,
+        Importance.LOW,
+        "How long after first emission to keep re-broadcasting TableCreated "
+            + "events for a given iceberg table.");
+    configDef.define(
+        METADATA_LINEAGE_FORCE_REPUBLISH_ON_START_PROP,
+        ConfigDef.Type.BOOLEAN,
+        METADATA_LINEAGE_FORCE_REPUBLISH_ON_START_DEFAULT,
+        Importance.LOW,
+        "If true, the first commit cycle after each task restart re-emits "
+            + "TableCreated for every committed table.");
     defineHdfsKerberosProps(configDef);
     defineV3NewTypesSupportProps(configDef);
     defineCdcProps(configDef);
@@ -902,6 +925,14 @@ public class IcebergSinkConfig extends AbstractConfig {
 
   public boolean schemaCaseInsensitive() {
     return getBoolean(TABLES_SCHEMA_CASE_INSENSITIVE_PROP);
+  }
+
+  public long metadataLineageRepublishWindowMs() {
+    return getLong(METADATA_LINEAGE_REPUBLISH_WINDOW_MS_PROP);
+  }
+
+  public boolean metadataLineageForceRepublishOnStart() {
+    return getBoolean(METADATA_LINEAGE_FORCE_REPUBLISH_ON_START_PROP);
   }
 
   public JsonConverter jsonConverter() {

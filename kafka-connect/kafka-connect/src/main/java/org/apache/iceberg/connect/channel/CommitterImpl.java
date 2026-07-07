@@ -24,6 +24,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import org.apache.iceberg.catalog.Catalog;
 import org.apache.iceberg.connect.Committer;
 import org.apache.iceberg.connect.IcebergSinkConfig;
+import org.apache.iceberg.connect.MetadataEvents;
 import org.apache.iceberg.connect.data.SinkWriter;
 import org.apache.iceberg.relocated.com.google.common.annotations.VisibleForTesting;
 import org.apache.kafka.clients.admin.Admin;
@@ -47,6 +48,7 @@ public class CommitterImpl implements Committer {
   private IcebergSinkConfig config;
   private SinkTaskContext context;
   private KafkaClientFactory clientFactory;
+  private MetadataEvents metadataEvents;
   private Collection<MemberDescription> membersWhenWorkerIsCoordinator;
   private final AtomicBoolean isInitialized = new AtomicBoolean(false);
 
@@ -59,6 +61,8 @@ public class CommitterImpl implements Committer {
       this.config = icebergSinkConfig;
       this.context = sinkTaskContext;
       this.clientFactory = new KafkaClientFactory(config.kafkaProps());
+      this.metadataEvents =
+          MetadataEvents.fromContext(context, config.catalogName(), config.connectorName());
     }
   }
 
@@ -177,7 +181,7 @@ public class CommitterImpl implements Committer {
   private void startWorker() {
     if (null == this.worker) {
       LOG.info("Starting commit worker");
-      SinkWriter sinkWriter = new SinkWriter(catalog, config);
+      SinkWriter sinkWriter = new SinkWriter(catalog, config, metadataEvents);
       worker = new Worker(config, clientFactory, sinkWriter, context);
       worker.start();
     }
@@ -187,7 +191,13 @@ public class CommitterImpl implements Committer {
     if (null == this.coordinatorThread) {
       LOG.info("Task elected leader, starting commit coordinator");
       Coordinator coordinator =
-          new Coordinator(catalog, config, membersWhenWorkerIsCoordinator, clientFactory, context);
+          new Coordinator(
+              catalog,
+              config,
+              membersWhenWorkerIsCoordinator,
+              clientFactory,
+              context,
+              metadataEvents);
       coordinatorThread = new CoordinatorThread(coordinator);
       coordinatorThread.start();
     }

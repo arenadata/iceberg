@@ -29,6 +29,7 @@ import java.util.Set;
 import java.util.stream.Stream;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.connect.IcebergSinkConfig;
+import org.apache.iceberg.connect.MetadataEvents;
 import org.apache.iceberg.connect.events.TableReference;
 import org.apache.iceberg.data.Record;
 import org.apache.iceberg.io.TaskWriter;
@@ -43,28 +44,36 @@ class IcebergWriter implements RecordWriter {
   private final Table table;
   private final TableReference tableReference;
   private final IcebergSinkConfig config;
+  private final MetadataEvents metadataEvents;
   private final List<IcebergWriterResult> writerResults;
   private final Map<String, Operation> operationMappings;
   private final Set<String> ignoredOperations;
   private RecordConverter recordConverter;
   private TaskWriter<Record> writer;
 
-  IcebergWriter(Table table, TableReference tableReference, IcebergSinkConfig config) {
+  IcebergWriter(
+      Table table,
+      TableReference tableReference,
+      IcebergSinkConfig config,
+      MetadataEvents metadataEvents) {
     this(
         table,
         tableReference,
         config,
-        RecordUtils.createTableWriter(table, tableReference, config));
+        RecordUtils.createTableWriter(table, tableReference, config),
+        metadataEvents);
   }
 
   IcebergWriter(
       Table table,
       TableReference tableReference,
       IcebergSinkConfig config,
-      TaskWriter<Record> writer) {
+      TaskWriter<Record> writer,
+      MetadataEvents metadataEvents) {
     this.table = table;
     this.tableReference = tableReference;
     this.config = config;
+    this.metadataEvents = metadataEvents;
     this.writerResults = Lists.newArrayList();
     this.operationMappings = Maps.newHashMap();
     this.ignoredOperations = Sets.newHashSet();
@@ -133,6 +142,8 @@ class IcebergWriter implements RecordWriter {
       flush();
       // apply the schema updates, this will refresh the table
       SchemaUtils.applySchemaUpdates(table, updates);
+      // Report the schema change to the metadata catalog
+      metadataEvents.schemaEvolved(tableReference.identifier(), null, record.valueSchema());
       // initialize a new writer with the new schema
       initNewWriter();
       // convert the row again, this time using the new table schema
