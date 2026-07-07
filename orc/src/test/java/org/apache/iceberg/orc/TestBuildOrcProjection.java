@@ -192,4 +192,19 @@ public class TestBuildOrcProjection {
         .isInstanceOf(UnsupportedOperationException.class)
         .hasMessage("ORC cannot read default value for field b.d (long): 34");
   }
+
+  @Test
+  public void testOrcTimestampProjectionUsesTimestampWithoutZone() {
+    Schema baseSchema = new Schema(optional(1, "ts", Types.TimestampType.withoutZone()));
+    TypeDescription baseOrcSchema = ORCSchemaUtil.convert(baseSchema);
+
+    TypeDescription projectedSchema = ORCSchemaUtil.buildOrcProjection(baseSchema, baseOrcSchema);
+    assertThat(projectedSchema.findSubtype("ts").getCategory())
+        .isEqualTo(TypeDescription.Category.TIMESTAMP);
+
+    Schema timestamptzSchema = new Schema(optional(1, "ts", Types.TimestampType.withZone()));
+    assertThatThrownBy(() -> ORCSchemaUtil.buildOrcProjection(timestamptzSchema, baseOrcSchema))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Can not promote TIMESTAMP type to TIMESTAMP");
+  }
 }
