@@ -22,14 +22,22 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assumptions.assumeThat;
 
+import java.io.File;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.sql.Timestamp;
 import java.util.List;
 import java.util.Map;
+import org.apache.hadoop.fs.Path;
 import org.apache.iceberg.ParameterizedTestExtension;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.exceptions.ValidationException;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
+import org.apache.iceberg.types.Types;
+import org.apache.orc.OrcFile;
+import org.apache.orc.TypeDescription;
+import org.apache.orc.Writer;
 import org.apache.spark.sql.AnalysisException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.TestTemplate;
@@ -41,6 +49,7 @@ public class TestMigrateTableProcedure extends ExtensionsTestBase {
   public void removeTables() {
     sql("DROP TABLE IF EXISTS %s", tableName);
     sql("DROP TABLE IF EXISTS %s_BACKUP_", tableName);
+    sql("DROP TABLE IF EXISTS default.orc_timestamp_backup");
   }
 
   @TestTemplate
@@ -68,6 +77,45 @@ public class TestMigrateTableProcedure extends ExtensionsTestBase {
         sql("SELECT * FROM %s ORDER BY id", tableName));
 
     sql("DROP TABLE IF EXISTS %s", tableName + "_BACKUP_");
+  }
+
+  @TestTemplate
+  public void testMigrateOrcTableWithTimestamp() throws IOException {
+    assumeThat(catalogName).isEqualToIgnoringCase("spark_catalog");
+    File location = Files.createTempDirectory(temp, "junit").toFile();
+    writeOrcTimestampFile(location);
+    sql(
+        "CREATE EXTERNAL TABLE %s (id INT, region STRING, count INT, last_update TIMESTAMP) "
+            + "STORED AS ORC LOCATION '%s'",
+        tableName, location);
+
+    Object result =
+        scalarSql(
+            "CALL %s.system.migrate("
+                + "table => '%s', "
+                + "backup_table_name => 'orc_timestamp_backup', "
+                + "properties => map('write.format.default', 'parquet'))",
+            catalogName, tableName);
+
+    assertThat(result).as("Should have added one file").isEqualTo(1L);
+
+    Table createdTable = validationCatalog.loadTable(tableIdent);
+    Types.TimestampType lastUpdateType =
+        (Types.TimestampType) createdTable.schema().findType("last_update");
+    assertThat(lastUpdateType.shouldAdjustToUTC()).isFalse();
+
+    assertThat(sql("SELECT * FROM %s", tableName)).hasSize(5);
+    assertEquals(
+        "Should have expected rows",
+        ImmutableList.of(
+            row(1, "moscow", 150, "2026-03-25 14:30:00"),
+            row(2, "kazan", 89, "2026-03-25 15:15:00"),
+            row(3, "spb", 234, "2026-03-23 10:45:00"),
+            row(4, "ekaterinburg", 67, "2025-03-02 13:20:00"),
+            row(5, "novosibirsk", 192, "2026-03-25 17:10:00")),
+        sql(
+            "SELECT id, region, count, CAST(last_update AS STRING) FROM %s ORDER BY id",
+            tableName));
   }
 
   @TestTemplate
@@ -287,5 +335,102 @@ public class TestMigrateTableProcedure extends ExtensionsTestBase {
         "Should have expected rows",
         ImmutableList.of(row("a", 1L), row("b", 2L)),
         sql("SELECT * FROM %s ORDER BY id", tableName));
+  }
+
+  private void writeOrcTimestampFile(File location) throws IOException {
+    TypeDescription schema =
+        TypeDescription.fromString("struct<id:int,region:string,count:int,last_update:timestamp>");
+    Path path = new Path(new File(location, "data.orc").toURI());
+
+    try (Writer writer =
+        OrcFile.createWriter(
+            path, OrcFile.writerOptions(spark.sessionState().newHadoopConf()).setSchema(schema))) {
+      // The spark-extensions test runtime resolves a different ORC vector API than compile time.
+      // Use reflection to avoid linking createRowBatch to the compile-time return type.
+      Object batch = TypeDescription.class.getMethod("createRowBatch").invoke(schema);
+      Object[] columns = (Object[]) batch.getClass().getField("cols").get(batch);
+
+      addOrcTimestampRow(
+          batch,
+          columns[0],
+          columns[1],
+          columns[2],
+          columns[3],
+          1,
+          "moscow",
+          150,
+          "2026-03-25 14:30:00");
+      addOrcTimestampRow(
+          batch,
+          columns[0],
+          columns[1],
+          columns[2],
+          columns[3],
+          2,
+          "kazan",
+          89,
+          "2026-03-25 15:15:00");
+      addOrcTimestampRow(
+          batch,
+          columns[0],
+          columns[1],
+          columns[2],
+          columns[3],
+          3,
+          "spb",
+          234,
+          "2026-03-23 10:45:00");
+      addOrcTimestampRow(
+          batch,
+          columns[0],
+          columns[1],
+          columns[2],
+          columns[3],
+          4,
+          "ekaterinburg",
+          67,
+          "2025-03-02 13:20:00");
+      addOrcTimestampRow(
+          batch,
+          columns[0],
+          columns[1],
+          columns[2],
+          columns[3],
+          5,
+          "novosibirsk",
+          192,
+          "2026-03-25 17:10:00");
+      writer.getClass().getMethod("addRowBatch", batch.getClass()).invoke(writer, batch);
+    } catch (ReflectiveOperationException e) {
+      throw new RuntimeException("Failed to write ORC test file", e);
+    }
+  }
+
+  private static void addOrcTimestampRow(
+      Object batch,
+      Object idVector,
+      Object regionVector,
+      Object countVector,
+      Object timestampVector,
+      int id,
+      String region,
+      int count,
+      String timestamp)
+      throws ReflectiveOperationException {
+    int row = batch.getClass().getField("size").getInt(batch);
+    batch.getClass().getField("size").setInt(batch, row + 1);
+
+    ((long[]) idVector.getClass().getField("vector").get(idVector))[row] = id;
+    byte[] regionBytes = region.getBytes(StandardCharsets.UTF_8);
+    regionVector
+        .getClass()
+        .getMethod("setVal", int.class, byte[].class)
+        .invoke(regionVector, row, regionBytes);
+    ((long[]) countVector.getClass().getField("vector").get(countVector))[row] = count;
+    Timestamp parsedTimestamp = Timestamp.valueOf(timestamp);
+    ((long[]) timestampVector.getClass().getField("time").get(timestampVector))[row] =
+        parsedTimestamp.getTime();
+    ((int[]) timestampVector.getClass().getField("nanos").get(timestampVector))[row] =
+        parsedTimestamp.getNanos();
   }
 }
