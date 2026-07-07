@@ -54,8 +54,10 @@ public class IcebergSinkTask extends SinkTask {
     Preconditions.checkArgument(committer == null, "Committer already open");
 
     catalog = CatalogUtils.loadCatalog(config);
+    MetadataEvents metadataEvents =
+        MetadataEvents.fromContext(context, config.catalogName(), config.connectorName());
     committer = CommitterFactory.createCommitter(config);
-    committer.start(catalog, config, context);
+    committer.start(catalog, config, context, metadataEvents);
   }
 
   @Override

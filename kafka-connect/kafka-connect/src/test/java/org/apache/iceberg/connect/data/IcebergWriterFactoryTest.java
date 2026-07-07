@@ -35,6 +35,7 @@ import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.SupportsNamespaces;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.connect.IcebergSinkConfig;
+import org.apache.iceberg.connect.MetadataEvents;
 import org.apache.iceberg.connect.TableSinkConfig;
 import org.apache.iceberg.exceptions.NoSuchTableException;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
@@ -67,7 +68,7 @@ public class IcebergWriterFactoryTest {
     SinkRecord record = mock(SinkRecord.class);
     when(record.value()).thenReturn(ImmutableMap.of("id", 123, "data", "foo2"));
 
-    IcebergWriterFactory factory = new IcebergWriterFactory(catalog, config);
+    IcebergWriterFactory factory = new IcebergWriterFactory(catalog, config, MetadataEvents.NOOP);
     factory.autoCreateTable("foo1.foo2.foo3.bar", record);
 
     ArgumentCaptor<TableIdentifier> identCaptor = ArgumentCaptor.forClass(TableIdentifier.class);

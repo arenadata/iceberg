@@ -24,7 +24,11 @@ import org.apache.kafka.connect.sink.SinkRecord;
 import org.apache.kafka.connect.sink.SinkTaskContext;
 
 public interface Committer {
-  void start(Catalog catalog, IcebergSinkConfig config, SinkTaskContext context);
+  void start(
+      Catalog catalog,
+      IcebergSinkConfig config,
+      SinkTaskContext context,
+      MetadataEvents metadataEvents);
 
   void stop();
 

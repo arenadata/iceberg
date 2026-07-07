@@ -28,6 +28,7 @@ import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.SupportsNamespaces;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.connect.IcebergSinkConfig;
+import org.apache.iceberg.connect.MetadataEvents;
 import org.apache.iceberg.exceptions.AlreadyExistsException;
 import org.apache.iceberg.exceptions.ForbiddenException;
 import org.apache.iceberg.exceptions.NoSuchTableException;
@@ -46,10 +47,12 @@ class IcebergWriterFactory {
 
   private final Catalog catalog;
   private final IcebergSinkConfig config;
+  private final MetadataEvents metadataEvents;
 
-  IcebergWriterFactory(Catalog catalog, IcebergSinkConfig config) {
+  IcebergWriterFactory(Catalog catalog, IcebergSinkConfig config, MetadataEvents metadataEvents) {
     this.catalog = catalog;
     this.config = config;
+    this.metadataEvents = metadataEvents;
   }
 
   RecordWriter createWriter(String tableName, SinkRecord sample, boolean ignoreMissingTable) {
@@ -60,6 +63,8 @@ class IcebergWriterFactory {
     } catch (NoSuchTableException nst) {
       if (config.autoCreateEnabled()) {
         table = autoCreateTable(tableName, sample);
+        // report the just-created table to the metadata catalog
+        metadataEvents.tableCreated(identifier, sample.valueSchema());
       } else if (ignoreMissingTable) {
         return new NoOpWriter();
       } else {
@@ -67,7 +72,7 @@ class IcebergWriterFactory {
       }
     }
 
-    return new IcebergWriter(table, tableName, config);
+    return new IcebergWriter(table, tableName, config, metadataEvents);
   }
 
   @VisibleForTesting

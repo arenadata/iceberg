@@ -24,6 +24,7 @@ import java.util.Set;
 import org.apache.iceberg.catalog.Catalog;
 import org.apache.iceberg.connect.Committer;
 import org.apache.iceberg.connect.IcebergSinkConfig;
+import org.apache.iceberg.connect.MetadataEvents;
 import org.apache.iceberg.connect.data.SinkWriter;
 import org.apache.iceberg.relocated.com.google.common.annotations.VisibleForTesting;
 import org.apache.kafka.clients.admin.Admin;
@@ -57,7 +58,11 @@ public class CommitterImpl implements Committer {
   }
 
   @Override
-  public void start(Catalog catalog, IcebergSinkConfig config, SinkTaskContext context) {
+  public void start(
+      Catalog catalog,
+      IcebergSinkConfig config,
+      SinkTaskContext context,
+      MetadataEvents metadataEvents) {
     KafkaClientFactory clientFactory = new KafkaClientFactory(config.kafkaProps());
 
     ConsumerGroupDescription groupDesc;
@@ -70,14 +75,15 @@ public class CommitterImpl implements Committer {
       Set<TopicPartition> partitions = context.assignment();
       if (isLeader(members, partitions)) {
         LOG.info("Task elected leader, starting commit coordinator");
-        Coordinator coordinator = new Coordinator(catalog, config, members, clientFactory, context);
+        Coordinator coordinator =
+            new Coordinator(catalog, config, members, clientFactory, context, metadataEvents);
         coordinatorThread = new CoordinatorThread(coordinator);
         coordinatorThread.start();
       }
     }
 
     LOG.info("Starting commit worker");
-    SinkWriter sinkWriter = new SinkWriter(catalog, config);
+    SinkWriter sinkWriter = new SinkWriter(catalog, config, metadataEvents);
     worker = new Worker(config, clientFactory, sinkWriter, context);
     worker.start();
   }

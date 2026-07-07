@@ -42,6 +42,7 @@ import org.apache.kafka.clients.admin.TopicDescription;
 import org.apache.kafka.clients.consumer.MockConsumer;
 import org.apache.kafka.clients.consumer.OffsetResetStrategy;
 import org.apache.kafka.clients.producer.MockProducer;
+import org.apache.kafka.clients.producer.RoundRobinPartitioner;
 import org.apache.kafka.common.KafkaFuture;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.TopicPartitionInfo;
@@ -101,13 +102,15 @@ public class ChannelTestBase {
     TopicDescription topicDesc =
         new TopicDescription(SRC_TOPIC_NAME, false, ImmutableList.of(partitionInfo));
     DescribeTopicsResult describeResult = mock(DescribeTopicsResult.class);
-    when(describeResult.values())
+    when(describeResult.topicNameValues())
         .thenReturn(ImmutableMap.of(SRC_TOPIC_NAME, KafkaFuture.completedFuture(topicDesc)));
 
     admin = mock(Admin.class);
     when(admin.describeTopics(anyCollection())).thenReturn(describeResult);
 
-    producer = new MockProducer<>(false, new StringSerializer(), new ByteArraySerializer());
+    producer =
+        new MockProducer<>(
+            false, new RoundRobinPartitioner(), new StringSerializer(), new ByteArraySerializer());
     producer.initTransactions();
 
     consumer = new MockConsumer<>(OffsetResetStrategy.EARLIEST);
