@@ -26,17 +26,14 @@ import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.common.DynMethods;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
-import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableSet;
 import org.apache.iceberg.types.Types;
 import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.data.Timestamp;
 import org.apache.kafka.connect.json.JsonConverter;
-import org.apache.kafka.connect.storage.ConverterConfig;
-import org.apache.kafka.connect.storage.ConverterType;
 
-public class TestEvent {
+public class TestEvent extends BaseTestEvent {
 
   public static final Schema TEST_SCHEMA =
       new Schema(
@@ -58,14 +55,6 @@ public class TestEvent {
   public static final PartitionSpec TEST_SPEC =
       PartitionSpec.builderFor(TEST_SCHEMA).day("ts").build();
 
-  private static final JsonConverter JSON_CONVERTER = new JsonConverter();
-
-  static {
-    JSON_CONVERTER.configure(
-        ImmutableMap.of(ConverterConfig.TYPE_CONFIG, ConverterType.VALUE.getName()));
-  }
-
-  private final long id;
   private final String type;
   private final Instant ts;
   private final String payload;
@@ -76,22 +65,18 @@ public class TestEvent {
   }
 
   public TestEvent(long id, String type, Instant ts, String payload, String op) {
-    this.id = id;
+    super(id);
     this.type = type;
     this.ts = ts;
     this.payload = payload;
     this.op = op;
   }
 
-  public long id() {
-    return id;
-  }
-
   protected String serialize(boolean useSchema) {
     try {
       Struct value =
           new Struct(TEST_CONNECT_SCHEMA)
-              .put("id", id)
+              .put("id", id())
               .put("type", type)
               .put("ts", Date.from(ts))
               .put("payload", payload)
