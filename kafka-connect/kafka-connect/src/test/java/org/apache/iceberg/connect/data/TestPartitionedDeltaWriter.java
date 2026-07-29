@@ -127,6 +127,7 @@ public class TestPartitionedDeltaWriter extends TestBaseWriter {
     // Single partition with all operations
     assertThat(result.dataFiles()).hasSize(1);
     assertThat(result.deleteFiles()).hasSize(1);
+    assertPuffinDeleteFile(result.deleteFiles()[0]);
   }
 
   @ParameterizedTest

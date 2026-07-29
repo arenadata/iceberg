@@ -47,7 +47,7 @@ public class OutputFileFactory {
   // identify them all
   // with a recursive listing and grep.
   private final String operationId;
-  private final AtomicInteger fileCount = new AtomicInteger(0);
+  private final AtomicInteger fileCount;
   private final String suffix;
 
   /**
@@ -75,6 +75,30 @@ public class OutputFileFactory {
       long taskId,
       String operationId,
       String suffix) {
+    this(
+        spec,
+        format,
+        locations,
+        ioSupplier,
+        encryptionManager,
+        partitionId,
+        taskId,
+        operationId,
+        suffix,
+        new AtomicInteger(0));
+  }
+
+  private OutputFileFactory(
+      PartitionSpec spec,
+      FileFormat format,
+      LocationProvider locations,
+      Supplier<FileIO> ioSupplier,
+      EncryptionManager encryptionManager,
+      int partitionId,
+      long taskId,
+      String operationId,
+      String suffix,
+      AtomicInteger fileCount) {
     this.defaultSpec = spec;
     this.format = format;
     this.locations = locations;
@@ -84,10 +108,26 @@ public class OutputFileFactory {
     this.taskId = taskId;
     this.operationId = operationId;
     this.suffix = suffix;
+    this.fileCount = fileCount;
   }
 
   public static Builder builderFor(Table table, int partitionId, long taskId) {
     return new Builder(table, partitionId, taskId);
+  }
+
+  /** Returns a factory view with a different format and the same unique file counter. */
+  OutputFileFactory withFormat(FileFormat newFormat) {
+    return new OutputFileFactory(
+        defaultSpec,
+        newFormat,
+        locations,
+        ioSupplier,
+        encryptionManager,
+        partitionId,
+        taskId,
+        operationId,
+        suffix,
+        fileCount);
   }
 
   private String generateFilename() {

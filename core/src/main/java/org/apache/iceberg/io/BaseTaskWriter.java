@@ -113,7 +113,8 @@ public abstract class BaseTaskWriter<T> implements TaskWriter<T> {
     this.io = io;
     this.targetFileSize = targetFileSize;
     if (useDv) {
-      this.dvFileWriter = new PartitioningDVWriter<>(fileFactory, p -> null);
+      this.dvFileWriter =
+          new PartitioningDVWriter<>(fileFactory.withFormat(FileFormat.PUFFIN), p -> null);
     }
   }
 
