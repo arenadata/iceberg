@@ -134,9 +134,15 @@ project(':iceberg-kafka-connect:iceberg-kafka-connect-runtime') {
     implementation 'com.google.cloud:google-cloud-core'
 
     implementation project(':iceberg-azure')
+    implementation project(':iceberg-data')
     implementation platform(libs.azuresdk.bom)
     implementation 'com.azure:azure-storage-file-datalake'
     implementation 'com.azure:azure-identity'
+
+    implementation("org.apache.hadoop:hadoop-mapreduce-client-core:3.4.1") {
+      transitive = false
+      exclude group: "org.apache.iceberg"
+    }
 
     hive project(':iceberg-hive-metastore')
     hive(libs.hive2.metastore) {
