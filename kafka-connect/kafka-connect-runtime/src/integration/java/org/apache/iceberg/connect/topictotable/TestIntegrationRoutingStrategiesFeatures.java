@@ -142,6 +142,8 @@ public class TestIntegrationRoutingStrategiesFeatures
                       return true;
                     }));
     flush();
+
+    assertThat(1).isEqualTo(2);
   }
 
   private static Stream<Arguments> baseRoutingStrategiesArgsProvider() {
