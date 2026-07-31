@@ -16,7 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.iceberg.connect.topictotable;
+package org.apache.iceberg.connect.routingstrategy;
 
 import static java.lang.String.format;
 import static org.apache.iceberg.connect.service.ConnectorService.addConnectorConfigs;
@@ -39,7 +39,7 @@ import org.apache.hc.core5.http.HttpStatus;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.connect.KafkaConnectUtils;
 import org.apache.iceberg.connect.TestContext;
-import org.apache.iceberg.connect.topictotable.dto.UserEvent;
+import org.apache.iceberg.connect.routingstrategy.dto.UserEvent;
 import org.awaitility.Awaitility;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;

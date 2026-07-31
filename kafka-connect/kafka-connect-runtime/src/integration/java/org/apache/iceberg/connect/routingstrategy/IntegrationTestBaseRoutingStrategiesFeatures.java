@@ -16,10 +16,10 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.iceberg.connect.topictotable;
+package org.apache.iceberg.connect.routingstrategy;
 
-import static org.apache.iceberg.connect.topictotable.dto.UserEvent.USER_SCHEMA;
-import static org.apache.iceberg.connect.topictotable.dto.UserEvent.USER_SPEC;
+import static org.apache.iceberg.connect.routingstrategy.dto.UserEvent.USER_SCHEMA;
+import static org.apache.iceberg.connect.routingstrategy.dto.UserEvent.USER_SPEC;
 
 import java.time.Duration;
 import java.util.List;
@@ -27,7 +27,7 @@ import java.util.Map;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.connect.AbstractTestBase;
 import org.apache.iceberg.connect.KafkaConnectUtils;
-import org.apache.iceberg.connect.topictotable.dto.UserEvent;
+import org.apache.iceberg.connect.routingstrategy.dto.UserEvent;
 import org.awaitility.Awaitility;
 import org.junit.jupiter.api.BeforeEach;
 
