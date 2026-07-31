@@ -66,7 +66,7 @@ public class UserEvent extends BaseTestEvent {
       Struct value =
           new Struct(USER_CONNECT_SCHEMA)
               .put("id", id())
-              .put("username", username)
+              .put("username", username())
               .put("table", table());
 
       String convertMethod =
