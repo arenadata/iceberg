@@ -182,7 +182,7 @@ services:
       retries: 20
 
   spark-iceberg:
-    image: apache/spark:latest
+    image: apache/spark:4.0.4
     user: root
     environment:
       - AWS_ACCESS_KEY_ID=minioadmin

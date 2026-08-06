@@ -52,8 +52,7 @@ public class TestVariant extends IntegrationTestBaseV3 {
     runTest(
         useSchema,
         addConnectorConfigs(
-            addConnectorConfigs(
-                context().connectorCatalogProperties(), V3_AUTO_CREATE_CONNECTOR_CONFIGS),
+            V3_AUTO_CREATE_CONNECTOR_CONFIGS,
             Map.of("iceberg.tables.schema-variant-fields", "info")),
         List.of(TABLE_IDENTIFIER_V3),
         KAFKA_VARIANT_EVENTS);

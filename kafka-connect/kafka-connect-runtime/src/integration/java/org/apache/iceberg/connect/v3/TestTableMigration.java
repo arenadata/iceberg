@@ -18,7 +18,6 @@
  */
 package org.apache.iceberg.connect.v3;
 
-import static org.apache.iceberg.connect.service.ConnectorService.addConnectorConfigs;
 import static org.apache.iceberg.connect.service.IcebergTableClient.extractTableRecords;
 import static org.apache.iceberg.connect.service.IcebergTableClient.extractTableRecordsAsString;
 import static org.apache.iceberg.connect.service.IcebergTableClient.loadCatalogTable;
@@ -43,9 +42,7 @@ public class TestTableMigration extends IntegrationTestBaseV3 {
     StructUserEvent<Info> eventOne = new StructUserEvent(1, "Sam", new Info(15));
     runTest(
         useSchema,
-        addConnectorConfigs(
-            context().connectorCatalogProperties(),
-            Map.of("iceberg.tables.auto-create-enabled", "true")),
+        Map.of("iceberg.tables.auto-create-enabled", "true"),
         List.of(TABLE_IDENTIFIER_V3),
         List.of(eventOne));
 
