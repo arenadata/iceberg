@@ -49,8 +49,7 @@ public class TestUnknown extends IntegrationTestBaseV3 {
     runTest(
         false,
         addConnectorConfigs(
-            addConnectorConfigs(
-                context().connectorCatalogProperties(), V3_AUTO_CREATE_CONNECTOR_CONFIGS),
+            V3_AUTO_CREATE_CONNECTOR_CONFIGS,
             Map.of(
                 "iceberg.tables.evolve-unknown-type-enabled", String.valueOf(isUnknownSupported))),
         List.of(TABLE_IDENTIFIER_V3),

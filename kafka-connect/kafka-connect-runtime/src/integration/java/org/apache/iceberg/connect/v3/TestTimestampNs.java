@@ -67,11 +67,7 @@ public class TestTimestampNs extends IntegrationTestBaseV3 {
       Type eventTimeType,
       Type finishTimeType,
       Type checkStatsEventTimeType) {
-    runTest(
-        true,
-        addConnectorConfigs(context().connectorCatalogProperties(), connectorCustomConfigs),
-        List.of(TABLE_IDENTIFIER_V3),
-        KAFKA_TIMESTAMP_NS_EVENTS);
+    runTest(true, connectorCustomConfigs, List.of(TABLE_IDENTIFIER_V3), KAFKA_TIMESTAMP_NS_EVENTS);
 
     Schema expectedSchema =
         new Schema(
