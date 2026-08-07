@@ -34,7 +34,7 @@ import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
-public class TestPartitionedAppendWriter extends WriterTestBase {
+public class TestPartitionedAppendWriter extends TestBaseWriter {
 
   @ParameterizedTest
   @ValueSource(strings = {"parquet", "orc"})

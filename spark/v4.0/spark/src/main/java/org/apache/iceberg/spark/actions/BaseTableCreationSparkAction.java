@@ -47,7 +47,14 @@ import org.apache.spark.sql.connector.catalog.StagingTableCatalog;
 import org.apache.spark.sql.connector.catalog.TableCatalog;
 import org.apache.spark.sql.connector.catalog.V1Table;
 import org.apache.spark.sql.connector.expressions.Transform;
+import org.apache.spark.sql.types.ArrayType;
+import org.apache.spark.sql.types.DataType;
+import org.apache.spark.sql.types.DataTypes;
+import org.apache.spark.sql.types.MapType;
+import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
+import org.apache.spark.sql.types.TimestampType;
+import scala.Option;
 
 abstract class BaseTableCreationSparkAction<ThisT> extends BaseSparkAction<ThisT> {
   private static final Set<String> ALLOWED_SOURCES =
@@ -152,7 +159,7 @@ abstract class BaseTableCreationSparkAction<ThisT> extends BaseSparkAction<ThisT
   protected StagedSparkTable stageDestTable() {
     try {
       Map<String, String> props = destTableProps();
-      StructType schema = sourceTable.schema();
+      StructType schema = sourceSchema();
       Transform[] partitioning = sourceTable.partitioning();
       return (StagedSparkTable)
           destCatalog().stageCreate(destTableIdent(), schema, partitioning, props);
@@ -163,6 +170,63 @@ abstract class BaseTableCreationSparkAction<ThisT> extends BaseSparkAction<ThisT
       throw new AlreadyExistsException(
           "Cannot create table %s as it already exists", destTableIdent());
     }
+  }
+
+  private StructType sourceSchema() {
+    StructType schema = sourceTable.schema();
+    return isOrcBackedSourceTable() ? convertTimestampsToTimestampNTZ(schema) : schema;
+  }
+
+  private boolean isOrcBackedSourceTable() {
+    return containsOrc(sourceCatalogTable.provider())
+        || containsOrc(sourceCatalogTable.storage().serde());
+  }
+
+  private static boolean containsOrc(Option<String> value) {
+    return value.nonEmpty() && value.get().toLowerCase(Locale.ROOT).contains("orc");
+  }
+
+  private static StructType convertTimestampsToTimestampNTZ(StructType struct) {
+    StructField[] fields = struct.fields();
+    StructField[] convertedFields = new StructField[fields.length];
+    boolean hasChanges = false;
+
+    for (int pos = 0; pos < fields.length; pos += 1) {
+      StructField field = fields[pos];
+      DataType convertedType = convertTimestampsToTimestampNTZ(field.dataType());
+      if (convertedType == field.dataType()) {
+        convertedFields[pos] = field;
+      } else {
+        hasChanges = true;
+        convertedFields[pos] =
+            new StructField(field.name(), convertedType, field.nullable(), field.metadata());
+      }
+    }
+
+    return hasChanges ? new StructType(convertedFields) : struct;
+  }
+
+  private static DataType convertTimestampsToTimestampNTZ(DataType type) {
+    if (type instanceof TimestampType) {
+      return DataTypes.TimestampNTZType;
+    } else if (type instanceof StructType) {
+      return convertTimestampsToTimestampNTZ((StructType) type);
+    } else if (type instanceof ArrayType) {
+      ArrayType array = (ArrayType) type;
+      DataType convertedElementType = convertTimestampsToTimestampNTZ(array.elementType());
+      return convertedElementType == array.elementType()
+          ? array
+          : DataTypes.createArrayType(convertedElementType, array.containsNull());
+    } else if (type instanceof MapType) {
+      MapType map = (MapType) type;
+      DataType convertedKeyType = convertTimestampsToTimestampNTZ(map.keyType());
+      DataType convertedValueType = convertTimestampsToTimestampNTZ(map.valueType());
+      return convertedKeyType == map.keyType() && convertedValueType == map.valueType()
+          ? map
+          : DataTypes.createMapType(convertedKeyType, convertedValueType, map.valueContainsNull());
+    }
+
+    return type;
   }
 
   protected void ensureNameMappingPresent(Table table) {

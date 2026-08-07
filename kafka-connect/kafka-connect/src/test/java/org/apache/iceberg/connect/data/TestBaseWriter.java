@@ -21,15 +21,23 @@ package org.apache.iceberg.connect.data;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.withSettings;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.List;
+import java.util.UUID;
+import org.apache.iceberg.HasTableOperations;
 import org.apache.iceberg.LocationProviders;
 import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.Table;
+import org.apache.iceberg.TableMetadata;
+import org.apache.iceberg.TableOperations;
+import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.connect.IcebergSinkConfig;
+import org.apache.iceberg.connect.events.TableReference;
+import org.apache.iceberg.data.GenericRecord;
 import org.apache.iceberg.data.Record;
 import org.apache.iceberg.encryption.PlaintextEncryptionManager;
 import org.apache.iceberg.inmemory.InMemoryFileIO;
@@ -41,7 +49,7 @@ import org.apache.iceberg.relocated.com.google.common.collect.ImmutableSet;
 import org.apache.iceberg.types.Types;
 import org.junit.jupiter.api.BeforeEach;
 
-public class WriterTestBase {
+public class TestBaseWriter {
 
   protected InMemoryFileIO fileIO;
   protected Table table;
@@ -61,7 +69,7 @@ public class WriterTestBase {
   public void before() {
     fileIO = new InMemoryFileIO();
 
-    table = mock(Table.class);
+    table = mock(Table.class, withSettings().extraInterfaces(HasTableOperations.class));
     when(table.schema()).thenReturn(SCHEMA);
     when(table.spec()).thenReturn(PartitionSpec.unpartitioned());
     when(table.io()).thenReturn(fileIO);
@@ -69,11 +77,30 @@ public class WriterTestBase {
         .thenReturn(LocationProviders.locationsFor("file", ImmutableMap.of()));
     when(table.encryption()).thenReturn(PlaintextEncryptionManager.instance());
     when(table.properties()).thenReturn(ImmutableMap.of());
+
+    // Default to format version 3 (supports delete vectors)
+    mockTableFormatVersion(3);
+  }
+
+  /**
+   * Configure the mock table to return the specified format version. This is useful for testing
+   * behavior that depends on the table format version (e.g., CDC/upsert mode support).
+   *
+   * @param formatVersion the format version to mock (1, 2, or 3)
+   */
+  protected void mockTableFormatVersion(int formatVersion) {
+    TableOperations ops = mock(TableOperations.class);
+    TableMetadata metadata = mock(TableMetadata.class);
+    when(metadata.formatVersion()).thenReturn(formatVersion);
+    when(ops.current()).thenReturn(metadata);
+    when(((HasTableOperations) table).operations()).thenReturn(ops);
   }
 
   protected WriteResult writeTest(
       List<Record> rows, IcebergSinkConfig config, Class<?> expectedWriterClass) {
-    try (TaskWriter<Record> writer = RecordUtils.createTableWriter(table, "name", config)) {
+    TableReference tableReference =
+        TableReference.of("test_catalog", TableIdentifier.of("name"), UUID.randomUUID());
+    try (TaskWriter<Record> writer = RecordUtils.createTableWriter(table, tableReference, config)) {
       assertThat(writer.getClass()).isEqualTo(expectedWriterClass);
 
       rows.forEach(
@@ -89,5 +116,13 @@ public class WriterTestBase {
     } catch (IOException e) {
       throw new UncheckedIOException(e);
     }
+  }
+
+  protected Record wrappedRecord(long id, String data, Operation op) {
+    Record row = GenericRecord.create(SCHEMA);
+    row.setField("id", id);
+    row.setField("data", data);
+    row.setField("id2", id);
+    return new RecordWrapper(row, op);
   }
 }

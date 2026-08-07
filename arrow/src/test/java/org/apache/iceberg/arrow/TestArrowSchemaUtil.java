@@ -92,6 +92,25 @@ public class TestArrowSchemaUtil {
   }
 
   @Test
+  public void convertGeometry() {
+    Schema iceberg =
+        new Schema(
+            Types.NestedField.optional(0, "geom", Types.GeometryType.crs84()),
+            Types.NestedField.optional(1, "geog", Types.GeographyType.crs84()));
+
+    org.apache.arrow.vector.types.pojo.Schema arrow = ArrowSchemaUtil.convert(iceberg);
+    assertThat(arrow.getFields()).hasSameSizeAs(iceberg.columns());
+
+    Field geomField = arrow.findField("geom");
+    assertThat(geomField).isNotNull();
+    assertThat(geomField.getType().getTypeID()).isEqualTo(ArrowType.Binary.TYPE_TYPE);
+
+    Field geogField = arrow.findField("geog");
+    assertThat(geogField).isNotNull();
+    assertThat(geogField.getType().getTypeID()).isEqualTo(ArrowType.Binary.TYPE_TYPE);
+  }
+
+  @Test
   public void convertMap() {
     Schema iceberg =
         new Schema(

@@ -31,12 +31,14 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Properties;
+import java.util.Set;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import org.apache.iceberg.IcebergBuild;
@@ -48,6 +50,7 @@ import org.apache.iceberg.relocated.com.google.common.base.Splitter;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
+import org.apache.iceberg.relocated.com.google.common.collect.Sets;
 import org.apache.iceberg.util.PropertyUtil;
 import org.apache.kafka.common.config.AbstractConfig;
 import org.apache.kafka.common.config.ConfigDef;
@@ -87,6 +90,17 @@ public class IcebergSinkConfig extends AbstractConfig {
   private static final String TABLES_TOPIC_TO_TABLE_MAPPING_FILE_PROP =
       "iceberg.tables.topic-to-table-mapping-file";
   private static final String ROUTING_STRATEGY_PROP = "routing.strategy";
+  private static final String TABLES_CDC_FIELD_PROP = "iceberg.tables.cdc-field";
+  private static final String TABLES_UPSERT_MODE_ENABLED_PROP =
+      "iceberg.tables.upsert-mode-enabled";
+  private static final String TABLES_CDC_OPS_INSERT_PROP = "iceberg.tables.cdc.ops.insert";
+  private static final String TABLES_CDC_OP_INSERT_DEFAULT = "r,c";
+  private static final String TABLES_CDC_OPS_UPDATE_PROP = "iceberg.tables.cdc.ops.update";
+  private static final String TABLES_CDC_OP_UPDATE_DEFAULT = "u";
+  private static final String TABLES_CDC_OPS_DELETE_PROP = "iceberg.tables.cdc.ops.delete";
+  private static final String TABLES_CDC_OP_DELETE_DEFAULT = "d";
+  private static final String TABLES_CDC_OPS_IGNORE_PROP = "iceberg.tables.cdc.ops.ignored";
+  private static final String TABLES_CDC_OP_IGNORE_DEFAULT = "t,m";
   private static final String TABLES_DEFAULT_COMMIT_BRANCH = "iceberg.tables.default-commit-branch";
   private static final String TABLES_DEFAULT_ID_COLUMNS = "iceberg.tables.default-id-columns";
   private static final String TABLES_DEFAULT_PARTITION_BY = "iceberg.tables.default-partition-by";
@@ -110,6 +124,24 @@ public class IcebergSinkConfig extends AbstractConfig {
       "iceberg.coordinator.transactional.prefix";
   private static final String HADOOP_CONF_DIR_PROP = "iceberg.hadoop-conf-dir";
 
+  private static final String HDFS_AUTHENTICATION_KERBEROS_PROP =
+      "iceberg.hdfs.authentication.kerberos";
+  private static final Boolean HDFS_AUTHENTICATION_KERBEROS_DEFAULT = false;
+  private static final String CONNECT_HDFS_PRINCIPAL_PROP = "iceberg.connect.hdfs.principal";
+  private static final String CONNECT_HDFS_PRINCIPAL_DEFAULT = "";
+  private static final String CONNECT_HDFS_KEYTAB_PROP = "iceberg.connect.hdfs.keytab";
+  private static final String CONNECT_HDFS_KEYTAB_DEFAULT = "";
+  private static final String KERBEROS_TICKET_RENEW_PERIOD_MS_PROP =
+      "kerberos.ticket.renew.period.ms";
+  private static final long KERBEROS_TICKET_RENEW_PERIOD_MS_DEFAULT = 60000 * 60;
+
+  private static final String TABLES_SCHEMA_VARIANT_FIELDS_PROP =
+      "iceberg.tables.schema-variant-fields";
+  private static final String TABLES_SCHEMA_TIMESTAMP_NS_FIELDS_PROP =
+      "iceberg.tables.schema-timestamp-ns-fields";
+  private static final String TABLES_EVOLVE_UNKNOWN_TYPE_ENABLED_PROP =
+      "iceberg.tables.evolve-unknown-type-enabled";
+  private static final String TABLES_DEFAULTS_ENABLED_PROP = "iceberg.tables.defaults-enabled";
   private static final String NAME_PROP = "name";
   private static final String TASK_ID = "task.id";
   private static final String BOOTSTRAP_SERVERS_PROP = "bootstrap.servers";
@@ -144,42 +176,13 @@ public class IcebergSinkConfig extends AbstractConfig {
 
   private static ConfigDef newConfigDef() {
     ConfigDef configDef = new ConfigDef();
+    defineTableRoutingProps(configDef);
     configDef.define(
-        ROUTING_STRATEGY_PROP,
-        ConfigDef.Type.STRING,
-        null,
-        Importance.MEDIUM,
-        "Routing strategy. Supported values: dynamic-field, all-tables, regex, topic-to-table");
-    configDef.define(
-        TABLES_PROP,
-        ConfigDef.Type.LIST,
-        null,
-        Importance.HIGH,
-        "Comma-delimited list of destination tables");
-    configDef.define(
-        TABLES_DYNAMIC_PROP,
+        TABLES_UPSERT_MODE_ENABLED_PROP,
         ConfigDef.Type.BOOLEAN,
         false,
         Importance.MEDIUM,
-        "Enable dynamic routing to tables based on a record value");
-    configDef.define(
-        TABLES_ROUTE_FIELD_PROP,
-        ConfigDef.Type.STRING,
-        null,
-        Importance.MEDIUM,
-        "Source record field for routing records to tables");
-    configDef.define(
-        TABLES_TOPIC_TO_TABLE_MAPPING_PROP,
-        ConfigDef.Type.STRING,
-        null,
-        Importance.MEDIUM,
-        "Static mapping from topic name to table name in format topic1:db.table1,topic2:db.table2");
-    configDef.define(
-        TABLES_TOPIC_TO_TABLE_MAPPING_FILE_PROP,
-        ConfigDef.Type.STRING,
-        null,
-        Importance.MEDIUM,
-        "Absolute path to a JSON file with static mapping from topic name to table name");
+        "Set to true to treat all appends as upserts, false otherwise");
     configDef.define(
         TABLES_DEFAULT_COMMIT_BRANCH,
         ConfigDef.Type.STRING,
@@ -282,7 +285,140 @@ public class IcebergSinkConfig extends AbstractConfig {
         120000L,
         Importance.LOW,
         "config to control coordinator executor keep alive time");
+    defineHdfsKerberosProps(configDef);
+    defineV3NewTypesSupportProps(configDef);
+    defineCdcProps(configDef);
     return configDef;
+  }
+
+  private static void defineTableRoutingProps(ConfigDef configDef) {
+    configDef.define(
+        ROUTING_STRATEGY_PROP,
+        ConfigDef.Type.STRING,
+        null,
+        Importance.MEDIUM,
+        "Routing strategy. Supported values: dynamic-field, all-tables, regex, topic-to-table");
+    configDef.define(
+        TABLES_PROP,
+        ConfigDef.Type.LIST,
+        null,
+        Importance.HIGH,
+        "Comma-delimited list of destination tables");
+    configDef.define(
+        TABLES_DYNAMIC_PROP,
+        ConfigDef.Type.BOOLEAN,
+        false,
+        Importance.MEDIUM,
+        "Enable dynamic routing to tables based on a record value");
+    configDef.define(
+        TABLES_ROUTE_FIELD_PROP,
+        ConfigDef.Type.STRING,
+        null,
+        Importance.MEDIUM,
+        "Source record field for routing records to tables");
+    configDef.define(
+        TABLES_TOPIC_TO_TABLE_MAPPING_PROP,
+        ConfigDef.Type.STRING,
+        null,
+        Importance.MEDIUM,
+        "Static mapping from topic name to table name in format topic1:db.table1,topic2:db.table2");
+    configDef.define(
+        TABLES_TOPIC_TO_TABLE_MAPPING_FILE_PROP,
+        ConfigDef.Type.STRING,
+        null,
+        Importance.MEDIUM,
+        "Absolute path to a JSON file with static mapping from topic name to table name");
+  }
+
+  private static void defineHdfsKerberosProps(ConfigDef configDef) {
+    configDef.define(
+        HDFS_AUTHENTICATION_KERBEROS_PROP,
+        ConfigDef.Type.BOOLEAN,
+        HDFS_AUTHENTICATION_KERBEROS_DEFAULT,
+        Importance.HIGH,
+        "Configuration indicating whether HDFS is using Kerberos for authentication");
+    configDef.define(
+        CONNECT_HDFS_PRINCIPAL_PROP,
+        ConfigDef.Type.STRING,
+        CONNECT_HDFS_PRINCIPAL_DEFAULT,
+        Importance.HIGH,
+        "The principal name to load from the keytab for Kerberos authentication");
+    configDef.define(
+        CONNECT_HDFS_KEYTAB_PROP,
+        ConfigDef.Type.STRING,
+        CONNECT_HDFS_KEYTAB_DEFAULT,
+        Importance.HIGH,
+        "The path to the keytab file for the HDFS connector principal. This keytab file should only be readable by the connector user");
+    configDef.define(
+        KERBEROS_TICKET_RENEW_PERIOD_MS_PROP,
+        ConfigDef.Type.LONG,
+        KERBEROS_TICKET_RENEW_PERIOD_MS_DEFAULT,
+        Importance.LOW,
+        "The period in milliseconds to renew the Kerberos ticket");
+  }
+
+  private static void defineV3NewTypesSupportProps(ConfigDef configDef) {
+    configDef.define(
+        TABLES_SCHEMA_VARIANT_FIELDS_PROP,
+        ConfigDef.Type.STRING,
+        null,
+        Importance.MEDIUM,
+        "Comma-separated list of record field paths that must be mapped to Iceberg VARIANT. "
+            + "Paths use dot-notation, e.g. 'payload', 'after.details', 'meta.props'.");
+    configDef.define(
+        TABLES_SCHEMA_TIMESTAMP_NS_FIELDS_PROP,
+        ConfigDef.Type.STRING,
+        null,
+        Importance.MEDIUM,
+        "Comma-separated list of record field names or exact field paths that must map Debezium "
+            + "NanoTimestamp fields to Iceberg timestamp_ns. Use '*' to match all Debezium "
+            + "NanoTimestamp fields, e.g. 'event_time', 'after.event_time', '*'.");
+    configDef.define(
+        TABLES_EVOLVE_UNKNOWN_TYPE_ENABLED_PROP,
+        ConfigDef.Type.BOOLEAN,
+        false,
+        Importance.MEDIUM,
+        "Set to true to create columns with UNKNOWN type when the field type cannot be inferred "
+            + "and later evolve UNKNOWN columns to a specific type when a non-null value arrives.");
+    configDef.define(
+        TABLES_DEFAULTS_ENABLED_PROP,
+        ConfigDef.Type.BOOLEAN,
+        false,
+        Importance.MEDIUM,
+        "Enable mapping Kafka Connect schema default values to Iceberg write-default/initial-default");
+  }
+
+  private static void defineCdcProps(ConfigDef configDef) {
+    configDef.define(
+        TABLES_CDC_FIELD_PROP,
+        ConfigDef.Type.STRING,
+        null,
+        Importance.MEDIUM,
+        "Source record field that identifies the type of operation (insert, update, or delete)");
+    configDef.define(
+        TABLES_CDC_OPS_INSERT_PROP,
+        ConfigDef.Type.LIST,
+        TABLES_CDC_OP_INSERT_DEFAULT,
+        Importance.MEDIUM,
+        "The comma-separated values of the cdc operation field corresponding to INSERT");
+    configDef.define(
+        TABLES_CDC_OPS_UPDATE_PROP,
+        ConfigDef.Type.LIST,
+        TABLES_CDC_OP_UPDATE_DEFAULT,
+        Importance.MEDIUM,
+        "The comma-separated values of the cdc operation field corresponding to UPDATE");
+    configDef.define(
+        TABLES_CDC_OPS_DELETE_PROP,
+        ConfigDef.Type.LIST,
+        TABLES_CDC_OP_DELETE_DEFAULT,
+        Importance.MEDIUM,
+        "The comma-separated values of the cdc operation field corresponding to DELETE");
+    configDef.define(
+        TABLES_CDC_OPS_IGNORE_PROP,
+        ConfigDef.Type.LIST,
+        TABLES_CDC_OP_IGNORE_DEFAULT,
+        Importance.MEDIUM,
+        "The comma-separated values of the cdc operation field that should be ignored by connector");
   }
 
   private final Map<String, String> originalProps;
@@ -296,6 +432,8 @@ public class IcebergSinkConfig extends AbstractConfig {
   private final Map<String, String> topicToTableMapping;
   private final String topicToTableMappingSource;
   private final JsonConverter jsonConverter;
+  private final Collection<String> schemaVariantFieldPaths;
+  private final Collection<String> schemaTimestampNsFieldPaths;
 
   public IcebergSinkConfig(Map<String, String> originalProps) {
     super(CONFIG_DEF, originalProps);
@@ -324,6 +462,10 @@ public class IcebergSinkConfig extends AbstractConfig {
     this.topicToTableMapping = topicToTableMappingConfig.mapping();
     this.topicToTableMappingSource = topicToTableMappingConfig.source();
 
+    this.schemaVariantFieldPaths =
+        parseVariantFieldPaths(getString(TABLES_SCHEMA_VARIANT_FIELDS_PROP));
+    this.schemaTimestampNsFieldPaths =
+        parseTimestampNsFieldPaths(getString(TABLES_SCHEMA_TIMESTAMP_NS_FIELDS_PROP));
     validate();
   }
 
@@ -467,6 +609,26 @@ public class IcebergSinkConfig extends AbstractConfig {
 
           return new TableSinkConfig(routeRegex, idColumns, partitionBy, commitBranch);
         });
+  }
+
+  public String tablesCdcField() {
+    return getString(TABLES_CDC_FIELD_PROP);
+  }
+
+  public List<String> tablesCdcOpsInsert() {
+    return getList(TABLES_CDC_OPS_INSERT_PROP);
+  }
+
+  public List<String> tablesCdcOpsUpdate() {
+    return getList(TABLES_CDC_OPS_UPDATE_PROP);
+  }
+
+  public List<String> tablesCdcOpsDelete() {
+    return getList(TABLES_CDC_OPS_DELETE_PROP);
+  }
+
+  public List<String> tablesCdcIgnoredOps() {
+    return getList(TABLES_CDC_OPS_IGNORE_PROP);
   }
 
   @VisibleForTesting
@@ -681,12 +843,32 @@ public class IcebergSinkConfig extends AbstractConfig {
     return "connect-" + connectorName;
   }
 
+  public boolean kerberosAuthentication() {
+    return getBoolean(HDFS_AUTHENTICATION_KERBEROS_PROP);
+  }
+
+  public String connectHdfsPrincipal() {
+    return getString(CONNECT_HDFS_PRINCIPAL_PROP);
+  }
+
+  public String connectHdfsKeytab() {
+    return getString(CONNECT_HDFS_KEYTAB_PROP);
+  }
+
+  public long kerberosTicketRenewPeriodMs() {
+    return getLong(KERBEROS_TICKET_RENEW_PERIOD_MS_PROP);
+  }
+
   public int commitIntervalMs() {
     return getInt(COMMIT_INTERVAL_MS_PROP);
   }
 
   public int commitTimeoutMs() {
     return getInt(COMMIT_TIMEOUT_MS_PROP);
+  }
+
+  public boolean isUpsertMode() {
+    return getBoolean(TABLES_UPSERT_MODE_ENABLED_PROP);
   }
 
   public int commitThreads() {
@@ -765,5 +947,82 @@ public class IcebergSinkConfig extends AbstractConfig {
         "Worker properties not loaded, using only {}* properties for Kafka clients",
         KAFKA_PROP_PREFIX);
     return ImmutableMap.of();
+  }
+
+  private static Collection<String> parseVariantFieldPaths(String value) {
+    return parseFieldPaths(value, TABLES_SCHEMA_VARIANT_FIELDS_PROP, false);
+  }
+
+  private static Collection<String> parseTimestampNsFieldPaths(String value) {
+    return parseFieldPaths(value, TABLES_SCHEMA_TIMESTAMP_NS_FIELDS_PROP, true);
+  }
+
+  private static Collection<String> parseFieldPaths(
+      String value, String propName, boolean allowWildcard) {
+    if (value == null || value.trim().isEmpty()) {
+      return ImmutableList.of();
+    }
+    // split by comma, trim, drop empties, keep order, drop duplicates
+    List<String> raw = stringToList(value, ",");
+    Set<String> result = Sets.newLinkedHashSet();
+    for (String path : raw) {
+      if (path == null) {
+        continue;
+      }
+      String trimmedPath = path.trim();
+      if (trimmedPath.isEmpty()) {
+        continue;
+      }
+      validateFieldPath(propName, trimmedPath, allowWildcard);
+      result.add(trimmedPath);
+    }
+    return ImmutableList.copyOf(result);
+  }
+
+  private static void validateFieldPath(String propName, String path, boolean allowWildcard) {
+    if (path.startsWith(".") || path.endsWith(".") || path.contains("..")) {
+      throw new ConfigException(
+          propName,
+          path,
+          "Invalid field path. Use dot-notation without empty segments, e.g. 'a.b.c'");
+    }
+    Iterable<String> parts = Splitter.on('.').split(path);
+    for (String part : parts) {
+      if (part.isEmpty()) {
+        throw new ConfigException(
+            propName, path, "Invalid field path. Empty segment is not allowed.");
+      }
+      if (part.contains("*")) {
+        if (allowWildcard && "*".equals(path)) {
+          continue;
+        }
+        throw new ConfigException(
+            propName,
+            path,
+            "Invalid field path segment '"
+                + part
+                + "'. Wildcard '*' is only allowed as the entire value.");
+      }
+      if (!part.matches("[A-Za-z0-9_\\-]+")) {
+        throw new ConfigException(
+            propName, path, "Invalid field path segment '" + part + "'. Allowed: [A-Za-z0-9_-]");
+      }
+    }
+  }
+
+  public Collection<String> schemaVariantFieldPaths() {
+    return schemaVariantFieldPaths;
+  }
+
+  public Collection<String> schemaTimestampNsFieldPaths() {
+    return schemaTimestampNsFieldPaths;
+  }
+
+  public boolean evolveUnknownTypeEnabled() {
+    return getBoolean(TABLES_EVOLVE_UNKNOWN_TYPE_ENABLED_PROP);
+  }
+
+  public boolean tableDefaultsEnabled() {
+    return getBoolean(TABLES_DEFAULTS_ENABLED_PROP);
   }
 }

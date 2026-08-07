@@ -72,6 +72,8 @@ public class Comparators {
       return (Comparator<T>) Comparators.unsignedBytes();
     } else if (type instanceof Types.DecimalType) {
       return (Comparator<T>) Comparator.naturalOrder();
+    } else if (type instanceof Types.GeometryType || type instanceof Types.GeographyType) {
+      return (Comparator<T>) Comparators.unsignedBytes();
     }
 
     throw new UnsupportedOperationException("Cannot determine comparator for type: " + type);

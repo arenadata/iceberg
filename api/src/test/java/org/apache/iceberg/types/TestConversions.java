@@ -191,6 +191,17 @@ public class TestConversions {
         .isEqualTo(new byte[] {11});
   }
 
+  @Test
+  public void testByteBufferConversionsForGeospatialTypes() {
+    // geometry values are stored directly as binary (same as BINARY)
+    assertConversion(
+        ByteBuffer.wrap(new byte[] {1, 2, 3}), Types.GeometryType.crs84(), new byte[] {1, 2, 3});
+
+    // geography values are stored directly as binary (same as BINARY)
+    assertConversion(
+        ByteBuffer.wrap(new byte[] {4, 5, 6}), Types.GeographyType.crs84(), new byte[] {4, 5, 6});
+  }
+
   private <T> void assertConversion(T value, Type type, byte[] expectedBinary) {
     ByteBuffer byteBuffer = Conversions.toByteBuffer(type, value);
     assertThat(byteBuffer.array()).isEqualTo(expectedBinary);

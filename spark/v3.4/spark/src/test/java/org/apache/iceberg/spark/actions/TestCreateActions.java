@@ -25,8 +25,10 @@ import java.io.File;
 import java.io.FilenameFilter;
 import java.io.IOException;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.sql.Timestamp;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
@@ -54,6 +56,13 @@ import org.apache.iceberg.spark.SparkSessionCatalog;
 import org.apache.iceberg.spark.source.SimpleRecord;
 import org.apache.iceberg.spark.source.SparkTable;
 import org.apache.iceberg.types.Types;
+import org.apache.orc.OrcFile;
+import org.apache.orc.TypeDescription;
+import org.apache.orc.Writer;
+import org.apache.orc.storage.ql.exec.vector.BytesColumnVector;
+import org.apache.orc.storage.ql.exec.vector.LongColumnVector;
+import org.apache.orc.storage.ql.exec.vector.TimestampColumnVector;
+import org.apache.orc.storage.ql.exec.vector.VectorizedRowBatch;
 import org.apache.parquet.hadoop.ParquetFileReader;
 import org.apache.parquet.hadoop.util.HadoopInputFile;
 import org.apache.parquet.schema.MessageType;
@@ -481,6 +490,44 @@ public class TestCreateActions extends CatalogTestBase {
     String dest = source;
     createSourceTable(CREATE_HIVE_EXTERNAL_PARQUET, source);
     assertMigratedFileCount(SparkActions.get().migrateTable(source), source, dest);
+  }
+
+  @TestTemplate
+  public void testMigrateHiveOrcTableWithTimestamp() throws Exception {
+    assumeThat(type).as("Cannot migrate to a hadoop based catalog").isNotEqualTo("hadoop");
+    assumeThat(catalog.name())
+        .as("Can only migrate from Spark Session Catalog")
+        .isEqualTo("spark_catalog");
+    String source = sourceName("migrate_hive_orc_timestamp_table");
+    File location = Files.createTempDirectory(temp, "junit").toFile();
+    writeOrcTimestampFile(location);
+    sql(
+        "CREATE EXTERNAL TABLE %s (id INT, region STRING, count INT, last_update TIMESTAMP) "
+            + "STORED AS ORC LOCATION '%s'",
+        source, location);
+
+    MigrateTable.Result result =
+        SparkActions.get()
+            .migrateTable(source)
+            .tableProperty(TableProperties.DEFAULT_FILE_FORMAT, "parquet")
+            .execute();
+    assertThat(result.migratedDataFilesCount()).isEqualTo(1L);
+
+    SparkTable sparkTable = loadTable(source);
+    Types.TimestampType lastUpdateType =
+        (Types.TimestampType) sparkTable.table().schema().findType("last_update");
+    assertThat(lastUpdateType.shouldAdjustToUTC()).isFalse();
+
+    assertThat(sql("SELECT * FROM %s", source)).hasSize(5);
+    assertEquals(
+        "Output must match",
+        Lists.newArrayList(
+            row(1, "moscow", 150, "2026-03-25 14:30:00"),
+            row(2, "kazan", 89, "2026-03-25 15:15:00"),
+            row(3, "spb", 234, "2026-03-23 10:45:00"),
+            row(4, "ekaterinburg", 67, "2025-03-02 13:20:00"),
+            row(5, "novosibirsk", 192, "2026-03-25 17:10:00")),
+        sql("SELECT id, region, count, CAST(last_update AS STRING) FROM %s ORDER BY id", source));
   }
 
   @TestTemplate
@@ -1046,6 +1093,94 @@ public class TestCreateActions extends CatalogTestBase {
             .sql(String.format("SELECT * FROM %s WHERE id = 4 AND data = 'd'", dest))
             .collectAsList();
     assertThat(snapshot).as("Added row not found in snapshot").hasSize(1);
+  }
+
+  private void writeOrcTimestampFile(File location) throws IOException {
+    TypeDescription schema =
+        TypeDescription.fromString("struct<id:int,region:string,count:int,last_update:timestamp>");
+    Path path = new Path(new File(location, "data.orc").toURI());
+
+    try (Writer writer =
+        OrcFile.createWriter(
+            path, OrcFile.writerOptions(spark.sessionState().newHadoopConf()).setSchema(schema))) {
+      VectorizedRowBatch batch = schema.createRowBatch();
+      LongColumnVector idVector = (LongColumnVector) batch.cols[0];
+      BytesColumnVector regionVector = (BytesColumnVector) batch.cols[1];
+      LongColumnVector countVector = (LongColumnVector) batch.cols[2];
+      TimestampColumnVector timestampVector = (TimestampColumnVector) batch.cols[3];
+
+      addOrcTimestampRow(
+          batch,
+          idVector,
+          regionVector,
+          countVector,
+          timestampVector,
+          1,
+          "moscow",
+          150,
+          "2026-03-25 14:30:00");
+      addOrcTimestampRow(
+          batch,
+          idVector,
+          regionVector,
+          countVector,
+          timestampVector,
+          2,
+          "kazan",
+          89,
+          "2026-03-25 15:15:00");
+      addOrcTimestampRow(
+          batch,
+          idVector,
+          regionVector,
+          countVector,
+          timestampVector,
+          3,
+          "spb",
+          234,
+          "2026-03-23 10:45:00");
+      addOrcTimestampRow(
+          batch,
+          idVector,
+          regionVector,
+          countVector,
+          timestampVector,
+          4,
+          "ekaterinburg",
+          67,
+          "2025-03-02 13:20:00");
+      addOrcTimestampRow(
+          batch,
+          idVector,
+          regionVector,
+          countVector,
+          timestampVector,
+          5,
+          "novosibirsk",
+          192,
+          "2026-03-25 17:10:00");
+      writer.addRowBatch(batch);
+    }
+  }
+
+  private static void addOrcTimestampRow(
+      VectorizedRowBatch batch,
+      LongColumnVector idVector,
+      BytesColumnVector regionVector,
+      LongColumnVector countVector,
+      TimestampColumnVector timestampVector,
+      int id,
+      String region,
+      int count,
+      String timestamp) {
+    int row = batch.size++;
+    idVector.vector[row] = id;
+    byte[] regionBytes = region.getBytes(StandardCharsets.UTF_8);
+    regionVector.setVal(row, regionBytes);
+    countVector.vector[row] = count;
+    Timestamp parsedTimestamp = Timestamp.valueOf(timestamp);
+    timestampVector.time[row] = parsedTimestamp.getTime();
+    timestampVector.nanos[row] = parsedTimestamp.getNanos();
   }
 
   private String sourceName(String source) {

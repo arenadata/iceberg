@@ -27,6 +27,19 @@ public class ConnectorService {
 
   private ConnectorService() {}
 
+  public static final int CATALOG_PORT = 8181;
+  public static final int MINIO_PORT = 9000;
+  public static final String AWS_ACCESS_KEY = "minioadmin";
+  public static final String AWS_SECRET_KEY = "minioadmin";
+  public static final String AWS_REGION = "us-east-1";
+
+  public static final Map<String, Object> V3_AUTO_CREATE_CONNECTOR_CONFIGS =
+      Map.of(
+          "iceberg.tables.auto-create-enabled",
+          "true",
+          "iceberg.tables.auto-create-props.format-version",
+          "3");
+
   public static Map<String, Object> addConnectorConfigs(
       Map<String, Object> baseConfigs, Map<String, Object> additionalConfigs) {
     return Stream.concat(baseConfigs.entrySet().stream(), additionalConfigs.entrySet().stream())
