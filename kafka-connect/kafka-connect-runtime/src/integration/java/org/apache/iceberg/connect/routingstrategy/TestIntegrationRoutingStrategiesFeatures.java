@@ -20,7 +20,9 @@ package org.apache.iceberg.connect.routingstrategy;
 
 import static java.lang.String.format;
 import static org.apache.iceberg.connect.service.ConnectorService.addConnectorConfigs;
+import static org.apache.iceberg.connect.service.IcebergTableClient.extractTableRecords;
 import static org.apache.iceberg.connect.service.IcebergTableClient.extractTableRecordsAsString;
+import static org.apache.iceberg.connect.service.IcebergTableClient.loadCatalogTable;
 import static org.assertj.core.api.AssertionsForInterfaceTypes.assertThat;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -86,13 +88,21 @@ public class TestIntegrationRoutingStrategiesFeatures
         addConnectorConfigs(connectorConfigs(), customConfig),
         expectedTargetTables,
         KAFKA_USER_EVENTS);
-    assertThat(extractTableRecordsAsString(catalog(), CUSTOMERS_1_TABLE_IDENTIFIER))
+    assertThat(
+            extractTableRecordsAsString(
+                extractTableRecords(loadCatalogTable(catalog(), CUSTOMERS_1_TABLE_IDENTIFIER))))
         .containsExactlyInAnyOrderElementsOf(expectedCustomersFirstTableRows);
-    assertThat(extractTableRecordsAsString(catalog(), CUSTOMERS_1_TABLE_ALT_IDENTIFIER))
+    assertThat(
+            extractTableRecordsAsString(
+                extractTableRecords(loadCatalogTable(catalog(), CUSTOMERS_1_TABLE_ALT_IDENTIFIER))))
         .containsExactlyInAnyOrderElementsOf(expectedCustomersFirstAltTableRows);
-    assertThat(extractTableRecordsAsString(catalog(), CUSTOMERS_2_TABLE_IDENTIFIER))
+    assertThat(
+            extractTableRecordsAsString(
+                extractTableRecords(loadCatalogTable(catalog(), CUSTOMERS_2_TABLE_IDENTIFIER))))
         .containsExactlyInAnyOrderElementsOf(expectedCustomersSecTableRows);
-    assertThat(extractTableRecordsAsString(catalog(), CUSTOMERS_2_TABLE_ALT_IDENTIFIER))
+    assertThat(
+            extractTableRecordsAsString(
+                extractTableRecords(loadCatalogTable(catalog(), CUSTOMERS_2_TABLE_ALT_IDENTIFIER))))
         .containsExactlyInAnyOrderElementsOf(expectedCustomersSecAltTableRows);
   }
 
