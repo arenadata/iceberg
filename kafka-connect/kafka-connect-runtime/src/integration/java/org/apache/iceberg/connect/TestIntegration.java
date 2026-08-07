@@ -156,6 +156,7 @@ public class TestIntegration extends IntegrationTestBase {
   @Override
   protected KafkaConnectUtils.Config createConfig(boolean useSchema) {
     return createCommonConfig(useSchema)
+        .config("routing.strategy", "all-tables")
         .config("iceberg.tables", String.format("%s.%s", TEST_DB, TEST_TABLE));
   }
 

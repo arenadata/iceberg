@@ -62,6 +62,7 @@ public class TestIntegrationMultiTable extends IntegrationTestBase {
   @Override
   protected KafkaConnectUtils.Config createConfig(boolean useSchema) {
     return createCommonConfig(useSchema)
+        .config("routing.strategy", "regex")
         .config(
             "iceberg.tables",
             String.format("%s.%s, %s.%s", TEST_DB, TEST_TABLE1, TEST_DB, TEST_TABLE2))
