@@ -176,42 +176,7 @@ public class IcebergSinkConfig extends AbstractConfig {
 
   private static ConfigDef newConfigDef() {
     ConfigDef configDef = new ConfigDef();
-    configDef.define(
-        ROUTING_STRATEGY_PROP,
-        ConfigDef.Type.STRING,
-        null,
-        Importance.MEDIUM,
-        "Routing strategy. Supported values: dynamic-field, all-tables, regex, topic-to-table");
-    configDef.define(
-        TABLES_PROP,
-        ConfigDef.Type.LIST,
-        null,
-        Importance.HIGH,
-        "Comma-delimited list of destination tables");
-    configDef.define(
-        TABLES_DYNAMIC_PROP,
-        ConfigDef.Type.BOOLEAN,
-        false,
-        Importance.MEDIUM,
-        "Enable dynamic routing to tables based on a record value");
-    configDef.define(
-        TABLES_ROUTE_FIELD_PROP,
-        ConfigDef.Type.STRING,
-        null,
-        Importance.MEDIUM,
-        "Source record field for routing records to tables");
-    configDef.define(
-        TABLES_TOPIC_TO_TABLE_MAPPING_PROP,
-        ConfigDef.Type.STRING,
-        null,
-        Importance.MEDIUM,
-        "Static mapping from topic name to table name in format topic1:db.table1,topic2:db.table2");
-    configDef.define(
-        TABLES_TOPIC_TO_TABLE_MAPPING_FILE_PROP,
-        ConfigDef.Type.STRING,
-        null,
-        Importance.MEDIUM,
-        "Absolute path to a JSON file with static mapping from topic name to table name");
+    defineTableRoutingProps(configDef);
     configDef.define(
         TABLES_UPSERT_MODE_ENABLED_PROP,
         ConfigDef.Type.BOOLEAN,
@@ -324,6 +289,45 @@ public class IcebergSinkConfig extends AbstractConfig {
     defineV3NewTypesSupportProps(configDef);
     defineCdcProps(configDef);
     return configDef;
+  }
+
+  private static void defineTableRoutingProps(ConfigDef configDef) {
+    configDef.define(
+        ROUTING_STRATEGY_PROP,
+        ConfigDef.Type.STRING,
+        null,
+        Importance.MEDIUM,
+        "Routing strategy. Supported values: dynamic-field, all-tables, regex, topic-to-table");
+    configDef.define(
+        TABLES_PROP,
+        ConfigDef.Type.LIST,
+        null,
+        Importance.HIGH,
+        "Comma-delimited list of destination tables");
+    configDef.define(
+        TABLES_DYNAMIC_PROP,
+        ConfigDef.Type.BOOLEAN,
+        false,
+        Importance.MEDIUM,
+        "Enable dynamic routing to tables based on a record value");
+    configDef.define(
+        TABLES_ROUTE_FIELD_PROP,
+        ConfigDef.Type.STRING,
+        null,
+        Importance.MEDIUM,
+        "Source record field for routing records to tables");
+    configDef.define(
+        TABLES_TOPIC_TO_TABLE_MAPPING_PROP,
+        ConfigDef.Type.STRING,
+        null,
+        Importance.MEDIUM,
+        "Static mapping from topic name to table name in format topic1:db.table1,topic2:db.table2");
+    configDef.define(
+        TABLES_TOPIC_TO_TABLE_MAPPING_FILE_PROP,
+        ConfigDef.Type.STRING,
+        null,
+        Importance.MEDIUM,
+        "Absolute path to a JSON file with static mapping from topic name to table name");
   }
 
   private static void defineHdfsKerberosProps(ConfigDef configDef) {
