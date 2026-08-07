@@ -107,13 +107,13 @@ public class ChannelTestBase {
     TopicDescription topicDesc =
         new TopicDescription(SRC_TOPIC_NAME, false, ImmutableList.of(partitionInfo));
     DescribeTopicsResult describeResult = mock(DescribeTopicsResult.class);
-    when(describeResult.values())
+    when(describeResult.topicNameValues())
         .thenReturn(ImmutableMap.of(SRC_TOPIC_NAME, KafkaFuture.completedFuture(topicDesc)));
 
     admin = mock(Admin.class);
     when(admin.describeTopics(anyCollection())).thenReturn(describeResult);
 
-    producer = new MockProducer<>(false, new StringSerializer(), new ByteArraySerializer());
+    producer = new MockProducer<>(false, null, new StringSerializer(), new ByteArraySerializer());
     producer.initTransactions();
     mockIcebergSinkTask = new MockIcebergSinkTask();
     consumer = new MockConsumer<>(OffsetResetStrategy.EARLIEST);

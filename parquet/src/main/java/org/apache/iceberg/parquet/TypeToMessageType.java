@@ -237,6 +237,8 @@ public class TypeToMessageType {
       case STRING:
         return Types.primitive(BINARY, repetition).as(STRING).id(id).named(name);
       case BINARY:
+      case GEOMETRY:
+      case GEOGRAPHY:
         return Types.primitive(BINARY, repetition).id(id).named(name);
       case FIXED:
         FixedType fixed = (FixedType) primitive;

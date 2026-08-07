@@ -46,6 +46,7 @@ import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.types.TimestampNTZType$;
 import org.apache.spark.sql.types.TimestampType$;
+import org.apache.spark.sql.types.UserDefinedType;
 
 public class PruneColumnsWithoutReordering extends TypeUtil.CustomOrderSchemaVisitor<Type> {
   private final StructType requestedType;
@@ -197,7 +198,7 @@ public class PruneColumnsWithoutReordering extends TypeUtil.CustomOrderSchemaVis
   public Type primitive(Type.PrimitiveType primitive) {
     Set<Class<? extends DataType>> expectedType = TYPES.get(primitive.typeId());
     Preconditions.checkArgument(
-        expectedType != null && expectedType.contains(current.getClass()),
+        expectedType != null && isCompatibleType(current, expectedType),
         "Cannot project %s to incompatible type: %s",
         primitive,
         current);
@@ -238,5 +239,25 @@ public class PruneColumnsWithoutReordering extends TypeUtil.CustomOrderSchemaVis
           .put(TypeID.STRING, ImmutableSet.of(StringType$.class))
           .put(TypeID.FIXED, ImmutableSet.of(BinaryType$.class))
           .put(TypeID.BINARY, ImmutableSet.of(BinaryType$.class))
+          .put(TypeID.GEOMETRY, ImmutableSet.of(BinaryType$.class))
+          .put(TypeID.GEOGRAPHY, ImmutableSet.of(BinaryType$.class))
           .buildOrThrow();
+
+  /**
+   * Checks if the given Spark DataType is compatible with the expected set. A UDT whose sqlType
+   * matches one of the expected types is also considered compatible. This allows SPI-provided types
+   * (e.g., GeometryUDT with sqlType=BinaryType) to pass the projection check.
+   */
+  private static boolean isCompatibleType(
+      DataType actual, Set<Class<? extends DataType>> expected) {
+    if (expected.contains(actual.getClass())) {
+      return true;
+    }
+
+    if (actual instanceof UserDefinedType) {
+      return expected.contains(((UserDefinedType<?>) actual).sqlType().getClass());
+    }
+
+    return false;
+  }
 }

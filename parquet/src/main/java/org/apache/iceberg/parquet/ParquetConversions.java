@@ -53,6 +53,8 @@ class ParquetConversions {
         return (T) UUIDUtil.convert(((Binary) value).toByteBuffer());
       case FIXED:
       case BINARY:
+      case GEOMETRY:
+      case GEOGRAPHY:
         return (T) ((Binary) value).toByteBuffer();
       case DECIMAL:
         int scale =

@@ -17,6 +17,12 @@
  * under the License.
  */
 
+configure(project(':iceberg-kafka-connect').subprojects) {
+  tasks.withType(JavaCompile.class).configureEach {
+    options.release = 17
+  }
+}
+
 project(':iceberg-kafka-connect:iceberg-kafka-connect-events') {
   dependencies {
     api project(':iceberg-api')
@@ -43,6 +49,7 @@ project(':iceberg-kafka-connect:iceberg-kafka-connect') {
     implementation libs.jackson.core
     implementation libs.jackson.databind
     implementation libs.avro.avro
+    implementation("com.github.ben-manes.caffeine:caffeine:3.2.3")
 
     compileOnly libs.kafka.clients
     compileOnly libs.kafka.connect.api
@@ -55,6 +62,28 @@ project(':iceberg-kafka-connect:iceberg-kafka-connect') {
 
   test {
     useJUnitPlatform()
+  }
+}
+
+project(':iceberg-kafka-connect:iceberg-kafka-connect-transforms') {
+  dependencies {
+    implementation project(path: ':iceberg-bundled-guava', configuration: 'shadow')
+    implementation libs.bson
+    implementation libs.slf4j.api
+    compileOnly libs.kafka.clients
+    compileOnly libs.kafka.connect.api
+    compileOnly libs.kafka.connect.json
+    compileOnly libs.kafka.connect.transforms
+
+    testImplementation libs.junit.jupiter.api
+    testRuntimeOnly libs.junit.jupiter.engine
+
+    testImplementation libs.mockito.core
+    testImplementation libs.assertj.core
+  }
+
+  configurations {
+    testImplementation.extendsFrom compileOnly
   }
 }
 
@@ -89,6 +118,8 @@ project(':iceberg-kafka-connect:iceberg-kafka-connect-runtime') {
   configurations {
     integrationImplementation.extendsFrom testImplementation
     integrationRuntime.extendsFrom testRuntimeOnly
+    // jars that skip checkClassUniqueness
+    distOnly
   }
 
   dependencies {
@@ -134,9 +165,12 @@ project(':iceberg-kafka-connect:iceberg-kafka-connect-runtime') {
     implementation 'com.google.cloud:google-cloud-core'
 
     implementation project(':iceberg-azure')
+    implementation project(':iceberg-data')
+    implementation project(':iceberg-hive-metastore')
     implementation platform(libs.azuresdk.bom)
     implementation 'com.azure:azure-storage-file-datalake'
     implementation 'com.azure:azure-identity'
+    testImplementation "org.testcontainers:testcontainers:1.20.4"
 
     hive project(':iceberg-hive-metastore')
     hive(libs.hive2.metastore) {
@@ -168,6 +202,45 @@ project(':iceberg-kafka-connect:iceberg-kafka-connect-runtime') {
     integrationImplementation project(':iceberg-api')
     integrationImplementation project(':iceberg-common')
     integrationImplementation project(':iceberg-core')
+    integrationImplementation project(':iceberg-hive-metastore')
+    implementation("org.apache.hive:hive-metastore:2.3.10.2-4.3.0-0") {
+      transitive = false
+    }
+    implementation("org.apache.hive:hive-common:2.3.10.2-4.3.0-0") {
+      transitive = false
+    }
+    implementation("org.apache.hive:hive-serde:2.3.10.2-4.3.0-0") {
+      transitive = false
+    }
+    implementation("org.apache.hive:hive-shims:2.3.10.2-4.3.0-0") {
+      transitive = false
+    }
+    implementation("org.apache.hive.shims:hive-shims-common:2.3.10.2-4.3.0-0") {
+      transitive = false
+    }
+    implementation("org.apache.hive.shims:hive-shims-0.23:2.3.10.2-4.3.0-0") {
+      transitive = false
+    }
+    implementation("org.apache.thrift:libthrift:0.16.0") {
+      transitive = false
+    }
+    implementation("org.apache.thrift:libfb303:0.9.3") {
+      transitive = false
+    }
+    implementation("org.apache.hadoop:hadoop-mapreduce-client-core:3.4.1") {
+      transitive = false
+      exclude group: "org.apache.iceberg"
+    }
+    implementation("org.apache.commons:commons-configuration2:2.10.1") {
+      transitive = false
+    }
+    integrationRuntimeOnly("org.apache.hadoop:hadoop-common:3.4.1") {
+      exclude group: "org.apache.iceberg"
+    }
+    integrationRuntimeOnly("org.apache.hadoop:hadoop-auth:3.4.1") {
+      exclude group: "org.apache.iceberg"
+    }
+    integrationRuntimeOnly("org.apache.hive:hive-storage-api:2.7.2")
     integrationImplementation project(path: ':iceberg-bundled-guava', configuration: 'shadow')
     integrationImplementation platform(libs.jackson.bom)
     integrationImplementation libs.jackson.core
@@ -180,6 +253,8 @@ project(':iceberg-kafka-connect:iceberg-kafka-connect-runtime') {
     integrationImplementation libs.httpcomponents.httpclient5
     integrationImplementation libs.awaitility
     integrationImplementation libs.analyticsaccelerator.s3
+
+    distOnly libs.ozone.filesystem.hadoop3
   }
 
   task integrationTest(type: Test) {
@@ -201,6 +276,7 @@ project(':iceberg-kafka-connect:iceberg-kafka-connect-runtime') {
         from "${processResources.destinationDir}/manifest.json"
         into('lib/') {
           from configurations.runtimeClasspath
+          from configurations.distOnly
         }
         into('doc/') {
           from "$projectDir/main/LICENSE"
@@ -216,6 +292,7 @@ project(':iceberg-kafka-connect:iceberg-kafka-connect-runtime') {
         from "${processResources.destinationDir}/manifest.json"
         into('lib/') {
           from configurations.hive
+          from configurations.distOnly
         }
         into('doc/') {
           from "$projectDir/hive/LICENSE"

@@ -117,7 +117,7 @@ public class TestIntegrationTopicToTable extends IntegrationTestBase {
   }
 
   @Override
-  void dropTables() {
+  protected void dropTables() {
     deleteTopic(secondTopic);
     deleteTopic(unmappedTopic);
     catalog().dropTable(TABLE_IDENTIFIER1);

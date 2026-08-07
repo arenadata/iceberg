@@ -26,10 +26,12 @@ import java.util.stream.Collectors;
 import org.apache.iceberg.FileFormat;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.TableProperties;
+import org.apache.iceberg.TableUtil;
 import org.apache.iceberg.connect.IcebergSinkConfig;
-import org.apache.iceberg.data.GenericAppenderFactory;
+import org.apache.iceberg.connect.events.TableReference;
+import org.apache.iceberg.data.GenericFileWriterFactory;
 import org.apache.iceberg.data.Record;
-import org.apache.iceberg.io.FileAppenderFactory;
+import org.apache.iceberg.io.FileWriterFactory;
 import org.apache.iceberg.io.OutputFileFactory;
 import org.apache.iceberg.io.TaskWriter;
 import org.apache.iceberg.io.UnpartitionedWriter;
@@ -43,8 +45,12 @@ import org.apache.iceberg.types.Types.NestedField;
 import org.apache.iceberg.util.PropertyUtil;
 import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Struct;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 class RecordUtils {
+
+  private static final Logger LOG = LoggerFactory.getLogger(RecordUtils.class);
 
   @SuppressWarnings("unchecked")
   static Object extractFromRecordValue(Object recordValue, String fieldName) {
@@ -95,7 +101,7 @@ class RecordUtils {
   }
 
   public static TaskWriter<Record> createTableWriter(
-      Table table, String tableName, IcebergSinkConfig config) {
+      Table table, TableReference tableReference, IcebergSinkConfig config) {
     Map<String, String> tableProps = Maps.newHashMap(table.properties());
     tableProps.putAll(config.writeProps());
 
@@ -113,7 +119,7 @@ class RecordUtils {
     Set<Integer> identifierFieldIds = table.schema().identifierFieldIds();
 
     // override the identifier fields if the config is set
-    List<String> idCols = config.tableConfig(tableName).idColumns();
+    List<String> idCols = config.tableConfig(tableReference.identifier().toString()).idColumns();
     if (!idCols.isEmpty()) {
       identifierFieldIds =
           idCols.stream()
@@ -128,20 +134,27 @@ class RecordUtils {
               .collect(Collectors.toSet());
     }
 
-    FileAppenderFactory<Record> appenderFactory;
-    if (identifierFieldIds == null || identifierFieldIds.isEmpty()) {
-      appenderFactory =
-          new GenericAppenderFactory(table.schema(), table.spec(), null, null, null)
-              .setAll(tableProps);
+    FileWriterFactory<Record> writerFactory;
+    boolean isIdentifierFieldsDoesDotExist =
+        identifierFieldIds == null || identifierFieldIds.isEmpty();
+    if (isIdentifierFieldsDoesDotExist) {
+      writerFactory =
+          new GenericFileWriterFactory.Builder(table)
+              .dataSchema(table.schema())
+              .dataFileFormat(format)
+              .writerProperties(tableProps)
+              .build();
     } else {
-      appenderFactory =
-          new GenericAppenderFactory(
-                  table.schema(),
-                  table.spec(),
-                  Ints.toArray(identifierFieldIds),
-                  TypeUtil.select(table.schema(), Sets.newHashSet(identifierFieldIds)),
-                  null)
-              .setAll(tableProps);
+      writerFactory =
+          new GenericFileWriterFactory.Builder(table)
+              .dataSchema(table.schema())
+              .dataFileFormat(format)
+              .equalityFieldIds(Ints.toArray(identifierFieldIds))
+              .equalityDeleteRowSchema(
+                  TypeUtil.select(table.schema(), Sets.newHashSet(identifierFieldIds)))
+              .deleteFileFormat(format)
+              .writerProperties(tableProps)
+              .build();
     }
 
     // (partition ID + task ID + operation ID) must be unique
@@ -153,22 +166,75 @@ class RecordUtils {
             .build();
 
     TaskWriter<Record> writer;
-    if (table.spec().isUnpartitioned()) {
-      writer =
-          new UnpartitionedWriter<>(
-              table.spec(), format, appenderFactory, fileFactory, table.io(), targetFileSize);
+
+    if (config.tablesCdcField() == null && !config.isUpsertMode()) {
+      if (table.spec().isUnpartitioned()) {
+        writer =
+            new UnpartitionedWriter<>(
+                table.spec(), format, writerFactory, fileFactory, table.io(), targetFileSize);
+      } else {
+        writer =
+            new PartitionedAppendWriter(
+                table.spec(),
+                format,
+                writerFactory,
+                fileFactory,
+                table.io(),
+                targetFileSize,
+                table.schema());
+      }
     } else {
-      writer =
-          new PartitionedAppendWriter(
-              table.spec(),
-              format,
-              appenderFactory,
-              fileFactory,
-              table.io(),
-              targetFileSize,
-              table.schema());
+      if (isIdentifierFieldsDoesDotExist) {
+        throw new IllegalArgumentException(
+            "Table identifier fields must be specified when using CDC or upsert modes");
+      }
+      boolean useDv = isUseDv(table, tableReference);
+      if (table.spec().isUnpartitioned()) {
+        writer =
+            new UnpartitionedDeltaWriter(
+                table.spec(),
+                format,
+                writerFactory,
+                fileFactory,
+                table.io(),
+                targetFileSize,
+                table.schema(),
+                identifierFieldIds,
+                config.isUpsertMode(),
+                useDv);
+      } else {
+        writer =
+            new PartitionedDeltaWriter(
+                table.spec(),
+                format,
+                writerFactory,
+                fileFactory,
+                table.io(),
+                targetFileSize,
+                table.schema(),
+                identifierFieldIds,
+                config.isUpsertMode(),
+                useDv);
+      }
     }
     return writer;
+  }
+
+  private static boolean isUseDv(Table table, TableReference tableReference) {
+    switch (TableUtil.formatVersion(table)) {
+      case 1:
+        throw new IllegalArgumentException(
+            "CDC and upsert modes are not supported for Iceberg table format version 1");
+      case 2:
+        LOG.warn(
+            "Table {} format version 2 detected. Delete Vectors are disabled. "
+                + "CDC and upsert modes work best with format version 3 or higher. "
+                + "Consider upgrading the table.",
+            tableReference.identifier());
+        return false;
+      default:
+        return true;
+    }
   }
 
   private RecordUtils() {}
