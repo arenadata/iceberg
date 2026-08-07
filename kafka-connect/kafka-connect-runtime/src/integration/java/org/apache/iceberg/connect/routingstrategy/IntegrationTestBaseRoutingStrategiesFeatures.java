@@ -18,8 +18,8 @@
  */
 package org.apache.iceberg.connect.routingstrategy;
 
-import static org.apache.iceberg.connect.routingstrategy.dto.UserEvent.USER_SCHEMA;
-import static org.apache.iceberg.connect.routingstrategy.dto.UserEvent.USER_SPEC;
+import static org.apache.iceberg.connect.routingstrategy.dto.TableUserEvent.USER_SCHEMA;
+import static org.apache.iceberg.connect.routingstrategy.dto.TableUserEvent.USER_SPEC;
 
 import java.time.Duration;
 import java.util.List;
@@ -27,7 +27,7 @@ import java.util.Map;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.connect.AbstractTestBase;
 import org.apache.iceberg.connect.KafkaConnectUtils;
-import org.apache.iceberg.connect.routingstrategy.dto.UserEvent;
+import org.apache.iceberg.connect.routingstrategy.dto.TableUserEvent;
 import org.awaitility.Awaitility;
 import org.junit.jupiter.api.BeforeEach;
 
@@ -58,7 +58,7 @@ public abstract class IntegrationTestBaseRoutingStrategiesFeatures extends Abstr
       boolean useSchema,
       Map<String, Object> extraConfig,
       List<TableIdentifier> tableIdentifiers,
-      List<? extends UserEvent> events) {
+      List<? extends TableUserEvent> events) {
     KafkaConnectUtils.Config connectorConfig = initConnectorConfig(useSchema, extraConfig);
     events.forEach(event -> send(testTopic(), event, useSchema));
 

@@ -41,7 +41,7 @@ import org.apache.hc.core5.http.HttpStatus;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.connect.KafkaConnectUtils;
 import org.apache.iceberg.connect.TestContext;
-import org.apache.iceberg.connect.routingstrategy.dto.UserEvent;
+import org.apache.iceberg.connect.routingstrategy.dto.TableUserEvent;
 import org.awaitility.Awaitility;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -51,15 +51,15 @@ import org.junit.jupiter.params.provider.MethodSource;
 public class TestIntegrationRoutingStrategiesFeatures
     extends IntegrationTestBaseRoutingStrategiesFeatures {
 
-  private static final List<UserEvent> KAFKA_USER_EVENTS =
+  private static final List<TableUserEvent> KAFKA_USER_EVENTS =
       List.of(
-          new UserEvent(1, "Sam", CUSTOMERS_1_TABLE_IDENTIFIER.toString()),
-          new UserEvent(2, "Ann", CUSTOMERS_1_TABLE_ALT_IDENTIFIER.toString()),
-          new UserEvent(3, "Susan", CUSTOMERS_2_TABLE_IDENTIFIER.toString()),
-          new UserEvent(4, "Emily", CUSTOMERS_2_TABLE_ALT_IDENTIFIER.toString()));
+          new TableUserEvent(1, "Sam", CUSTOMERS_1_TABLE_IDENTIFIER.toString()),
+          new TableUserEvent(2, "Ann", CUSTOMERS_1_TABLE_ALT_IDENTIFIER.toString()),
+          new TableUserEvent(3, "Susan", CUSTOMERS_2_TABLE_IDENTIFIER.toString()),
+          new TableUserEvent(4, "Emily", CUSTOMERS_2_TABLE_ALT_IDENTIFIER.toString()));
 
   private static final List<String> TABLE_USERS_DATA =
-      KAFKA_USER_EVENTS.stream().map(UserEvent::castToString).collect(Collectors.toList());
+      KAFKA_USER_EVENTS.stream().map(TableUserEvent::castToString).collect(Collectors.toList());
 
   private static final List<TableIdentifier> FULL_TARGET_TABLES_LIST =
       List.of(
@@ -264,8 +264,8 @@ public class TestIntegrationRoutingStrategiesFeatures
 
   private static List<String> getExpectedUserEvents(List<String> tableNames) {
     return KAFKA_USER_EVENTS.stream()
-        .filter(userEvent -> tableNames.contains(userEvent.table()))
-        .map(UserEvent::castToString)
+        .filter(tableUserEvent -> tableNames.contains(tableUserEvent.table()))
+        .map(TableUserEvent::castToString)
         .collect(Collectors.toList());
   }
 

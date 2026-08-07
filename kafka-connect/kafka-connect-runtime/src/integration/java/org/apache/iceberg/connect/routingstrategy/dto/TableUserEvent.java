@@ -31,7 +31,7 @@ import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.json.JsonConverter;
 
-public class UserEvent extends BaseTestEvent {
+public class TableUserEvent extends BaseTestEvent {
   private final String username;
   private final String table;
 
@@ -50,7 +50,7 @@ public class UserEvent extends BaseTestEvent {
 
   public static final PartitionSpec USER_SPEC = PartitionSpec.builderFor(USER_SCHEMA).build();
 
-  public UserEvent(long id, String username, String table) {
+  public TableUserEvent(long id, String username, String table) {
     super(id);
     this.username = username;
     this.table = table;
@@ -76,7 +76,7 @@ public class UserEvent extends BaseTestEvent {
               .hiddenImpl(
                   JsonConverter.class, org.apache.kafka.connect.data.Schema.class, Object.class)
               .build(JSON_CONVERTER)
-              .invoke(UserEvent.USER_CONNECT_SCHEMA, value);
+              .invoke(TableUserEvent.USER_CONNECT_SCHEMA, value);
       return TestContext.MAPPER.writeValueAsString(json);
     } catch (JsonProcessingException e) {
       throw new RuntimeException(e);
