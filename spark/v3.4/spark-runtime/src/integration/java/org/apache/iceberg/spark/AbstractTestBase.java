@@ -18,6 +18,8 @@
  */
 package org.apache.iceberg.spark;
 
+import static java.lang.String.format;
+import static org.apache.iceberg.spark.TestContext.TEST_CATALOG;
 import static org.apache.iceberg.spark.TestContext.TEST_DB;
 import static org.apache.iceberg.spark.TestContext.WAREHOUSE_LOCATION;
 
@@ -27,11 +29,6 @@ import java.util.Map;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.SparkSession;
-import org.apache.spark.sql.catalyst.analysis.NamespaceAlreadyExistsException;
-import org.apache.spark.sql.catalyst.analysis.NoSuchNamespaceException;
-import org.apache.spark.sql.catalyst.analysis.NonEmptyNamespaceException;
-import org.apache.spark.sql.connector.catalog.CatalogPlugin;
-import org.apache.spark.sql.connector.catalog.SupportsNamespaces;
 import org.apache.spark.sql.connector.catalog.TableCatalog;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -45,8 +42,6 @@ public abstract class AbstractTestBase {
 
   private TableCatalog catalog;
 
-  private CatalogPlugin catalogPlugin;
-
   private FileSystem fs;
 
   protected abstract void dropTables();
@@ -57,10 +52,6 @@ public abstract class AbstractTestBase {
 
   protected TableCatalog catalog() {
     return catalog;
-  }
-
-  protected CatalogPlugin catalogPlugin() {
-    return catalogPlugin;
   }
 
   protected SparkSession spark() {
@@ -77,13 +68,13 @@ public abstract class AbstractTestBase {
   }
 
   @BeforeEach
-  public void baseBefore() throws NamespaceAlreadyExistsException, IOException {
+  public void baseBefore() throws IOException {
     initSpark(TestContext.IcebergCatalogType.HIVE, Map.of());
     createNamespace();
   }
 
   @AfterEach
-  public void baseAfter() throws NoSuchNamespaceException, NonEmptyNamespaceException, IOException {
+  public void baseAfter() throws IOException {
     dropTables();
     Arrays.stream(fs.listStatus(new Path(WAREHOUSE_LOCATION)))
         .forEach(
@@ -104,12 +95,12 @@ public abstract class AbstractTestBase {
     }
   }
 
-  protected void clearNamespace() throws NoSuchNamespaceException, NonEmptyNamespaceException {
-    ((SupportsNamespaces) catalogPlugin()).dropNamespace(new String[] {TEST_DB}, true);
+  protected void clearNamespace() {
+    spark().sql(format("DROP NAMESPACE IF EXISTS %s.%s", TEST_CATALOG, TEST_DB));
   }
 
-  protected void createNamespace() throws NamespaceAlreadyExistsException {
-    ((SupportsNamespaces) catalogPlugin()).createNamespace(new String[] {TEST_DB}, Map.of());
+  protected void createNamespace() {
+    spark().sql(format("CREATE NAMESPACE IF NOT EXISTS %s.%s", TEST_CATALOG, TEST_DB));
   }
 
   protected void initSpark(
@@ -121,8 +112,7 @@ public abstract class AbstractTestBase {
     SparkSession.clearActiveSession();
     SparkSession.clearDefaultSession();
     this.spark = context.initLocalSparkSession(catalogType, customConfigs);
-    this.catalogPlugin = context.provideCatalogPlugin(spark);
-    this.catalog = context.provideCatalog(catalogPlugin);
+    this.catalog = context.provideCatalog(context.provideCatalogPlugin(spark));
     this.fs = (new Path(WAREHOUSE_LOCATION)).getFileSystem(spark.sessionState().newHadoopConf());
   }
 }
