@@ -322,6 +322,7 @@ project(":iceberg-spark:iceberg-spark-runtime-${sparkMajorVersion}_${scalaVersio
     relocate 'org.apache.datasketches', 'org.apache.iceberg.shaded.org.apache.datasketches'
 
     archiveClassifier.set(null)
+    from sourceSets.integration.output
   }
 
   task integrationTest(type: Test) {
@@ -331,7 +332,6 @@ project(":iceberg-spark:iceberg-spark-runtime-${sparkMajorVersion}_${scalaVersio
     jvmArgs += project.property('extraJvmArgs')
     testClassesDirs = sourceSets.integration.output.classesDirs
     classpath = sourceSets.integration.runtimeClasspath + files(shadowJar.archiveFile.get().asFile.path)
-    classpath += sourceSets.integration.output
     inputs.file(shadowJar.archiveFile.get().asFile.path)
   }
   integrationTest.dependsOn shadowJar

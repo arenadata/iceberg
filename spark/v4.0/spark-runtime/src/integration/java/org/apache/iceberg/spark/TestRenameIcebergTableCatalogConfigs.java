@@ -21,101 +21,23 @@ package org.apache.iceberg.spark;
 import static java.lang.String.format;
 import static org.apache.iceberg.spark.TestContext.TEST_CATALOG;
 import static org.apache.iceberg.spark.TestContext.TEST_DB;
-import static org.apache.iceberg.spark.TestContext.WAREHOUSE_LOCATION;
 import static org.apache.iceberg.spark.service.IcebergTableClient.loadCatalogTableLocation;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.AssertionsForInterfaceTypes.assertThat;
 
 import java.io.IOException;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
-import org.apache.hadoop.util.functional.RemoteIterators;
-import org.apache.iceberg.ReachableFileUtil;
-import org.apache.iceberg.spark.source.SparkTable;
-import org.apache.spark.sql.Row;
+import org.apache.iceberg.ParameterizedTestExtension;
 import org.apache.spark.sql.catalyst.analysis.NoSuchNamespaceException;
 import org.apache.spark.sql.catalyst.analysis.NoSuchTableException;
 import org.apache.spark.sql.catalyst.analysis.TableAlreadyExistsException;
-import org.apache.spark.sql.connector.catalog.Column;
-import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.expressions.Transform;
-import org.apache.spark.sql.types.DataTypes;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.Arguments;
-import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.api.extension.ExtendWith;
 
-public class TestRenameIcebergTableCatalogConfigs extends AbstractTestBase {
-
-  private static final String TEST_TABLE = "test_table";
-
-  private static final String TEST_TABLE_NEW = "test_table_new";
-
-  private static final Identifier TABLE_IDENTIFIER =
-      Identifier.of(new String[] {TEST_DB}, TEST_TABLE);
-
-  private static final Identifier TABLE_IDENTIFIER_NEW =
-      Identifier.of(new String[] {TEST_DB}, TEST_TABLE_NEW);
-
-  private static final String CATALOG_TABLE_NAME =
-      format("%s.%s.%s", TEST_CATALOG, TEST_DB, TEST_TABLE);
-
-  private static final String CATALOG_TABLE_NEW_NAME =
-      format("%s.%s.%s", TEST_CATALOG, TEST_DB, TEST_TABLE_NEW);
-
-  private static final Column[] BASE_TABLE_SCHEMA =
-      new Column[] {
-        Column.create("id", DataTypes.IntegerType, false),
-        Column.create("username", DataTypes.StringType, true)
-      };
-
-  private static final List<String> RECORDS =
-      List.of("(1, 'Sam')", "(2, 'Bob')", "(3, 'Sue')", "(4, 'Ann')", "(1, 'Tom')", "(2, 'Brian')");
-
-  @ParameterizedTest
-  @MethodSource("renameMetadataLocationUpdateArgsProvider")
-  public void testRenameMetadataLocationUpdate(
-      boolean isRenameMetadataLocationUpdateEnabled,
-      String tableDir,
-      List<String> namespaceContents)
-      throws TableAlreadyExistsException,
-          NoSuchNamespaceException,
-          NoSuchTableException,
-          IOException {
-    initSpark(
-        TestContext.IcebergCatalogType.HIVE,
-        Map.of(
-            "rename.metadata.location.update",
-            String.valueOf(isRenameMetadataLocationUpdateEnabled)));
-    catalog().createTable(TABLE_IDENTIFIER, BASE_TABLE_SCHEMA, new Transform[0], Map.of());
-    spark()
-        .sql(
-            format(
-                "INSERT INTO %s VALUES %s",
-                CATALOG_TABLE_NAME, String.join(", ", RECORDS.subList(0, 2))));
-    assertThat(loadCatalogTableLocation(catalog().loadTable(TABLE_IDENTIFIER)))
-        .isEqualTo(
-            format("%s/%s", TestContext.IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE));
-    assertThat(extractFsContents(TestContext.IcebergCatalogType.HIVE, false))
-        .containsExactlyInAnyOrderElementsOf(
-            List.of(
-                format(
-                    "%s/%s", TestContext.IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE)));
-    spark().sql(format("ALTER TABLE %s RENAME TO %s", CATALOG_TABLE_NAME, CATALOG_TABLE_NEW_NAME));
-    spark()
-        .sql(
-            format(
-                "INSERT INTO %s VALUES %s",
-                CATALOG_TABLE_NEW_NAME, String.join(", ", RECORDS.subList(2, 4))));
-    assertThat(loadCatalogTableLocation(catalog().loadTable(TABLE_IDENTIFIER_NEW)))
-        .isEqualTo(
-            format("%s/%s", TestContext.IcebergCatalogType.HIVE.getNamespaceDir(), tableDir));
-    assertThat(extractFsContents(TestContext.IcebergCatalogType.HIVE, false))
-        .containsExactlyInAnyOrderElementsOf(namespaceContents);
-  }
+@ExtendWith(ParameterizedTestExtension.class)
+public class TestRenameIcebergTableCatalogConfigs extends RenameIcebergTableCatalogTestBase {
 
   @Test
   public void testRenameMetadataLocationUpdateRestNegative()
@@ -147,71 +69,6 @@ public class TestRenameIcebergTableCatalogConfigs extends AbstractTestBase {
                     .sql(format("ALTER TABLE %s RENAME TO %s", CATALOG_TABLE_NAME, TEST_TABLE_NEW)))
         .isInstanceOf(UnsupportedOperationException.class)
         .hasMessage("Cannot rename Hadoop tables");
-  }
-
-  @ParameterizedTest
-  @MethodSource("renameMetadataLocationUpdateNonDefaultLocationProvider")
-  public void testRenameMetadataLocationUpdateNonDefaultLocationNegative(
-      Map<String, String> locationConfig)
-      throws TableAlreadyExistsException,
-          NoSuchNamespaceException,
-          IOException,
-          NoSuchTableException {
-    initSpark(
-        TestContext.IcebergCatalogType.HIVE, Map.of("rename.metadata.location.update", "true"));
-    spark().sql(format("CREATE NAMESPACE IF NOT EXISTS %s.%s", TEST_CATALOG, TEST_DB));
-    catalog().createTable(TABLE_IDENTIFIER, BASE_TABLE_SCHEMA, new Transform[0], locationConfig);
-    spark()
-        .sql(
-            format(
-                "INSERT INTO %s VALUES %s",
-                CATALOG_TABLE_NAME, String.join(", ", RECORDS.subList(0, 2))));
-    spark().sql(format("ALTER TABLE %s RENAME TO %s", CATALOG_TABLE_NAME, TEST_TABLE_NEW));
-    spark()
-        .sql(
-            format(
-                "INSERT INTO %s VALUES %s",
-                CATALOG_TABLE_NEW_NAME, String.join(", ", RECORDS.subList(2, 4))));
-    assertThat(extractTableRecords(CATALOG_TABLE_NEW_NAME))
-        .containsExactlyInAnyOrderElementsOf(RECORDS.subList(0, 4));
-    assertThat(loadCatalogTableLocation(catalog().loadTable(TABLE_IDENTIFIER_NEW)))
-        .isEqualTo(
-            format("%s/%s", TestContext.IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE));
-    assertThat(extractFsContents(TestContext.IcebergCatalogType.HIVE, false))
-        .doesNotContain(
-            format("%s/%s", TestContext.IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE_NEW));
-  }
-
-  @ParameterizedTest
-  @MethodSource("dropBaseDirectoryArgsProvider")
-  public void testDropBaseDirectoryEnabled(
-      boolean isDropBaseDirectoryEnabled, List<String> namespaceContents)
-      throws IOException,
-          TableAlreadyExistsException,
-          NoSuchNamespaceException,
-          NoSuchTableException {
-    catalog()
-        .createTable(
-            TABLE_IDENTIFIER,
-            BASE_TABLE_SCHEMA,
-            new Transform[0],
-            Map.of("drop.base-directory.enabled", String.valueOf(isDropBaseDirectoryEnabled)));
-    spark()
-        .sql(
-            format(
-                "INSERT INTO %s VALUES %s",
-                CATALOG_TABLE_NAME, String.join(", ", RECORDS.subList(0, 2))));
-    assertThat(loadCatalogTableLocation(catalog().loadTable(TABLE_IDENTIFIER)))
-        .isEqualTo(
-            format("%s/%s", TestContext.IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE));
-    assertThat(extractFsContents(TestContext.IcebergCatalogType.HIVE, false))
-        .containsExactlyInAnyOrderElementsOf(
-            List.of(
-                format(
-                    "%s/%s", TestContext.IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE)));
-    catalog().purgeTable(TABLE_IDENTIFIER);
-    assertThat(extractFsContents(TestContext.IcebergCatalogType.HIVE, false))
-        .containsExactlyInAnyOrderElementsOf(namespaceContents);
   }
 
   @Test
@@ -280,102 +137,5 @@ public class TestRenameIcebergTableCatalogConfigs extends AbstractTestBase {
         extractFsContents(TestContext.IcebergCatalogType.HIVE, true);
     assertThat(namespaceFilesContents).doesNotContainAnyElementsOf(testTableFiles);
     assertThat(namespaceFilesContents).containsAnyElementsOf(testTableNewFiles);
-  }
-
-  private List<String> extractTableFiles(String tableName) throws NoSuchTableException {
-    List<String> tableDataFiles =
-        spark()
-            .sql(format("SELECT path FROM %s.%s.%s.manifests", TEST_CATALOG, TEST_DB, tableName))
-            .collectAsList()
-            .stream()
-            .map(Row::mkString)
-            .collect(Collectors.toList());
-    tableDataFiles.addAll(
-        spark()
-            .sql(format("SELECT file_path FROM %s.%s.%s.files", TEST_CATALOG, TEST_DB, tableName))
-            .collectAsList()
-            .stream()
-            .map(Row::mkString)
-            .collect(Collectors.toList()));
-    tableDataFiles.addAll(
-        ReachableFileUtil.metadataFileLocations(
-            ((SparkTable) catalog().loadTable(Identifier.of(new String[] {TEST_DB}, tableName)))
-                .table(),
-            true));
-    return tableDataFiles;
-  }
-
-  private List<String> extractFsContents(
-      TestContext.IcebergCatalogType catalogType, boolean isRecursive) throws IOException {
-    return isRecursive
-        ? RemoteIterators.toList((fs().listFiles(catalogType.getNamespacePath(), true))).stream()
-            .map(fs -> fs.getPath().toString())
-            .collect(Collectors.toList())
-        : Arrays.stream(fs().listStatus(catalogType.getNamespacePath()))
-            .collect(Collectors.toList())
-            .stream()
-            .map(fs -> fs.getPath().toString())
-            .collect(Collectors.toList());
-  }
-
-  private List<String> extractTableRecords(String catalogTableName) {
-    return spark().sql(format("SELECT * FROM %s", catalogTableName)).collectAsList().stream()
-        .map(row -> format("(%s, '%s')", row.get(0), row.get(1)))
-        .collect(Collectors.toList());
-  }
-
-  private static Stream<Arguments> renameMetadataLocationUpdateArgsProvider() {
-    return Stream.of(
-        Arguments.of(
-            true,
-            TEST_TABLE_NEW,
-            List.of(
-                format("%s/%s", TestContext.IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE),
-                format(
-                    "%s/%s",
-                    TestContext.IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE_NEW))),
-        Arguments.of(
-            false,
-            TEST_TABLE,
-            List.of(
-                format(
-                    "%s/%s", TestContext.IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE))));
-  }
-
-  private static Stream<Arguments> dropBaseDirectoryArgsProvider() {
-    return Stream.of(
-        Arguments.of(true, List.of()),
-        Arguments.of(
-            false,
-            List.of(
-                format(
-                    "%s/%s", TestContext.IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE))));
-  }
-
-  private static Stream<Arguments> renameMetadataLocationUpdateNonDefaultLocationProvider() {
-    return Stream.of(
-        Arguments.of(
-            Map.of(
-                "write.data.path",
-                format("%s/%s.db/%s", WAREHOUSE_LOCATION, TEST_DB, "data-storage")),
-            format("%s/%s.db/%s", WAREHOUSE_LOCATION, TEST_DB, "data-storage")),
-        Arguments.of(
-            Map.of(
-                "write.metadata.path",
-                format("%s/%s.db/%s", WAREHOUSE_LOCATION, TEST_DB, "metadata-storage")),
-            format("%s/%s.db/%s", WAREHOUSE_LOCATION, TEST_DB, "metadata-storage")),
-        Arguments.of(
-            Map.of(
-                "write.object-storage.enabled",
-                "true",
-                "write.data.path",
-                format("%s/%s.db/%s", WAREHOUSE_LOCATION, TEST_DB, "data-storage")),
-            format("%s/%s.db/%s", WAREHOUSE_LOCATION, TEST_DB, "data-storage")));
-  }
-
-  @Override
-  protected void dropTables() {
-    catalog().dropTable(TABLE_IDENTIFIER);
-    catalog().dropTable(TABLE_IDENTIFIER_NEW);
   }
 }
