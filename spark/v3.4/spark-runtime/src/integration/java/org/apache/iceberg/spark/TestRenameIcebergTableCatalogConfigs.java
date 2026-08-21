@@ -33,7 +33,6 @@ import java.util.Map;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.apache.hadoop.util.functional.RemoteIterators;
-import org.apache.iceberg.ParameterizedTestExtension;
 import org.apache.iceberg.ReachableFileUtil;
 import org.apache.iceberg.spark.source.SparkTable;
 import org.apache.spark.sql.Row;
@@ -45,12 +44,10 @@ import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.expressions.Transform;
 import org.apache.spark.sql.types.DataTypes;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
-@ExtendWith(ParameterizedTestExtension.class)
 public class TestRenameIcebergTableCatalogConfigs extends AbstractTestBase {
 
   private static final String TEST_TABLE = "test_table";
