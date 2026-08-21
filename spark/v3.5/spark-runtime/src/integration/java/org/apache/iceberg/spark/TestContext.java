@@ -150,13 +150,13 @@ public class TestContext {
         Stream.concat(
                 BASE_CATALOG_CONFIGS.entrySet().stream(),
                 Map.ofEntries(
-                    entry("type", "hive"),
-                    entry(CatalogProperties.URI, "thrift://localhost:" + HIVE_METASTORE_PORT),
-                    entry("hive.metastore.uris", "thrift://localhost:9083"),
-                    entry("hive.metastore.schema.verification", "false"),
-                    entry("hive.metastore.authorization.storage.checks", "false"),
-                    entry("hive.metastore.client.capability.check", "false"),
-                    entry("hive.metastore.skip.type.validation", "true"))
+                        entry("type", "hive"),
+                        entry(CatalogProperties.URI, "thrift://localhost:" + HIVE_METASTORE_PORT),
+                        entry("hive.metastore.uris", "thrift://localhost:9083"),
+                        entry("hive.metastore.schema.verification", "false"),
+                        entry("hive.metastore.authorization.storage.checks", "false"),
+                        entry("hive.metastore.client.capability.check", "false"),
+                        entry("hive.metastore.skip.type.validation", "true"))
                     .entrySet()
                     .stream())
             .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue)),

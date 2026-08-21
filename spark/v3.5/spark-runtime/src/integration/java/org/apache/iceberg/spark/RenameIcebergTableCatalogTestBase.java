@@ -54,8 +54,8 @@ public class RenameIcebergTableCatalogTestBase extends AbstractTestBase {
 
   protected static final Column[] BASE_TABLE_SCHEMA =
       new Column[] {
-        Column.create("id", DataTypes.IntegerType, false),
-        Column.create("username", DataTypes.StringType, true)
+          Column.create("id", DataTypes.IntegerType, false),
+          Column.create("username", DataTypes.StringType, true)
       };
 
   protected static final List<String> RECORDS =
@@ -88,13 +88,13 @@ public class RenameIcebergTableCatalogTestBase extends AbstractTestBase {
       TestContext.IcebergCatalogType catalogType, boolean isRecursive) throws IOException {
     return isRecursive
         ? RemoteIterators.toList((fs().listFiles(catalogType.getNamespacePath(), true))).stream()
-            .map(fs -> fs.getPath().toString())
-            .collect(Collectors.toList())
+          .map(fs -> fs.getPath().toString())
+          .collect(Collectors.toList())
         : Arrays.stream(fs().listStatus(catalogType.getNamespacePath()))
-            .collect(Collectors.toList())
-            .stream()
-            .map(fs -> fs.getPath().toString())
-            .collect(Collectors.toList());
+          .collect(Collectors.toList())
+          .stream()
+          .map(fs -> fs.getPath().toString())
+          .collect(Collectors.toList());
   }
 
   protected List<String> extractTableRecords(String catalogTableName) {

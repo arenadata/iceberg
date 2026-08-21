@@ -43,9 +43,9 @@ public class TestDropBaseDirectory extends RenameIcebergTableCatalogTestBase {
   public void testDropBaseDirectoryEnabled(
       boolean isDropBaseDirectoryEnabled, List<String> namespaceContents)
       throws IOException,
-          TableAlreadyExistsException,
-          NoSuchNamespaceException,
-          NoSuchTableException {
+      TableAlreadyExistsException,
+      NoSuchNamespaceException,
+      NoSuchTableException {
     catalog()
         .createTable(
             TABLE_IDENTIFIER,
@@ -77,9 +77,9 @@ public class TestDropBaseDirectory extends RenameIcebergTableCatalogTestBase {
     return Arrays.asList(
         new Object[] {true, List.of()},
         new Object[] {
-          false,
-          List.of(
-              format("%s/%s", TestContext.IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE))
+            false,
+            List.of(
+                format("%s/%s", TestContext.IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE))
         });
   }
 }

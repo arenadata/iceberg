@@ -82,8 +82,8 @@ public class TestRoundTrip extends ExtensionsTestBase {
 
     // Reading
     assertThat(
-            scalarSql(
-                "SELECT count(1) as count FROM %s WHERE data = 'x' GROUP BY data ", tableName))
+        scalarSql(
+            "SELECT count(1) as count FROM %s WHERE data = 'x' GROUP BY data ", tableName))
         .as("There should be 2 records with data x")
         .isEqualTo(2L);
 
