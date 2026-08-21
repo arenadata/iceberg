@@ -18,12 +18,7 @@
  */
 package org.apache.iceberg.spark.service;
 
-import java.net.URI;
 import org.apache.spark.sql.connector.catalog.Table;
-import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
-import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
-import software.amazon.awssdk.regions.Region;
-import software.amazon.awssdk.services.s3.S3Client;
 
 public class IcebergTableClient {
 
