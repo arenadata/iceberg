@@ -16,7 +16,6 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-// @formatter:on
 package org.apache.iceberg.spark;
 
 import static java.lang.String.format;
