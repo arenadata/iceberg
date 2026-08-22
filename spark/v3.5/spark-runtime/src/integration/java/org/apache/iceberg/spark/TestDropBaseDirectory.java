@@ -31,6 +31,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.iceberg.CatalogProperties;
@@ -161,7 +162,10 @@ public class TestDropBaseDirectory {
             });
     catalog = (TableCatalog) Spark3Util.catalogAndIdentifier(spark, TEST_CATALOG).catalog();
     spark.sql(format("CREATE NAMESPACE IF NOT EXISTS %s.%s", TEST_CATALOG, TEST_DB));
-    fs = (new Path(WAREHOUSE_LOCATION)).getFileSystem(spark.sparkContext().hadoopConfiguration());
+    Configuration hadoopConfig = new Configuration();
+    hadoopConfig.set("fs.file.impl", org.apache.hadoop.fs.LocalFileSystem.class.getName());
+    hadoopConfig.set("fs.hdfs.impl", "org.apache.hadoop.hdfs.DistributedFileSystem");
+    fs = (new Path(WAREHOUSE_LOCATION)).getFileSystem(hadoopConfig);
   }
 
   @AfterEach
