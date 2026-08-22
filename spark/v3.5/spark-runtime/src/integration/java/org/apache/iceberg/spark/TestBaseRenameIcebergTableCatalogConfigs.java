@@ -26,7 +26,6 @@ import java.io.IOException;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
-
 import org.apache.iceberg.ParameterizedTestExtension;
 import org.apache.iceberg.Parameters;
 import org.apache.spark.sql.catalyst.analysis.NoSuchNamespaceException;
@@ -46,9 +45,9 @@ public class TestBaseRenameIcebergTableCatalogConfigs extends RenameIcebergTable
       String tableDir,
       List<String> namespaceContents)
       throws TableAlreadyExistsException,
-      NoSuchNamespaceException,
-      NoSuchTableException,
-      IOException {
+          NoSuchNamespaceException,
+          NoSuchTableException,
+          IOException {
     initSpark(
         TestContext.IcebergCatalogType.HIVE,
         Map.of(
