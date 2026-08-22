@@ -36,83 +36,83 @@ import org.junit.jupiter.api.BeforeEach;
 
 public abstract class AbstractTestBase {
 
-    private static TestContext context;
+  private static TestContext context;
 
-    private SparkSession spark;
+  private SparkSession spark;
 
-    private TableCatalog catalog;
+  private TableCatalog catalog;
 
-    private FileSystem fs;
+  private FileSystem fs;
 
-    protected abstract void dropTables();
+  protected abstract void dropTables();
 
-    protected TestContext context() {
-      return context;
-    }
+  protected TestContext context() {
+    return context;
+  }
 
-    protected TableCatalog catalog() {
-      return catalog;
-    }
+  protected TableCatalog catalog() {
+    return catalog;
+  }
 
-    protected SparkSession spark() {
-      return spark;
-    }
+  protected SparkSession spark() {
+    return spark;
+  }
 
-    protected FileSystem fs() {
-      return fs;
-    }
+  protected FileSystem fs() {
+    return fs;
+  }
 
-    @BeforeAll
-    public static void baseBeforeAll() {
-      context = TestContext.instance();
-    }
+  @BeforeAll
+  public static void baseBeforeAll() {
+    context = TestContext.instance();
+  }
 
-    @BeforeEach
-    public void baseBefore() throws IOException {
-      initSpark(TestContext.IcebergCatalogType.HIVE, Map.of());
-      createNamespace();
-    }
+  @BeforeEach
+  public void baseBefore() throws IOException {
+    initSpark(TestContext.IcebergCatalogType.HIVE, Map.of());
+    createNamespace();
+  }
 
-    @AfterEach
-    public void baseAfter() throws IOException {
-      dropTables();
-      Arrays.stream(fs.listStatus(new Path(WAREHOUSE_LOCATION)))
-          .forEach(
-              fileStatus -> {
-                try {
-                  fs.delete(fileStatus.getPath(), true);
-                } catch (IOException e) {
-                  throw new RuntimeException(e);
-                }
-              });
-      clearNamespace();
-      try {
-        if (catalog instanceof AutoCloseable) {
-          ((AutoCloseable) catalog).close();
-        }
-      } catch (Exception e) {
-        throw new RuntimeException(e);
+  @AfterEach
+  public void baseAfter() throws IOException {
+    dropTables();
+    Arrays.stream(fs.listStatus(new Path(WAREHOUSE_LOCATION)))
+        .forEach(
+            fileStatus -> {
+              try {
+                fs.delete(fileStatus.getPath(), true);
+              } catch (IOException e) {
+                throw new RuntimeException(e);
+              }
+            });
+    clearNamespace();
+    try {
+      if (catalog instanceof AutoCloseable) {
+        ((AutoCloseable) catalog).close();
       }
+    } catch (Exception e) {
+      throw new RuntimeException(e);
     }
+  }
 
-    protected void clearNamespace() {
-      spark().sql(format("DROP NAMESPACE IF EXISTS %s.%s", TEST_CATALOG, TEST_DB));
-    }
+  protected void clearNamespace() {
+    spark().sql(format("DROP NAMESPACE IF EXISTS %s.%s", TEST_CATALOG, TEST_DB));
+  }
 
-    protected void createNamespace() {
-      spark().sql(format("CREATE NAMESPACE IF NOT EXISTS %s.%s", TEST_CATALOG, TEST_DB));
-    }
+  protected void createNamespace() {
+    spark().sql(format("CREATE NAMESPACE IF NOT EXISTS %s.%s", TEST_CATALOG, TEST_DB));
+  }
 
-    protected void initSpark(
-        TestContext.IcebergCatalogType catalogType, Map<String, String> customConfigs)
-        throws IOException {
-      if (this.spark != null) {
-        this.spark.close();
-      }
-      SparkSession.clearActiveSession();
-      SparkSession.clearDefaultSession();
-      this.spark = context.initLocalSparkSession(catalogType, customConfigs);
-      this.catalog = context.provideCatalog(context.provideCatalogPlugin(spark));
-      this.fs = (new Path(WAREHOUSE_LOCATION)).getFileSystem(spark.sessionState().newHadoopConf());
+  protected void initSpark(
+      TestContext.IcebergCatalogType catalogType, Map<String, String> customConfigs)
+      throws IOException {
+    if (this.spark != null) {
+      this.spark.close();
     }
+    SparkSession.clearActiveSession();
+    SparkSession.clearDefaultSession();
+    this.spark = context.initLocalSparkSession(catalogType, customConfigs);
+    this.catalog = context.provideCatalog(context.provideCatalogPlugin(spark));
+    this.fs = (new Path(WAREHOUSE_LOCATION)).getFileSystem(spark.sessionState().newHadoopConf());
+  }
 }
