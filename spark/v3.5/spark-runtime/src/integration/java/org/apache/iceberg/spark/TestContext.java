@@ -23,6 +23,7 @@ import static java.util.Map.entry;
 import static org.apache.iceberg.spark.service.IcebergTableClient.AWS_ACCESS_KEY;
 import static org.apache.iceberg.spark.service.IcebergTableClient.AWS_REGION;
 import static org.apache.iceberg.spark.service.IcebergTableClient.AWS_SECRET_KEY;
+import static org.apache.iceberg.spark.service.IcebergTableClient.MINIO_PORT;
 import static org.awaitility.Awaitility.await;
 
 import java.io.File;
@@ -43,7 +44,6 @@ public class TestContext {
 
   public static final String HIVE_METASTORE_PORT = "9083";
   public static final String WAREHOUSE_LOCATION = "s3a://warehouse";
-  public static final int MINIO_PORT = 9000;
   public static final String TEST_DB = "test";
   public static final String TEST_CATALOG = "test_catalog";
 

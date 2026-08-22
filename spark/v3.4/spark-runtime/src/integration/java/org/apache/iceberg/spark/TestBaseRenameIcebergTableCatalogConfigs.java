@@ -45,9 +45,9 @@ public class TestBaseRenameIcebergTableCatalogConfigs extends RenameIcebergTable
       String tableDir,
       List<String> namespaceContents)
       throws TableAlreadyExistsException,
-      NoSuchNamespaceException,
-      NoSuchTableException,
-      IOException {
+          NoSuchNamespaceException,
+          NoSuchTableException,
+          IOException {
     initSpark(
         TestContext.IcebergCatalogType.HIVE,
         Map.of(
@@ -87,18 +87,18 @@ public class TestBaseRenameIcebergTableCatalogConfigs extends RenameIcebergTable
   private static List<Object[]> renameMetadataLocationUpdateArgsProvider() {
     return Arrays.asList(
         new Object[] {
-            true,
-            TEST_TABLE_NEW,
-            List.of(
-                format("%s/%s", TestContext.IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE),
-                format(
-                    "%s/%s", TestContext.IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE_NEW))
+          true,
+          TEST_TABLE_NEW,
+          List.of(
+              format("%s/%s", TestContext.IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE),
+              format(
+                  "%s/%s", TestContext.IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE_NEW))
         },
         new Object[] {
-            false,
-            TEST_TABLE,
-            List.of(
-                format("%s/%s", TestContext.IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE))
+          false,
+          TEST_TABLE,
+          List.of(
+              format("%s/%s", TestContext.IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE))
         });
   }
 }
