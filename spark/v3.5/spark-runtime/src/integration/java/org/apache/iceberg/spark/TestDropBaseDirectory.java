@@ -79,34 +79,36 @@ public class TestDropBaseDirectory {
       List.of("(1, 'Sam')", "(2, 'Bob')", "(3, 'Sue')", "(4, 'Ann')", "(1, 'Tom')", "(2, 'Brian')");
 
   private static final Map<String, String> BASE_CATALOG_CONFIGS =
-      new HashMap<>(Map.ofEntries(
-          entry("io.manifest.file-io-impl", "org.apache.iceberg.aws.s3.S3FileIO"),
-          entry("s3.delete.enabled", "true"),
-          entry("spark.hadoop.fs.s3.impl.disable.cache", "true"),
-          entry("spark.hadoop.fs.s3a.impl.disable.cache", "true"),
-          entry(CatalogProperties.WAREHOUSE_LOCATION, WAREHOUSE_LOCATION),
-          entry("hive.metastore.warehouse.dir", WAREHOUSE_LOCATION),
-          entry("s3.endpoint", "http://localhost:" + MINIO_PORT),
-          entry("s3.access-key-id", AWS_ACCESS_KEY),
-          entry("s3.secret-access-key", AWS_SECRET_KEY),
-          entry("s3.path-style-access", "true"),
-          entry("s3.region", AWS_REGION),
-          entry("cache-enabled", "false"),
-          entry("s3.impl", "org.apache.iceberg.aws.s3.S3FileIO"),
-          entry(
-              "hadoop.fs.s3a.aws.credentials.provider",
-              "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider"),
-          entry("client.factory", "org.apache.iceberg.aws.DefaultAwsClientFactory")));
+      new HashMap<>(
+          Map.ofEntries(
+              entry("io.manifest.file-io-impl", "org.apache.iceberg.aws.s3.S3FileIO"),
+              entry("s3.delete.enabled", "true"),
+              entry("spark.hadoop.fs.s3.impl.disable.cache", "true"),
+              entry("spark.hadoop.fs.s3a.impl.disable.cache", "true"),
+              entry(CatalogProperties.WAREHOUSE_LOCATION, WAREHOUSE_LOCATION),
+              entry("hive.metastore.warehouse.dir", WAREHOUSE_LOCATION),
+              entry("s3.endpoint", "http://localhost:" + MINIO_PORT),
+              entry("s3.access-key-id", AWS_ACCESS_KEY),
+              entry("s3.secret-access-key", AWS_SECRET_KEY),
+              entry("s3.path-style-access", "true"),
+              entry("s3.region", AWS_REGION),
+              entry("cache-enabled", "false"),
+              entry("s3.impl", "org.apache.iceberg.aws.s3.S3FileIO"),
+              entry(
+                  "hadoop.fs.s3a.aws.credentials.provider",
+                  "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider"),
+              entry("client.factory", "org.apache.iceberg.aws.DefaultAwsClientFactory")));
 
   private static final Map<String, String> HIVE_CONFIGS =
-      new HashMap<>(Map.ofEntries(
-          entry("type", "hive"),
-          entry(CatalogProperties.URI, "thrift://localhost:" + HIVE_METASTORE_PORT),
-          entry("hive.metastore.uris", "thrift://localhost:9083"),
-          entry("hive.metastore.schema.verification", "false"),
-          entry("hive.metastore.authorization.storage.checks", "false"),
-          entry("hive.metastore.client.capability.check", "false"),
-          entry("hive.metastore.skip.type.validation", "true")));
+      new HashMap<>(
+          Map.ofEntries(
+              entry("type", "hive"),
+              entry(CatalogProperties.URI, "thrift://localhost:" + HIVE_METASTORE_PORT),
+              entry("hive.metastore.uris", "thrift://localhost:9083"),
+              entry("hive.metastore.schema.verification", "false"),
+              entry("hive.metastore.authorization.storage.checks", "false"),
+              entry("hive.metastore.client.capability.check", "false"),
+              entry("hive.metastore.skip.type.validation", "true")));
 
   @BeforeAll
   public static void baseBeforeAll() {
