@@ -31,7 +31,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.iceberg.CatalogProperties;
@@ -146,8 +145,7 @@ public class TestDropBaseDirectory {
     allConfigs.putAll(HIVE_CONFIGS);
     for (Map.Entry<String, String> entry : allConfigs.entrySet()) {
       builder.config(
-              String.format("spark.sql.catalog.%s.%s", TEST_CATALOG, entry.getKey()),
-              entry.getValue()
+          String.format("spark.sql.catalog.%s.%s", TEST_CATALOG, entry.getKey()), entry.getValue()
       );
     }
     spark = builder.getOrCreate();
