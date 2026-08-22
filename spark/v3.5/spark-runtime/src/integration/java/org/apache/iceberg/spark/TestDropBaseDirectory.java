@@ -148,7 +148,8 @@ public class TestDropBaseDirectory {
           String.format("spark.sql.catalog.%s.%s", TEST_CATALOG, entry.getKey()), entry.getValue());
     }
     spark = builder.getOrCreate();
-    SupportsNamespaces nsCatalog = (SupportsNamespaces) Spark3Util.catalogAndIdentifier(spark, TEST_CATALOG).catalog();
+    SupportsNamespaces nsCatalog =
+            (SupportsNamespaces) Spark3Util.catalogAndIdentifier(spark, TEST_CATALOG).catalog();
     await()
         .atMost(Duration.ofSeconds(30))
         .pollInterval(Duration.ofMillis(500))
