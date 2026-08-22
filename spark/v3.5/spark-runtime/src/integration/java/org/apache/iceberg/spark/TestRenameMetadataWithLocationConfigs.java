@@ -40,7 +40,7 @@ import org.junit.jupiter.api.TestTemplate;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 @ExtendWith(ParameterizedTestExtension.class)
-public class TestRenameMetadateWithLocationConfigs extends RenameIcebergTableCatalogTestBase {
+public class TestRenameMetadataWithLocationConfigs extends RenameIcebergTableCatalogTestBase {
 
   @TestTemplate
   public void testRenameMetadataLocationUpdateNonDefaultLocation(Map<String, String> locationConfig)
