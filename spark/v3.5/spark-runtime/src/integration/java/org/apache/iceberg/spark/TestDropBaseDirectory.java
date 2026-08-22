@@ -145,8 +145,7 @@ public class TestDropBaseDirectory {
     allConfigs.putAll(HIVE_CONFIGS);
     for (Map.Entry<String, String> entry : allConfigs.entrySet()) {
       builder.config(
-          String.format("spark.sql.catalog.%s.%s", TEST_CATALOG, entry.getKey()), entry.getValue()
-      );
+          String.format("spark.sql.catalog.%s.%s", TEST_CATALOG, entry.getKey()), entry.getValue());
     }
     spark = builder.getOrCreate();
     await()
