@@ -82,13 +82,13 @@ public class TestRenameMetadateWithLocationConfigs extends RenameIcebergTableCat
           Map.of(
               "write.data.path",
               format("%s/%s.db/%s", WAREHOUSE_LOCATION, TEST_DB, "data-storage")),
-              format("%s/%s.db/%s", WAREHOUSE_LOCATION, TEST_DB, "data-storage")
+          format("%s/%s.db/%s", WAREHOUSE_LOCATION, TEST_DB, "data-storage")
         },
         new Object[] {
           Map.of(
               "write.metadata.path",
               format("%s/%s.db/%s", WAREHOUSE_LOCATION, TEST_DB, "metadata-storage")),
-              format("%s/%s.db/%s", WAREHOUSE_LOCATION, TEST_DB, "metadata-storage")
+          format("%s/%s.db/%s", WAREHOUSE_LOCATION, TEST_DB, "metadata-storage")
         },
         new Object[] {
           Map.of(
@@ -96,7 +96,7 @@ public class TestRenameMetadateWithLocationConfigs extends RenameIcebergTableCat
               "true",
               "write.data.path",
               format("%s/%s.db/%s", WAREHOUSE_LOCATION, TEST_DB, "data-storage")),
-              format("%s/%s.db/%s", WAREHOUSE_LOCATION, TEST_DB, "data-storage")
+          format("%s/%s.db/%s", WAREHOUSE_LOCATION, TEST_DB, "data-storage")
         });
   }
 }

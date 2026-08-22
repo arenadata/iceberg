@@ -27,8 +27,7 @@ public class IcebergTableClient {
   public static final String AWS_SECRET_KEY = "minioadmin";
   public static final String AWS_REGION = "us-east-1";
 
-  private IcebergTableClient() {
-  }
+  private IcebergTableClient() {}
 
   public static String loadCatalogTableLocation(Table table) {
     return table.properties().get("location");
