@@ -78,9 +78,9 @@ public class TestDropBaseDirectory extends RenameIcebergTableCatalogTestBase {
     return Arrays.asList(
         new Object[] {true, List.of()},
         new Object[] {
-            false,
-            List.of(
-                format("%s/%s", TestContext.IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE))
+          false,
+          List.of(
+              format("%s/%s", TestContext.IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE))
         });
   }
 }
