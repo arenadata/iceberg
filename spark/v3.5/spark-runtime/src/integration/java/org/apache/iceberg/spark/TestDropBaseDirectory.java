@@ -28,6 +28,7 @@ import java.io.IOException;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.List;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -78,7 +79,7 @@ public class TestDropBaseDirectory {
       List.of("(1, 'Sam')", "(2, 'Bob')", "(3, 'Sue')", "(4, 'Ann')", "(1, 'Tom')", "(2, 'Brian')");
 
   private static final Map<String, String> BASE_CATALOG_CONFIGS =
-      Map.ofEntries(
+      new HashMap<>(Map.ofEntries(
           entry("io.manifest.file-io-impl", "org.apache.iceberg.aws.s3.S3FileIO"),
           entry("s3.delete.enabled", "true"),
           entry("spark.hadoop.fs.s3.impl.disable.cache", "true"),
@@ -95,17 +96,17 @@ public class TestDropBaseDirectory {
           entry(
               "hadoop.fs.s3a.aws.credentials.provider",
               "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider"),
-          entry("client.factory", "org.apache.iceberg.aws.DefaultAwsClientFactory"));
+          entry("client.factory", "org.apache.iceberg.aws.DefaultAwsClientFactory")));
 
   private static final Map<String, String> HIVE_CONFIGS =
-      Map.ofEntries(
+      new HashMap<>(Map.ofEntries(
           entry("type", "hive"),
           entry(CatalogProperties.URI, "thrift://localhost:" + HIVE_METASTORE_PORT),
           entry("hive.metastore.uris", "thrift://localhost:9083"),
           entry("hive.metastore.schema.verification", "false"),
           entry("hive.metastore.authorization.storage.checks", "false"),
           entry("hive.metastore.client.capability.check", "false"),
-          entry("hive.metastore.skip.type.validation", "true"));
+          entry("hive.metastore.skip.type.validation", "true")));
 
   @BeforeAll
   public static void baseBeforeAll() {
