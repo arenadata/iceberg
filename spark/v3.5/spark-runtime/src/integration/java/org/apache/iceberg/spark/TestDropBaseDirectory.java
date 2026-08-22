@@ -26,6 +26,7 @@ import java.io.IOException;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+
 import org.apache.iceberg.ParameterizedTestExtension;
 import org.apache.iceberg.Parameters;
 import org.apache.spark.sql.catalyst.analysis.NoSuchNamespaceException;
@@ -41,45 +42,45 @@ public class TestDropBaseDirectory extends RenameIcebergTableCatalogTestBase {
 
   @TestTemplate
   public void testDropBaseDirectoryEnabled(
-      boolean isDropBaseDirectoryEnabled, List<String> namespaceContents)
-      throws IOException,
-      TableAlreadyExistsException,
-      NoSuchNamespaceException,
-      NoSuchTableException {
+    boolean isDropBaseDirectoryEnabled, List<String> namespaceContents)
+    throws IOException,
+    TableAlreadyExistsException,
+    NoSuchNamespaceException,
+    NoSuchTableException {
     catalog()
-        .createTable(
-            TABLE_IDENTIFIER,
-            BASE_TABLE_SCHEMA,
-            new Transform[0],
-            Map.of("drop.base-directory.enabled", String.valueOf(isDropBaseDirectoryEnabled)));
+      .createTable(
+        TABLE_IDENTIFIER,
+        BASE_TABLE_SCHEMA,
+        new Transform[0],
+        Map.of("drop.base-directory.enabled", String.valueOf(isDropBaseDirectoryEnabled)));
     spark()
-        .sql(
-            format(
-                "INSERT INTO %s VALUES %s",
-                CATALOG_TABLE_NAME, String.join(", ", RECORDS.subList(0, 2))));
+      .sql(
+        format(
+          "INSERT INTO %s VALUES %s",
+          CATALOG_TABLE_NAME, String.join(", ", RECORDS.subList(0, 2))));
     assertThat(loadCatalogTableLocation(catalog().loadTable(TABLE_IDENTIFIER)))
-        .isEqualTo(
-            format("%s/%s", TestContext.IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE));
+      .isEqualTo(
+        format("%s/%s", TestContext.IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE));
     AssertionsForInterfaceTypes.assertThat(
-            extractFsContents(TestContext.IcebergCatalogType.HIVE, false))
-        .containsExactlyInAnyOrderElementsOf(
-            List.of(
-                format(
-                    "%s/%s", TestContext.IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE)));
+        extractFsContents(TestContext.IcebergCatalogType.HIVE, false))
+      .containsExactlyInAnyOrderElementsOf(
+        List.of(
+          format(
+            "%s/%s", TestContext.IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE)));
     catalog().purgeTable(TABLE_IDENTIFIER);
     AssertionsForInterfaceTypes.assertThat(
-            extractFsContents(TestContext.IcebergCatalogType.HIVE, false))
-        .containsExactlyInAnyOrderElementsOf(namespaceContents);
+        extractFsContents(TestContext.IcebergCatalogType.HIVE, false))
+      .containsExactlyInAnyOrderElementsOf(namespaceContents);
   }
 
   @Parameters(name = "isDropBaseDirectoryEnabled={0}, namespaceContents={1}")
   private static List<Object[]> dropBaseDirectoryArgsProvider() {
     return Arrays.asList(
-        new Object[] {true, List.of()},
-        new Object[] {
-            false,
-            List.of(
-                format("%s/%s", TestContext.IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE))
-        });
+      new Object[]{true, List.of()},
+      new Object[]{
+        false,
+        List.of(
+          format("%s/%s", TestContext.IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE))
+      });
   }
 }

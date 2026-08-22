@@ -26,6 +26,7 @@ import static org.apache.iceberg.spark.TestContext.WAREHOUSE_LOCATION;
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.Map;
+
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.SparkSession;
@@ -77,14 +78,14 @@ public abstract class AbstractTestBase {
   public void baseAfter() throws IOException {
     dropTables();
     Arrays.stream(fs.listStatus(new Path(WAREHOUSE_LOCATION)))
-        .forEach(
-            fileStatus -> {
-              try {
-                fs.delete(fileStatus.getPath(), true);
-              } catch (IOException e) {
-                throw new RuntimeException(e);
-              }
-            });
+      .forEach(
+        fileStatus -> {
+          try {
+            fs.delete(fileStatus.getPath(), true);
+          } catch (IOException e) {
+            throw new RuntimeException(e);
+          }
+        });
     clearNamespace();
     try {
       if (catalog instanceof AutoCloseable) {
@@ -104,8 +105,8 @@ public abstract class AbstractTestBase {
   }
 
   protected void initSpark(
-      TestContext.IcebergCatalogType catalogType, Map<String, String> customConfigs)
-      throws IOException {
+    TestContext.IcebergCatalogType catalogType, Map<String, String> customConfigs)
+    throws IOException {
     if (this.spark != null) {
       this.spark.close();
     }
