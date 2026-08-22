@@ -41,6 +41,7 @@ import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.analysis.NoSuchNamespaceException;
 import org.apache.spark.sql.catalyst.analysis.NoSuchTableException;
 import org.apache.spark.sql.catalyst.analysis.TableAlreadyExistsException;
+import org.apache.spark.sql.catalyst.parser.ParseException;
 import org.apache.spark.sql.connector.catalog.Column;
 import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.catalog.SupportsNamespaces;
@@ -122,7 +123,7 @@ public class TestDropBaseDirectory {
   }
 
   @BeforeEach
-  public void baseBefore() throws IOException {
+  public void baseBefore() throws IOException, ParseException {
     SparkSession.Builder builder =
         SparkSession.builder()
             .master("local[*]")
