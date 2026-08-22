@@ -155,7 +155,7 @@ public class TestDropBaseDirectory {
         .ignoreExceptions()
         .until(
             () -> {
-              ((SupportsNamespaces) spark.sessionState().catalogManager().catalog(TEST_CATALOG))
+              ((SupportsNamespaces) Spark3Util.catalogAndIdentifier(spark, TEST_CATALOG).catalog())
                   .listNamespaces();
               return true;
             });
