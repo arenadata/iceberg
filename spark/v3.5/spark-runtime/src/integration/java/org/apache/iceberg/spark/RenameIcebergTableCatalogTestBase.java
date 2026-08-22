@@ -26,7 +26,6 @@ import java.io.IOException;
 import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Collectors;
-
 import org.apache.hadoop.util.functional.RemoteIterators;
 import org.apache.iceberg.ReachableFileUtil;
 import org.apache.iceberg.spark.source.SparkTable;
@@ -37,76 +36,76 @@ import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.types.DataTypes;
 
 public class RenameIcebergTableCatalogTestBase extends AbstractTestBase {
-    protected static final String TEST_TABLE = "test_table";
+  protected static final String TEST_TABLE = "test_table";
 
-    protected static final String TEST_TABLE_NEW = "test_table_new";
+  protected static final String TEST_TABLE_NEW = "test_table_new";
 
-    protected static final Identifier TABLE_IDENTIFIER =
-            Identifier.of(new String[]{TEST_DB}, TEST_TABLE);
+  protected static final Identifier TABLE_IDENTIFIER =
+      Identifier.of(new String[] {TEST_DB}, TEST_TABLE);
 
-    protected static final Identifier TABLE_IDENTIFIER_NEW =
-            Identifier.of(new String[]{TEST_DB}, TEST_TABLE_NEW);
+  protected static final Identifier TABLE_IDENTIFIER_NEW =
+      Identifier.of(new String[] {TEST_DB}, TEST_TABLE_NEW);
 
-    protected static final String CATALOG_TABLE_NAME =
-            format("%s.%s.%s", TEST_CATALOG, TEST_DB, TEST_TABLE);
+  protected static final String CATALOG_TABLE_NAME =
+      format("%s.%s.%s", TEST_CATALOG, TEST_DB, TEST_TABLE);
 
-    protected static final String CATALOG_TABLE_NEW_NAME =
-            format("%s.%s.%s", TEST_CATALOG, TEST_DB, TEST_TABLE_NEW);
+  protected static final String CATALOG_TABLE_NEW_NAME =
+      format("%s.%s.%s", TEST_CATALOG, TEST_DB, TEST_TABLE_NEW);
 
-    protected static final Column[] BASE_TABLE_SCHEMA =
-            new Column[]{
-                    Column.create("id", DataTypes.IntegerType, false),
-                    Column.create("username", DataTypes.StringType, true)
-            };
+  protected static final Column[] BASE_TABLE_SCHEMA =
+      new Column[] {
+          Column.create("id", DataTypes.IntegerType, false),
+          Column.create("username", DataTypes.StringType, true)
+      };
 
-    protected static final List<String> RECORDS =
-            List.of("(1, 'Sam')", "(2, 'Bob')", "(3, 'Sue')", "(4, 'Ann')", "(1, 'Tom')", "(2, 'Brian')");
+  protected static final List<String> RECORDS =
+      List.of("(1, 'Sam')", "(2, 'Bob')", "(3, 'Sue')", "(4, 'Ann')", "(1, 'Tom')", "(2, 'Brian')");
 
-    protected List<String> extractTableFiles(String tableName) throws NoSuchTableException {
-        List<String> tableDataFiles =
-                spark()
-                        .sql(format("SELECT path FROM %s.%s.%s.manifests", TEST_CATALOG, TEST_DB, tableName))
-                        .collectAsList()
-                        .stream()
-                        .map(Row::mkString)
-                        .collect(Collectors.toList());
-        tableDataFiles.addAll(
-                spark()
-                        .sql(format("SELECT file_path FROM %s.%s.%s.files", TEST_CATALOG, TEST_DB, tableName))
-                        .collectAsList()
-                        .stream()
-                        .map(Row::mkString)
-                        .collect(Collectors.toList()));
-        tableDataFiles.addAll(
-                ReachableFileUtil.metadataFileLocations(
-                        ((SparkTable) catalog().loadTable(Identifier.of(new String[]{TEST_DB}, tableName)))
-                                .table(),
-                        true));
-        return tableDataFiles;
-    }
+  protected List<String> extractTableFiles(String tableName) throws NoSuchTableException {
+    List<String> tableDataFiles =
+        spark()
+            .sql(format("SELECT path FROM %s.%s.%s.manifests", TEST_CATALOG, TEST_DB, tableName))
+            .collectAsList()
+            .stream()
+            .map(Row::mkString)
+            .collect(Collectors.toList());
+    tableDataFiles.addAll(
+        spark()
+            .sql(format("SELECT file_path FROM %s.%s.%s.files", TEST_CATALOG, TEST_DB, tableName))
+            .collectAsList()
+            .stream()
+            .map(Row::mkString)
+            .collect(Collectors.toList()));
+    tableDataFiles.addAll(
+        ReachableFileUtil.metadataFileLocations(
+            ((SparkTable) catalog().loadTable(Identifier.of(new String[] {TEST_DB}, tableName)))
+                .table(),
+            true));
+    return tableDataFiles;
+  }
 
-    protected List<String> extractFsContents(
-            TestContext.IcebergCatalogType catalogType, boolean isRecursive) throws IOException {
-        return isRecursive
-                ? RemoteIterators.toList((fs().listFiles(catalogType.getNamespacePath(), true))).stream()
-                  .map(fs -> fs.getPath().toString())
-                  .collect(Collectors.toList())
-                : Arrays.stream(fs().listStatus(catalogType.getNamespacePath()))
-                  .collect(Collectors.toList())
-                  .stream()
-                  .map(fs -> fs.getPath().toString())
-                  .collect(Collectors.toList());
-    }
+  protected List<String> extractFsContents(
+      TestContext.IcebergCatalogType catalogType, boolean isRecursive) throws IOException {
+    return isRecursive
+        ? RemoteIterators.toList((fs().listFiles(catalogType.getNamespacePath(), true))).stream()
+          .map(fs -> fs.getPath().toString())
+          .collect(Collectors.toList())
+        : Arrays.stream(fs().listStatus(catalogType.getNamespacePath()))
+          .collect(Collectors.toList())
+          .stream()
+          .map(fs -> fs.getPath().toString())
+          .collect(Collectors.toList());
+  }
 
-    protected List<String> extractTableRecords(String catalogTableName) {
-        return spark().sql(format("SELECT * FROM %s", catalogTableName)).collectAsList().stream()
-                .map(row -> format("(%s, '%s')", row.get(0), row.get(1)))
-                .collect(Collectors.toList());
-    }
+  protected List<String> extractTableRecords(String catalogTableName) {
+    return spark().sql(format("SELECT * FROM %s", catalogTableName)).collectAsList().stream()
+        .map(row -> format("(%s, '%s')", row.get(0), row.get(1)))
+        .collect(Collectors.toList());
+  }
 
-    @Override
-    protected void dropTables() {
-        catalog().dropTable(TABLE_IDENTIFIER);
-        catalog().dropTable(TABLE_IDENTIFIER_NEW);
-    }
+  @Override
+  protected void dropTables() {
+    catalog().dropTable(TABLE_IDENTIFIER);
+    catalog().dropTable(TABLE_IDENTIFIER_NEW);
+  }
 }

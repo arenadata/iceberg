@@ -42,64 +42,64 @@ public class TestBaseRenameIcebergTableCatalogConfigs extends RenameIcebergTable
 
   @TestTemplate
   public void testRenameMetadataLocationUpdate(
-    boolean isRenameMetadataLocationUpdateEnabled,
-    String tableDir,
-    List<String> namespaceContents)
-    throws TableAlreadyExistsException,
-    NoSuchNamespaceException,
-    NoSuchTableException,
-    IOException {
+      boolean isRenameMetadataLocationUpdateEnabled,
+      String tableDir,
+      List<String> namespaceContents)
+      throws TableAlreadyExistsException,
+      NoSuchNamespaceException,
+      NoSuchTableException,
+      IOException {
     initSpark(
-      TestContext.IcebergCatalogType.HIVE,
-      Map.of(
-        "rename.metadata.location.update",
-        String.valueOf(isRenameMetadataLocationUpdateEnabled)));
+        TestContext.IcebergCatalogType.HIVE,
+        Map.of(
+            "rename.metadata.location.update",
+            String.valueOf(isRenameMetadataLocationUpdateEnabled)));
     catalog().createTable(TABLE_IDENTIFIER, BASE_TABLE_SCHEMA, new Transform[0], Map.of());
     spark()
-      .sql(
-        format(
-          "INSERT INTO %s VALUES %s",
-          CATALOG_TABLE_NAME, String.join(", ", RECORDS.subList(0, 2))));
+        .sql(
+            format(
+                "INSERT INTO %s VALUES %s",
+                CATALOG_TABLE_NAME, String.join(", ", RECORDS.subList(0, 2))));
     assertThat(loadCatalogTableLocation(catalog().loadTable(TABLE_IDENTIFIER)))
-      .isEqualTo(
-        format("%s/%s", TestContext.IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE));
+        .isEqualTo(
+            format("%s/%s", TestContext.IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE));
     AssertionsForInterfaceTypes.assertThat(
-        extractFsContents(TestContext.IcebergCatalogType.HIVE, false))
-      .containsExactlyInAnyOrderElementsOf(
-        List.of(
-          format(
-            "%s/%s", TestContext.IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE)));
+            extractFsContents(TestContext.IcebergCatalogType.HIVE, false))
+        .containsExactlyInAnyOrderElementsOf(
+            List.of(
+                format(
+                    "%s/%s", TestContext.IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE)));
     spark().sql(format("ALTER TABLE %s RENAME TO %s", CATALOG_TABLE_NAME, CATALOG_TABLE_NEW_NAME));
     spark()
-      .sql(
-        format(
-          "INSERT INTO %s VALUES %s",
-          CATALOG_TABLE_NEW_NAME, String.join(", ", RECORDS.subList(2, 4))));
+        .sql(
+            format(
+                "INSERT INTO %s VALUES %s",
+                CATALOG_TABLE_NEW_NAME, String.join(", ", RECORDS.subList(2, 4))));
     assertThat(loadCatalogTableLocation(catalog().loadTable(TABLE_IDENTIFIER_NEW)))
-      .isEqualTo(
-        format("%s/%s", TestContext.IcebergCatalogType.HIVE.getNamespaceDir(), tableDir));
+        .isEqualTo(
+            format("%s/%s", TestContext.IcebergCatalogType.HIVE.getNamespaceDir(), tableDir));
     AssertionsForInterfaceTypes.assertThat(
-        extractFsContents(TestContext.IcebergCatalogType.HIVE, false))
-      .containsExactlyInAnyOrderElementsOf(namespaceContents);
+            extractFsContents(TestContext.IcebergCatalogType.HIVE, false))
+        .containsExactlyInAnyOrderElementsOf(namespaceContents);
   }
 
   @Parameters(
-    name = "isRenameMetadataLocationUpdateEnabled={0}, tableDir={1}, namespaceContents={2}")
+      name = "isRenameMetadataLocationUpdateEnabled={0}, tableDir={1}, namespaceContents={2}")
   private static List<Object[]> renameMetadataLocationUpdateArgsProvider() {
     return Arrays.asList(
-      new Object[]{
-        true,
-        TEST_TABLE_NEW,
-        List.of(
-          format("%s/%s", TestContext.IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE),
-          format(
-            "%s/%s", TestContext.IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE_NEW))
-      },
-      new Object[]{
-        false,
-        TEST_TABLE,
-        List.of(
-          format("%s/%s", TestContext.IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE))
-      });
+        new Object[] {
+            true,
+            TEST_TABLE_NEW,
+            List.of(
+                format("%s/%s", TestContext.IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE),
+                format(
+                    "%s/%s", TestContext.IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE_NEW))
+        },
+        new Object[] {
+            false,
+            TEST_TABLE,
+            List.of(
+                format("%s/%s", TestContext.IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE))
+        });
   }
 }

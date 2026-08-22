@@ -46,58 +46,58 @@ public class TestRenameMetadateWithLocationConfigs extends RenameIcebergTableCat
 
   @TestTemplate
   public void testRenameMetadataLocationUpdateNonDefaultLocation(Map<String, String> locationConfig)
-    throws TableAlreadyExistsException,
-    NoSuchNamespaceException,
-    IOException,
-    NoSuchTableException {
+      throws TableAlreadyExistsException,
+      NoSuchNamespaceException,
+      IOException,
+      NoSuchTableException {
     initSpark(
-      TestContext.IcebergCatalogType.HIVE, Map.of("rename.metadata.location.update", "true"));
+        TestContext.IcebergCatalogType.HIVE, Map.of("rename.metadata.location.update", "true"));
     spark().sql(format("CREATE NAMESPACE IF NOT EXISTS %s.%s", TEST_CATALOG, TEST_DB));
     catalog().createTable(TABLE_IDENTIFIER, BASE_TABLE_SCHEMA, new Transform[0], locationConfig);
     spark()
-      .sql(
-        format(
-          "INSERT INTO %s VALUES %s",
-          CATALOG_TABLE_NAME, String.join(", ", RECORDS.subList(0, 2))));
+        .sql(
+            format(
+                "INSERT INTO %s VALUES %s",
+                CATALOG_TABLE_NAME, String.join(", ", RECORDS.subList(0, 2))));
     spark().sql(format("ALTER TABLE %s RENAME TO %s", CATALOG_TABLE_NAME, TEST_TABLE_NEW));
     spark()
-      .sql(
-        format(
-          "INSERT INTO %s VALUES %s",
-          CATALOG_TABLE_NEW_NAME, String.join(", ", RECORDS.subList(2, 4))));
+        .sql(
+            format(
+                "INSERT INTO %s VALUES %s",
+                CATALOG_TABLE_NEW_NAME, String.join(", ", RECORDS.subList(2, 4))));
     assertThat(extractTableRecords(CATALOG_TABLE_NEW_NAME))
-      .containsExactlyInAnyOrderElementsOf(RECORDS.subList(0, 4));
+        .containsExactlyInAnyOrderElementsOf(RECORDS.subList(0, 4));
     AssertionsForClassTypes.assertThat(
-        loadCatalogTableLocation(catalog().loadTable(TABLE_IDENTIFIER_NEW)))
-      .isEqualTo(
-        format("%s/%s", TestContext.IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE));
+            loadCatalogTableLocation(catalog().loadTable(TABLE_IDENTIFIER_NEW)))
+        .isEqualTo(
+            format("%s/%s", TestContext.IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE));
     assertThat(extractFsContents(TestContext.IcebergCatalogType.HIVE, false))
-      .doesNotContain(
-        format("%s/%s", TestContext.IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE_NEW));
+        .doesNotContain(
+            format("%s/%s", TestContext.IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE_NEW));
   }
 
   @Parameters(name = "locationConfig={0}")
   private static List<Object[]> renameMetadataLocationUpdateNonDefaultLocationProvider() {
     return Arrays.asList(
-      new Object[]{
-        Map.of(
-          "write.data.path",
-          format("%s/%s.db/%s", WAREHOUSE_LOCATION, TEST_DB, "data-storage")),
-        format("%s/%s.db/%s", WAREHOUSE_LOCATION, TEST_DB, "data-storage")
-      },
-      new Object[]{
-        Map.of(
-          "write.metadata.path",
-          format("%s/%s.db/%s", WAREHOUSE_LOCATION, TEST_DB, "metadata-storage")),
-        format("%s/%s.db/%s", WAREHOUSE_LOCATION, TEST_DB, "metadata-storage")
-      },
-      new Object[]{
-        Map.of(
-          "write.object-storage.enabled",
-          "true",
-          "write.data.path",
-          format("%s/%s.db/%s", WAREHOUSE_LOCATION, TEST_DB, "data-storage")),
-        format("%s/%s.db/%s", WAREHOUSE_LOCATION, TEST_DB, "data-storage")
-      });
+        new Object[] {
+            Map.of(
+                "write.data.path",
+                format("%s/%s.db/%s", WAREHOUSE_LOCATION, TEST_DB, "data-storage")),
+            format("%s/%s.db/%s", WAREHOUSE_LOCATION, TEST_DB, "data-storage")
+        },
+        new Object[] {
+            Map.of(
+                "write.metadata.path",
+                format("%s/%s.db/%s", WAREHOUSE_LOCATION, TEST_DB, "metadata-storage")),
+            format("%s/%s.db/%s", WAREHOUSE_LOCATION, TEST_DB, "metadata-storage")
+        },
+        new Object[] {
+            Map.of(
+                "write.object-storage.enabled",
+                "true",
+                "write.data.path",
+                format("%s/%s.db/%s", WAREHOUSE_LOCATION, TEST_DB, "data-storage")),
+            format("%s/%s.db/%s", WAREHOUSE_LOCATION, TEST_DB, "data-storage")
+        });
   }
 }
