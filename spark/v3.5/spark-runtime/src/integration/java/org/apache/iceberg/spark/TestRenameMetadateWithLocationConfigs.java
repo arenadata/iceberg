@@ -30,7 +30,6 @@ import java.io.IOException;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
-
 import org.apache.iceberg.ParameterizedTestExtension;
 import org.apache.iceberg.Parameters;
 import org.apache.spark.sql.catalyst.analysis.NoSuchNamespaceException;
@@ -47,9 +46,9 @@ public class TestRenameMetadateWithLocationConfigs extends RenameIcebergTableCat
   @TestTemplate
   public void testRenameMetadataLocationUpdateNonDefaultLocation(Map<String, String> locationConfig)
       throws TableAlreadyExistsException,
-      NoSuchNamespaceException,
-      IOException,
-      NoSuchTableException {
+          NoSuchNamespaceException,
+          IOException,
+          NoSuchTableException {
     initSpark(
         TestContext.IcebergCatalogType.HIVE, Map.of("rename.metadata.location.update", "true"));
     spark().sql(format("CREATE NAMESPACE IF NOT EXISTS %s.%s", TEST_CATALOG, TEST_DB));
@@ -80,24 +79,24 @@ public class TestRenameMetadateWithLocationConfigs extends RenameIcebergTableCat
   private static List<Object[]> renameMetadataLocationUpdateNonDefaultLocationProvider() {
     return Arrays.asList(
         new Object[] {
-            Map.of(
-                "write.data.path",
-                format("%s/%s.db/%s", WAREHOUSE_LOCATION, TEST_DB, "data-storage")),
-            format("%s/%s.db/%s", WAREHOUSE_LOCATION, TEST_DB, "data-storage")
+          Map.of(
+              "write.data.path",
+              format("%s/%s.db/%s", WAREHOUSE_LOCATION, TEST_DB, "data-storage")),
+              format("%s/%s.db/%s", WAREHOUSE_LOCATION, TEST_DB, "data-storage")
         },
         new Object[] {
-            Map.of(
-                "write.metadata.path",
-                format("%s/%s.db/%s", WAREHOUSE_LOCATION, TEST_DB, "metadata-storage")),
-            format("%s/%s.db/%s", WAREHOUSE_LOCATION, TEST_DB, "metadata-storage")
+          Map.of(
+              "write.metadata.path",
+              format("%s/%s.db/%s", WAREHOUSE_LOCATION, TEST_DB, "metadata-storage")),
+              format("%s/%s.db/%s", WAREHOUSE_LOCATION, TEST_DB, "metadata-storage")
         },
         new Object[] {
-            Map.of(
-                "write.object-storage.enabled",
-                "true",
-                "write.data.path",
-                format("%s/%s.db/%s", WAREHOUSE_LOCATION, TEST_DB, "data-storage")),
-            format("%s/%s.db/%s", WAREHOUSE_LOCATION, TEST_DB, "data-storage")
+          Map.of(
+              "write.object-storage.enabled",
+              "true",
+              "write.data.path",
+              format("%s/%s.db/%s", WAREHOUSE_LOCATION, TEST_DB, "data-storage")),
+              format("%s/%s.db/%s", WAREHOUSE_LOCATION, TEST_DB, "data-storage")
         });
   }
 }
