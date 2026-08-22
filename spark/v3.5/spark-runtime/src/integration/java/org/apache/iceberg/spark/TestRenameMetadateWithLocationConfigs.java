@@ -51,7 +51,7 @@ public class TestRenameMetadateWithLocationConfigs extends RenameIcebergTableCat
     initSpark(
         TestContext.IcebergCatalogType.HIVE, Map.of("rename.metadata.location.update", "true"));
     spark().sql(format("CREATE NAMESPACE IF NOT EXISTS %s.%s", TEST_CATALOG, TEST_DB));
-    catalog().createTable(TABLE_IDENTIFIER, BASE_TABLE_SCHEMA, new Transform[0], locationConfig);
+    catalog().createTable(tableIdentifier, baseColumnSchema, new Transform[0], locationConfig);
     spark()
         .sql(
             format(
@@ -66,7 +66,7 @@ public class TestRenameMetadateWithLocationConfigs extends RenameIcebergTableCat
     assertThat(extractTableRecords(CATALOG_TABLE_NEW_NAME))
         .containsExactlyInAnyOrderElementsOf(RECORDS.subList(0, 4));
     AssertionsForClassTypes.assertThat(
-            loadCatalogTableLocation(catalog().loadTable(TABLE_IDENTIFIER_NEW)))
+            loadCatalogTableLocation(catalog().loadTable(tableIdentifierNew)))
         .isEqualTo(
             format("%s/%s", TestContext.IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE));
     assertThat(extractFsContents(TestContext.IcebergCatalogType.HIVE, false))

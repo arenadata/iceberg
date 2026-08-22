@@ -48,8 +48,8 @@ public class TestDropBaseDirectory extends RenameIcebergTableCatalogTestBase {
           NoSuchTableException {
     catalog()
         .createTable(
-            TABLE_IDENTIFIER,
-            BASE_TABLE_SCHEMA,
+            tableIdentifier,
+            baseColumnSchema,
             new Transform[0],
             Map.of("drop.base-directory.enabled", String.valueOf(isDropBaseDirectoryEnabled)));
     spark()
@@ -57,7 +57,7 @@ public class TestDropBaseDirectory extends RenameIcebergTableCatalogTestBase {
             format(
                 "INSERT INTO %s VALUES %s",
                 CATALOG_TABLE_NAME, String.join(", ", RECORDS.subList(0, 2))));
-    assertThat(loadCatalogTableLocation(catalog().loadTable(TABLE_IDENTIFIER)))
+    assertThat(loadCatalogTableLocation(catalog().loadTable(tableIdentifier)))
         .isEqualTo(
             format("%s/%s", TestContext.IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE));
     AssertionsForInterfaceTypes.assertThat(
@@ -66,7 +66,7 @@ public class TestDropBaseDirectory extends RenameIcebergTableCatalogTestBase {
             List.of(
                 format(
                     "%s/%s", TestContext.IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE)));
-    catalog().purgeTable(TABLE_IDENTIFIER);
+    catalog().purgeTable(tableIdentifier);
     AssertionsForInterfaceTypes.assertThat(
             extractFsContents(TestContext.IcebergCatalogType.HIVE, false))
         .containsExactlyInAnyOrderElementsOf(namespaceContents);

@@ -45,14 +45,14 @@ public class TestRenameIcebergTableCatalogConfigs extends RenameIcebergTableCata
     initSpark(
         TestContext.IcebergCatalogType.REST, Map.of("rename.metadata.location.update", "true"));
     spark().sql(format("CREATE NAMESPACE IF NOT EXISTS %s.%s", TEST_CATALOG, TEST_DB));
-    catalog().createTable(TABLE_IDENTIFIER, BASE_TABLE_SCHEMA, new Transform[0], Map.of());
+    catalog().createTable(tableIdentifier, baseColumnSchema, new Transform[0], Map.of());
     List<String> namespaceDirsBeforeAlter =
         List.of(format("%s/%s", TestContext.IcebergCatalogType.REST.getNamespaceDir(), TEST_TABLE));
     assertThat(extractFsContents(TestContext.IcebergCatalogType.REST, false))
         .containsExactlyInAnyOrderElementsOf(namespaceDirsBeforeAlter);
     spark().sql(format("ALTER TABLE %s RENAME TO %s", CATALOG_TABLE_NAME, TEST_TABLE_NEW));
     assertThat(catalog().listTables(new String[] {TEST_DB}))
-        .containsExactlyInAnyOrderElementsOf(List.of(TABLE_IDENTIFIER_NEW));
+        .containsExactlyInAnyOrderElementsOf(List.of(tableIdentifierNew));
     assertThat(extractFsContents(TestContext.IcebergCatalogType.REST, false))
         .containsExactlyInAnyOrderElementsOf(namespaceDirsBeforeAlter);
   }
@@ -62,7 +62,7 @@ public class TestRenameIcebergTableCatalogConfigs extends RenameIcebergTableCata
       throws TableAlreadyExistsException, NoSuchNamespaceException, IOException {
     initSpark(
         TestContext.IcebergCatalogType.HADOOP, Map.of("rename.metadata.location.update", "true"));
-    catalog().createTable(TABLE_IDENTIFIER, BASE_TABLE_SCHEMA, new Transform[0], Map.of());
+    catalog().createTable(tableIdentifier, baseColumnSchema, new Transform[0], Map.of());
     assertThatThrownBy(
             () ->
                 spark()
@@ -79,7 +79,7 @@ public class TestRenameIcebergTableCatalogConfigs extends RenameIcebergTableCata
           NoSuchTableException {
     initSpark(
         TestContext.IcebergCatalogType.HIVE, Map.of("rename.metadata.location.update", "true"));
-    catalog().createTable(TABLE_IDENTIFIER, BASE_TABLE_SCHEMA, new Transform[0], Map.of());
+    catalog().createTable(tableIdentifier, baseColumnSchema, new Transform[0], Map.of());
     spark()
         .sql(
             format(
@@ -93,8 +93,8 @@ public class TestRenameIcebergTableCatalogConfigs extends RenameIcebergTableCata
                 CATALOG_TABLE_NEW_NAME, String.join(", ", RECORDS.subList(2, 4))));
     catalog()
         .createTable(
-            TABLE_IDENTIFIER,
-            BASE_TABLE_SCHEMA,
+            tableIdentifier,
+            baseColumnSchema,
             new Transform[0],
             Map.of("drop.base-directory.enabled", "true"));
     spark()
@@ -109,10 +109,10 @@ public class TestRenameIcebergTableCatalogConfigs extends RenameIcebergTableCata
                 format(
                     "%s/%s",
                     TestContext.IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE_NEW)));
-    assertThat(loadCatalogTableLocation(catalog().loadTable(TABLE_IDENTIFIER_NEW)))
+    assertThat(loadCatalogTableLocation(catalog().loadTable(tableIdentifierNew)))
         .isEqualTo(
             format("%s/%s", TestContext.IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE_NEW));
-    assertThat(loadCatalogTableLocation(catalog().loadTable(TABLE_IDENTIFIER)))
+    assertThat(loadCatalogTableLocation(catalog().loadTable(tableIdentifier)))
         .isEqualTo(
             format("%s/%s", TestContext.IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE));
     assertThat(extractTableRecords(CATALOG_TABLE_NEW_NAME))
@@ -121,9 +121,9 @@ public class TestRenameIcebergTableCatalogConfigs extends RenameIcebergTableCata
         .containsExactlyInAnyOrderElementsOf(RECORDS.subList(4, 6));
     List<String> testTableFiles = extractTableFiles(TEST_TABLE);
     List<String> testTableNewFiles = extractTableFiles(TEST_TABLE_NEW);
-    catalog().purgeTable(TABLE_IDENTIFIER);
+    catalog().purgeTable(tableIdentifier);
     assertThat(catalog().listTables(new String[] {TEST_DB}))
-        .containsExactlyInAnyOrderElementsOf(List.of(TABLE_IDENTIFIER_NEW));
+        .containsExactlyInAnyOrderElementsOf(List.of(tableIdentifierNew));
     assertThat(extractFsContents(TestContext.IcebergCatalogType.HIVE, false))
         .containsExactlyInAnyOrderElementsOf(
             List.of(

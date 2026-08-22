@@ -40,19 +40,18 @@ public class RenameIcebergTableCatalogTestBase extends AbstractTestBase {
 
   protected static final String TEST_TABLE_NEW = "test_table_new";
 
-  protected static final Identifier TABLE_IDENTIFIER =
-      Identifier.of(new String[] {TEST_DB}, TEST_TABLE);
-
-  protected static final Identifier TABLE_IDENTIFIER_NEW =
-      Identifier.of(new String[] {TEST_DB}, TEST_TABLE_NEW);
-
   protected static final String CATALOG_TABLE_NAME =
       format("%s.%s.%s", TEST_CATALOG, TEST_DB, TEST_TABLE);
 
   protected static final String CATALOG_TABLE_NEW_NAME =
       format("%s.%s.%s", TEST_CATALOG, TEST_DB, TEST_TABLE_NEW);
 
-  protected static final Column[] BASE_TABLE_SCHEMA =
+  protected final Identifier tableIdentifier = Identifier.of(new String[] {TEST_DB}, TEST_TABLE);
+
+  protected final Identifier tableIdentifierNew =
+      Identifier.of(new String[] {TEST_DB}, TEST_TABLE_NEW);
+
+  protected final Column[] baseColumnSchema =
       new Column[] {
         Column.create("id", DataTypes.IntegerType, false),
         Column.create("username", DataTypes.StringType, true)
@@ -105,7 +104,7 @@ public class RenameIcebergTableCatalogTestBase extends AbstractTestBase {
 
   @Override
   protected void dropTables() {
-    catalog().dropTable(TABLE_IDENTIFIER);
-    catalog().dropTable(TABLE_IDENTIFIER_NEW);
+    catalog().dropTable(tableIdentifier);
+    catalog().dropTable(tableIdentifierNew);
   }
 }

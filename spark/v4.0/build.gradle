@@ -259,7 +259,6 @@ project(":iceberg-spark:iceberg-spark-runtime-${sparkMajorVersion}_${scalaVersio
       exclude group: 'net.snowflake' , module: 'snowflake-jdbc'
     }
     testImplementation "org.testcontainers:testcontainers:1.20.4"
-    testImplementation "org.junit.jupiter:junit-jupiter-params:5.10.2"
 
     integrationImplementation "org.apache.hadoop:hadoop-aws:3.4.1"
     integrationImplementation "org.scala-lang.modules:scala-collection-compat_${scalaVersion}:${libs.versions.scala.collection.compat.get()}"
