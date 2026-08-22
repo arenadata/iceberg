@@ -28,7 +28,6 @@ import static org.assertj.core.api.AssertionsForInterfaceTypes.assertThat;
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
-
 import org.apache.iceberg.ParameterizedTestExtension;
 import org.apache.spark.sql.catalyst.analysis.NoSuchNamespaceException;
 import org.apache.spark.sql.catalyst.analysis.NoSuchTableException;
@@ -65,9 +64,9 @@ public class TestRenameIcebergTableCatalogConfigs extends RenameIcebergTableCata
         TestContext.IcebergCatalogType.HADOOP, Map.of("rename.metadata.location.update", "true"));
     catalog().createTable(TABLE_IDENTIFIER, BASE_TABLE_SCHEMA, new Transform[0], Map.of());
     assertThatThrownBy(
-        () ->
-            spark()
-                .sql(format("ALTER TABLE %s RENAME TO %s", CATALOG_TABLE_NAME, TEST_TABLE_NEW)))
+            () ->
+                spark()
+                    .sql(format("ALTER TABLE %s RENAME TO %s", CATALOG_TABLE_NAME, TEST_TABLE_NEW)))
         .isInstanceOf(UnsupportedOperationException.class)
         .hasMessage("Cannot rename Hadoop tables");
   }
@@ -75,9 +74,9 @@ public class TestRenameIcebergTableCatalogConfigs extends RenameIcebergTableCata
   @Test
   public void testRenameMetadataLocationWithDropBaseDirectoryFeatures()
       throws IOException,
-      TableAlreadyExistsException,
-      NoSuchNamespaceException,
-      NoSuchTableException {
+          TableAlreadyExistsException,
+          NoSuchNamespaceException,
+          NoSuchTableException {
     initSpark(
         TestContext.IcebergCatalogType.HIVE, Map.of("rename.metadata.location.update", "true"));
     catalog().createTable(TABLE_IDENTIFIER, BASE_TABLE_SCHEMA, new Transform[0], Map.of());
