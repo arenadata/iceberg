@@ -142,12 +142,14 @@ public class TestDropBaseDirectory {
             .config("spark.hadoop.fs.s3a.endpoint", "http://localhost:" + MINIO_PORT)
             .config("spark.hadoop.fs.s3a.endpoint.region", AWS_REGION)
             .config("spark.hadoop.fs.s3a.path.style.access", "true");
-    Stream.concat(BASE_CATALOG_CONFIGS.entrySet().stream(), HIVE_CONFIGS.entrySet().stream())
-        .forEach(
-            (entry) ->
-                builder.config(
-                    format("spark.sql.catalog.%s.%s", TEST_CATALOG, entry.getKey()),
-                    entry.getValue()));
+    Map<String, String> allConfigs = new HashMap<>(BASE_CATALOG_CONFIGS);
+    allConfigs.putAll(HIVE_CONFIGS);
+    for (Map.Entry<String, String> entry : allConfigs.entrySet()) {
+      builder.config(
+              String.format("spark.sql.catalog.%s.%s", TEST_CATALOG, entry.getKey()),
+              entry.getValue()
+      );
+    }
     spark = builder.getOrCreate();
     await()
         .atMost(Duration.ofSeconds(30))
