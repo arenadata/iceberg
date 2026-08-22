@@ -158,9 +158,9 @@ public class TestDropBaseDirectory {
                   .listNamespaces();
               return true;
             });
-    catalog = (TableCatalog) spark.sessionState().catalogManager().catalog(TEST_CATALOG);
+    catalog = (TableCatalog) Spark3Util.catalogAndIdentifier(spark, TEST_CATALOG).catalog();
     spark.sql(format("CREATE NAMESPACE IF NOT EXISTS %s.%s", TEST_CATALOG, TEST_DB));
-    fs = (new Path(WAREHOUSE_LOCATION)).getFileSystem(spark.sessionState().newHadoopConf());
+    fs = (new Path(WAREHOUSE_LOCATION)).getFileSystem(spark.sparkContext().hadoopConfiguration());
   }
 
   @AfterEach
