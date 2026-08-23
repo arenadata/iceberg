@@ -27,10 +27,10 @@ import java.io.File;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.iceberg.CatalogProperties;
@@ -40,6 +40,7 @@ import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.analysis.NoSuchNamespaceException;
 import org.apache.spark.sql.catalyst.analysis.NoSuchTableException;
 import org.apache.spark.sql.catalyst.analysis.TableAlreadyExistsException;
+import org.apache.spark.sql.catalyst.parser.ParseException;
 import org.apache.spark.sql.connector.catalog.Column;
 import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.catalog.SupportsNamespaces;
@@ -78,34 +79,36 @@ public class TestDropBaseDirectory {
       List.of("(1, 'Sam')", "(2, 'Bob')", "(3, 'Sue')", "(4, 'Ann')", "(1, 'Tom')", "(2, 'Brian')");
 
   private static final Map<String, String> BASE_CATALOG_CONFIGS =
-      Map.ofEntries(
-          entry("io.manifest.file-io-impl", "org.apache.iceberg.aws.s3.S3FileIO"),
-          entry("s3.delete.enabled", "true"),
-          entry("spark.hadoop.fs.s3.impl.disable.cache", "true"),
-          entry("spark.hadoop.fs.s3a.impl.disable.cache", "true"),
-          entry(CatalogProperties.WAREHOUSE_LOCATION, WAREHOUSE_LOCATION),
-          entry("hive.metastore.warehouse.dir", WAREHOUSE_LOCATION),
-          entry("s3.endpoint", "http://localhost:" + MINIO_PORT),
-          entry("s3.access-key-id", AWS_ACCESS_KEY),
-          entry("s3.secret-access-key", AWS_SECRET_KEY),
-          entry("s3.path-style-access", "true"),
-          entry("s3.region", AWS_REGION),
-          entry("cache-enabled", "false"),
-          entry("s3.impl", "org.apache.iceberg.aws.s3.S3FileIO"),
-          entry(
-              "hadoop.fs.s3a.aws.credentials.provider",
-              "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider"),
-          entry("client.factory", "org.apache.iceberg.aws.DefaultAwsClientFactory"));
+      new HashMap<>(
+          Map.ofEntries(
+              entry("io.manifest.file-io-impl", "org.apache.iceberg.aws.s3.S3FileIO"),
+              entry("s3.delete.enabled", "true"),
+              entry("spark.hadoop.fs.s3.impl.disable.cache", "true"),
+              entry("spark.hadoop.fs.s3a.impl.disable.cache", "true"),
+              entry(CatalogProperties.WAREHOUSE_LOCATION, WAREHOUSE_LOCATION),
+              entry("hive.metastore.warehouse.dir", WAREHOUSE_LOCATION),
+              entry("s3.endpoint", "http://localhost:" + MINIO_PORT),
+              entry("s3.access-key-id", AWS_ACCESS_KEY),
+              entry("s3.secret-access-key", AWS_SECRET_KEY),
+              entry("s3.path-style-access", "true"),
+              entry("s3.region", AWS_REGION),
+              entry("cache-enabled", "false"),
+              entry("s3.impl", "org.apache.iceberg.aws.s3.S3FileIO"),
+              entry(
+                  "hadoop.fs.s3a.aws.credentials.provider",
+                  "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider"),
+              entry("client.factory", "org.apache.iceberg.aws.DefaultAwsClientFactory")));
 
   private static final Map<String, String> HIVE_CONFIGS =
-      Map.ofEntries(
-          entry("type", "hive"),
-          entry(CatalogProperties.URI, "thrift://localhost:" + HIVE_METASTORE_PORT),
-          entry("hive.metastore.uris", "thrift://localhost:9083"),
-          entry("hive.metastore.schema.verification", "false"),
-          entry("hive.metastore.authorization.storage.checks", "false"),
-          entry("hive.metastore.client.capability.check", "false"),
-          entry("hive.metastore.skip.type.validation", "true"));
+      new HashMap<>(
+          Map.ofEntries(
+              entry("type", "hive"),
+              entry(CatalogProperties.URI, "thrift://localhost:" + HIVE_METASTORE_PORT),
+              entry("hive.metastore.uris", "thrift://localhost:9083"),
+              entry("hive.metastore.schema.verification", "false"),
+              entry("hive.metastore.authorization.storage.checks", "false"),
+              entry("hive.metastore.client.capability.check", "false"),
+              entry("hive.metastore.skip.type.validation", "true")));
 
   @BeforeAll
   public static void baseBeforeAll() {
@@ -119,7 +122,7 @@ public class TestDropBaseDirectory {
   }
 
   @BeforeEach
-  public void baseBefore() throws IOException {
+  public void baseBefore() throws IOException, ParseException {
     SparkSession.Builder builder =
         SparkSession.builder()
             .master("local[*]")
@@ -138,26 +141,27 @@ public class TestDropBaseDirectory {
             .config("spark.hadoop.fs.s3a.endpoint", "http://localhost:" + MINIO_PORT)
             .config("spark.hadoop.fs.s3a.endpoint.region", AWS_REGION)
             .config("spark.hadoop.fs.s3a.path.style.access", "true");
-    Stream.concat(BASE_CATALOG_CONFIGS.entrySet().stream(), HIVE_CONFIGS.entrySet().stream())
-        .forEach(
-            (entry) ->
-                builder.config(
-                    format("spark.sql.catalog.%s.%s", TEST_CATALOG, entry.getKey()),
-                    entry.getValue()));
+    Map<String, String> allConfigs = new HashMap<>(BASE_CATALOG_CONFIGS);
+    allConfigs.putAll(HIVE_CONFIGS);
+    for (Map.Entry<String, String> entry : allConfigs.entrySet()) {
+      builder.config(
+          String.format("spark.sql.catalog.%s.%s", TEST_CATALOG, entry.getKey()), entry.getValue());
+    }
     spark = builder.getOrCreate();
+    SupportsNamespaces nsCatalog =
+        (SupportsNamespaces) Spark3Util.catalogAndIdentifier(spark, TEST_CATALOG).catalog();
     await()
         .atMost(Duration.ofSeconds(30))
         .pollInterval(Duration.ofMillis(500))
         .ignoreExceptions()
         .until(
             () -> {
-              ((SupportsNamespaces) spark.sessionState().catalogManager().catalog(TEST_CATALOG))
-                  .listNamespaces();
+              nsCatalog.listNamespaces();
               return true;
             });
-    catalog = (TableCatalog) spark.sessionState().catalogManager().catalog(TEST_CATALOG);
+    catalog = (TableCatalog) Spark3Util.catalogAndIdentifier(spark, TEST_CATALOG).catalog();
     spark.sql(format("CREATE NAMESPACE IF NOT EXISTS %s.%s", TEST_CATALOG, TEST_DB));
-    fs = (new Path(WAREHOUSE_LOCATION)).getFileSystem(spark.sessionState().newHadoopConf());
+    fs = (new Path(WAREHOUSE_LOCATION)).getFileSystem(spark.sparkContext().hadoopConfiguration());
   }
 
   @AfterEach
