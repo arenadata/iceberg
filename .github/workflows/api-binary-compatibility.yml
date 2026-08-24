@@ -47,7 +47,7 @@ jobs:
   revapi:
     runs-on: ubuntu-22.04
     env:
-      GITHUB_ACTOR: ${{ github.actor }}
+      GITHUB_USERNAME: ${{ github.actor }}
       GITHUB_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
