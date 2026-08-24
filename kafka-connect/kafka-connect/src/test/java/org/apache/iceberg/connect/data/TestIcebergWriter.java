@@ -35,7 +35,6 @@ import org.apache.iceberg.Schema;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.connect.IcebergSinkConfig;
-import org.apache.iceberg.connect.MetadataEvents;
 import org.apache.iceberg.connect.events.TableReference;
 import org.apache.iceberg.data.GenericRecord;
 import org.apache.iceberg.data.Record;
@@ -94,8 +93,7 @@ public class TestIcebergWriter {
             table,
             TableReference.of("catalog", TableIdentifier.of("ignored"), UUID.randomUUID()),
             config,
-            mockTaskWriter,
-            MetadataEvents.NOOP);
+            mockTaskWriter);
 
     Stream.of(
             record(1, "one", "c", ""),
@@ -134,8 +132,7 @@ public class TestIcebergWriter {
             table,
             TableReference.of("catalog", TableIdentifier.of("ignored"), UUID.randomUUID()),
             config,
-            mockTaskWriter,
-            MetadataEvents.NOOP);
+            mockTaskWriter);
 
     Stream.of(
             record(1, "one", "c", "insert"),
@@ -173,8 +170,7 @@ public class TestIcebergWriter {
             table,
             TableReference.of("catalog", TableIdentifier.of("ignored"), UUID.randomUUID()),
             config,
-            mockTaskWriter,
-            MetadataEvents.NOOP);
+            mockTaskWriter);
 
     Stream.of(
             record(1, "one", "c", "insert"),

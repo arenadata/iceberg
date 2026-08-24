@@ -28,7 +28,6 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -48,7 +47,6 @@ import org.apache.iceberg.catalog.Catalog;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.connect.IcebergSinkConfig;
 import org.apache.iceberg.connect.MetadataEvents;
-import org.apache.iceberg.connect.data.IcebergSchemaUtil;
 import org.apache.iceberg.connect.events.CommitComplete;
 import org.apache.iceberg.connect.events.CommitToTable;
 import org.apache.iceberg.connect.events.DataWritten;
@@ -61,7 +59,6 @@ import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.relocated.com.google.common.util.concurrent.ThreadFactoryBuilder;
 import org.apache.iceberg.util.Tasks;
 import org.apache.kafka.clients.admin.MemberDescription;
-import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.connect.errors.ConnectException;
 import org.apache.kafka.connect.sink.SinkTaskContext;
 import org.slf4j.Logger;
@@ -82,11 +79,6 @@ class Coordinator extends Channel {
   private final ExecutorService exec;
   private final CommitState commitState;
   private final MetadataEvents metadataEvents;
-  private final Set<String> consumedTopics;
-  private final long republishWindowMs;
-  private final boolean forceRepublishOnStart;
-  private final Map<TableIdentifier, Long> firstAnnouncedMillis = new ConcurrentHashMap<>();
-  private volatile boolean republishedOnStart = false;
 
   Coordinator(
       Catalog catalog,
@@ -118,13 +110,6 @@ class Coordinator extends Channel {
                 .build());
     this.commitState = new CommitState(config);
     this.metadataEvents = metadataEvents;
-    this.consumedTopics =
-        members.stream()
-            .flatMap(m -> m.assignment().topicPartitions().stream())
-            .map(TopicPartition::topic)
-            .collect(Collectors.toUnmodifiableSet());
-    this.republishWindowMs = config.metadataLineageRepublishWindowMs();
-    this.forceRepublishOnStart = config.metadataLineageForceRepublishOnStart();
   }
 
   void process() {
@@ -298,8 +283,11 @@ class Coordinator extends Channel {
                   commitState.currentCommitId(), tableReference, snapshotId, validThroughTs));
       send(event);
 
-      // emit lineage edges for every consumed topic -> this table
-      republishMetadata(table, tableIdentifier);
+      Set<String> lineageTopics =
+          payloads.stream()
+              .flatMap(payload -> payload.sourceTopics().stream())
+              .collect(Collectors.toUnmodifiableSet());
+      metadataEvents.lineageCommit(lineageTopics, tableIdentifier, table.schema());
 
       LOG.info(
           "Commit complete to table {}, snapshot {}, commit ID {}, valid-through {}",
@@ -339,23 +327,6 @@ class Coordinator extends Channel {
       snapshot = parentSnapshotId != null ? table.snapshot(parentSnapshotId) : null;
     }
     return ImmutableMap.of();
-  }
-
-  private void republishMetadata(Table table, TableIdentifier tableIdentifier) {
-    long now = System.currentTimeMillis();
-    long firstSeen = firstAnnouncedMillis.computeIfAbsent(tableIdentifier, k -> now);
-
-    boolean forced = forceRepublishOnStart && !republishedOnStart;
-    boolean withinWindow = (now - firstSeen) < republishWindowMs;
-
-    if (forced || withinWindow) {
-      metadataEvents.tableCreated(
-          tableIdentifier, IcebergSchemaUtil.toConnectSchema(table.schema()));
-    }
-
-    metadataEvents.lineageCommit(consumedTopics, tableIdentifier);
-
-    republishedOnStart = true;
   }
 
   void terminate() {

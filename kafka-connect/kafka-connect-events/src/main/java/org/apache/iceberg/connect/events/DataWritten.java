@@ -20,12 +20,14 @@ package org.apache.iceberg.connect.events;
 
 import java.util.List;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import org.apache.avro.Schema;
 import org.apache.iceberg.DataFile;
 import org.apache.iceberg.DeleteFile;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.types.Types.ListType;
 import org.apache.iceberg.types.Types.NestedField;
+import org.apache.iceberg.types.Types.StringType;
 import org.apache.iceberg.types.Types.StructType;
 import org.apache.iceberg.types.Types.UUIDType;
 
@@ -41,6 +43,7 @@ public class DataWritten implements Payload {
   private TableReference tableReference;
   private List<DataFile> dataFiles;
   private List<DeleteFile> deleteFiles;
+  private List<String> sourceTopics;
   private StructType icebergSchema;
   private final Schema avroSchema;
 
@@ -50,6 +53,8 @@ public class DataWritten implements Payload {
   static final int DATA_FILES_ELEMENT = 10_303;
   static final int DELETE_FILES = 10_304;
   static final int DELETE_FILES_ELEMENT = 10_305;
+  static final int SOURCE_TOPICS = 10_306;
+  static final int SOURCE_TOPICS_ELEMENT = 10_307;
 
   // Used by Avro reflection to instantiate this class when reading events, note that this does not
   // set the partition type so the instance cannot be re-serialized
@@ -63,6 +68,16 @@ public class DataWritten implements Payload {
       TableReference tableReference,
       List<DataFile> dataFiles,
       List<DeleteFile> deleteFiles) {
+    this(partitionType, commitId, tableReference, dataFiles, deleteFiles, List.of());
+  }
+
+  public DataWritten(
+      StructType partitionType,
+      UUID commitId,
+      TableReference tableReference,
+      List<DataFile> dataFiles,
+      List<DeleteFile> deleteFiles,
+      List<String> sourceTopics) {
     Preconditions.checkNotNull(commitId, "Commit ID cannot be null");
     Preconditions.checkNotNull(tableReference, "Table reference cannot be null");
     this.partitionType = partitionType;
@@ -70,6 +85,7 @@ public class DataWritten implements Payload {
     this.tableReference = tableReference;
     this.dataFiles = dataFiles;
     this.deleteFiles = deleteFiles;
+    this.sourceTopics = sourceTopics;
     this.avroSchema = AvroUtil.convert(writeSchema(), getClass());
   }
 
@@ -94,6 +110,10 @@ public class DataWritten implements Payload {
     return deleteFiles;
   }
 
+  public List<String> sourceTopics() {
+    return sourceTopics == null ? List.of() : sourceTopics;
+  }
+
   @Override
   public StructType writeSchema() {
     if (icebergSchema == null) {
@@ -111,7 +131,11 @@ public class DataWritten implements Payload {
               NestedField.optional(
                   DELETE_FILES,
                   "delete_files",
-                  ListType.ofRequired(DELETE_FILES_ELEMENT, dataFileStruct)));
+                  ListType.ofRequired(DELETE_FILES_ELEMENT, dataFileStruct)),
+              NestedField.optional(
+                  SOURCE_TOPICS,
+                  "source_topics",
+                  ListType.ofRequired(SOURCE_TOPICS_ELEMENT, StringType.get())));
     }
 
     return icebergSchema;
@@ -138,6 +162,12 @@ public class DataWritten implements Payload {
       case DELETE_FILES:
         this.deleteFiles = (List<DeleteFile>) v;
         return;
+      case SOURCE_TOPICS:
+        this.sourceTopics =
+            v == null
+                ? List.of()
+                : ((List<?>) v).stream().map(Object::toString).collect(Collectors.toList());
+        return;
       default:
         // ignore the object, it must be from a newer version of the format
     }
@@ -154,6 +184,8 @@ public class DataWritten implements Payload {
         return dataFiles;
       case DELETE_FILES:
         return deleteFiles;
+      case SOURCE_TOPICS:
+        return sourceTopics;
       default:
         throw new UnsupportedOperationException("Unknown field ordinal: " + i);
     }

@@ -27,7 +27,6 @@ import java.util.Map;
 import java.util.stream.Collectors;
 import org.apache.iceberg.catalog.Catalog;
 import org.apache.iceberg.connect.IcebergSinkConfig;
-import org.apache.iceberg.connect.MetadataEvents;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.connect.sink.SinkRecord;
@@ -38,8 +37,8 @@ public class SinkWriter {
   private final Map<String, RecordWriter> writers;
   private final Map<TopicPartition, Offset> sourceOffsets;
 
-  public SinkWriter(Catalog catalog, IcebergSinkConfig config, MetadataEvents metadataEvents) {
-    this.writerFactory = new IcebergWriterFactory(catalog, config, metadataEvents);
+  public SinkWriter(Catalog catalog, IcebergSinkConfig config) {
+    this.writerFactory = new IcebergWriterFactory(catalog, config);
     this.recordRouter = RecordRouterFactory.create(config);
     this.writers = Maps.newHashMap();
     this.sourceOffsets = Maps.newHashMap();

@@ -37,7 +37,6 @@ import org.apache.iceberg.Schema;
 import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.connect.IcebergSinkConfig;
-import org.apache.iceberg.connect.MetadataEvents;
 import org.apache.iceberg.connect.TableSinkConfig;
 import org.apache.iceberg.inmemory.InMemoryCatalog;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
@@ -188,7 +187,7 @@ public class TestSinkWriter {
     IcebergWriterFactory writerFactory = mock(IcebergWriterFactory.class);
     when(writerFactory.createWriter(any(), any(), anyBoolean())).thenReturn(writer);
 
-    SinkWriter sinkWriter = new SinkWriter(catalog, config, MetadataEvents.NOOP);
+    SinkWriter sinkWriter = new SinkWriter(catalog, config);
 
     // save a record
     Instant now = Instant.now().truncatedTo(ChronoUnit.MILLIS);
