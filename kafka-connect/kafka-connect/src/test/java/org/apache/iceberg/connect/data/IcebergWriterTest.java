@@ -33,7 +33,6 @@ import java.util.stream.Stream;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.connect.IcebergSinkConfig;
-import org.apache.iceberg.connect.MetadataEvents;
 import org.apache.iceberg.data.GenericRecord;
 import org.apache.iceberg.data.Record;
 import org.apache.iceberg.io.TaskWriter;
@@ -87,7 +86,7 @@ public class IcebergWriterTest {
     when(config.tablesCdcIgnoredOps()).thenReturn(ImmutableList.of("m", "t"));
 
     IcebergWriter icebergWriter =
-        new IcebergWriter(table, mockTaskWriter, "ignored", config, MetadataEvents.NOOP);
+        new IcebergWriter(table, mockTaskWriter, "ignored", config);
 
     Stream.of(
             record(1, "one", "c", ""),
@@ -122,7 +121,7 @@ public class IcebergWriterTest {
     when(config.tablesCdcIgnoredOps()).thenReturn(ImmutableList.of("MESSAGE", "truncate"));
 
     IcebergWriter icebergWriter =
-        new IcebergWriter(table, mockTaskWriter, "ignored", config, MetadataEvents.NOOP);
+        new IcebergWriter(table, mockTaskWriter, "ignored", config);
 
     Stream.of(
             record(1, "one", "c", "insert"),
@@ -156,7 +155,7 @@ public class IcebergWriterTest {
     when(config.tablesCdcOpsDelete()).thenReturn(Collections.singletonList("r"));
 
     IcebergWriter icebergWriter =
-        new IcebergWriter(table, mockTaskWriter, "ignored", config, MetadataEvents.NOOP);
+        new IcebergWriter(table, mockTaskWriter, "ignored", config);
 
     Stream.of(
             record(1, "one", "c", "insert"),

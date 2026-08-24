@@ -103,7 +103,8 @@ class Worker extends Channel {
                             commitId,
                             TableReference.of(config.catalogName(), writeResult.tableIdentifier()),
                             writeResult.dataFiles(),
-                            writeResult.deleteFiles())))
+                            writeResult.deleteFiles(),
+                            List.copyOf(writeResult.sourceTopics()))))
             .collect(Collectors.toList());
 
     Event readyEvent = new Event(config.connectGroupId(), new DataComplete(commitId, assignments));

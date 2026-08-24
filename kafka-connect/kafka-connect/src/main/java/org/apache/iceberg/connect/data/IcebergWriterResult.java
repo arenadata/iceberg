@@ -19,6 +19,7 @@
 package org.apache.iceberg.connect.data;
 
 import java.util.List;
+import java.util.Set;
 import org.apache.iceberg.DataFile;
 import org.apache.iceberg.DeleteFile;
 import org.apache.iceberg.catalog.TableIdentifier;
@@ -30,16 +31,27 @@ public class IcebergWriterResult {
   private final List<DataFile> dataFiles;
   private final List<DeleteFile> deleteFiles;
   private final StructType partitionStruct;
+  private final Set<String> sourceTopics;
 
   public IcebergWriterResult(
       TableIdentifier tableIdentifier,
       List<DataFile> dataFiles,
       List<DeleteFile> deleteFiles,
       StructType partitionStruct) {
+    this(tableIdentifier, dataFiles, deleteFiles, partitionStruct, Set.of());
+  }
+
+  public IcebergWriterResult(
+      TableIdentifier tableIdentifier,
+      List<DataFile> dataFiles,
+      List<DeleteFile> deleteFiles,
+      StructType partitionStruct,
+      Set<String> sourceTopics) {
     this.tableIdentifier = tableIdentifier;
     this.dataFiles = dataFiles;
     this.deleteFiles = deleteFiles;
     this.partitionStruct = partitionStruct;
+    this.sourceTopics = sourceTopics;
   }
 
   public TableIdentifier tableIdentifier() {
@@ -56,5 +68,9 @@ public class IcebergWriterResult {
 
   public StructType partitionStruct() {
     return partitionStruct;
+  }
+
+  public Set<String> sourceTopics() {
+    return sourceTopics;
   }
 }

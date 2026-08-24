@@ -21,7 +21,6 @@ package org.apache.iceberg.connect.channel;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -57,7 +56,6 @@ import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.connect.metadata.LineageEdge;
 import org.apache.kafka.connect.metadata.MetadataReporter;
-import org.apache.kafka.connect.metadata.TableCreated;
 import org.apache.kafka.connect.sink.SinkTaskContext;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
@@ -153,38 +151,12 @@ public class CoordinatorTest extends ChannelTestBase {
   }
 
   @Test
-  public void testRepublishesTableCreatedOnEveryCommitWithinWindow() {
+  public void testReportsLineageForWrittenSourceTopic() {
     MetadataReporter reporter = mock(MetadataReporter.class);
-    runCommitCyclesForMetadata(reporter, /* windowMs */ 60_000L, /* force */ false, /* cycles */ 2);
+    runCommitCyclesForMetadata(reporter, 2);
 
-    // Both commits sit inside the 60 s window → two TableCreated events.
-    verify(reporter, times(2)).report(any(TableCreated.class));
-    // Two cycles × one consumed topic → two LineageEdge events.
+    // Two commits containing data from one source topic produce two lineage events.
     verify(reporter, times(2)).report(any(LineageEdge.class));
-  }
-
-  @Test
-  public void testStopsTableCreatedAfterWindowElapses() {
-    MetadataReporter reporter = mock(MetadataReporter.class);
-    // window=0 means (now - firstSeen) < 0 is false on the very first call →
-    // TableCreated never fires for this Coordinator instance.
-    runCommitCyclesForMetadata(reporter, /* windowMs */ 0L, /* force */ false, /* cycles */ 2);
-
-    verify(reporter, never()).report(any(TableCreated.class));
-    // Lineage edges still fire — they're the load-bearing signal post-bootstrap.
-    verify(reporter, times(2)).report(any(LineageEdge.class));
-  }
-
-  @Test
-  public void testForceOnStartRepublishesOnceRegardlessOfWindow() {
-    MetadataReporter reporter = mock(MetadataReporter.class);
-    runCommitCyclesForMetadata(reporter, /* windowMs */ 0L, /* force */ true, /* cycles */ 3);
-
-    // Force fires exactly once across the Coordinator's lifetime, on cycle 1.
-    // Cycles 2 and 3 see republishedOnStart=true so the flag is "spent".
-    verify(reporter, times(1)).report(any(TableCreated.class));
-    // Lineage continues every cycle.
-    verify(reporter, times(3)).report(any(LineageEdge.class));
   }
 
   private void assertCommitTable(int idx, UUID commitId, OffsetDateTime ts) {
@@ -259,24 +231,19 @@ public class CoordinatorTest extends ChannelTestBase {
     return commitId;
   }
 
-  private void runCommitCyclesForMetadata(
-      MetadataReporter reporter, long republishWindowMs, boolean forceOnStart, int cycles) {
+  private void runCommitCyclesForMetadata(MetadataReporter reporter, int cycles) {
     when(config.commitIntervalMs()).thenReturn(0);
     when(config.commitTimeoutMs()).thenReturn(Integer.MAX_VALUE);
-    when(config.catalogName()).thenReturn("iceberg");
-    when(config.connectorName()).thenReturn("test-pipeline");
-    when(config.metadataLineageRepublishWindowMs()).thenReturn(republishWindowMs);
-    when(config.metadataLineageForceRepublishOnStart()).thenReturn(forceOnStart);
 
-    // One fake group member assigned to src-topic-0 →
-    // Coordinator.consumedTopics = {SRC_TOPIC_NAME}, giving one LineageEdge per commit.
+    // One fake group member participates in each commit cycle.
     MemberAssignment assignment = mock(MemberAssignment.class);
     when(assignment.topicPartitions())
         .thenReturn(ImmutableSet.of(new TopicPartition(SRC_TOPIC_NAME, 0)));
     MemberDescription member = mock(MemberDescription.class);
     when(member.assignment()).thenReturn(assignment);
 
-    MetadataEvents metadataEvents = new MetadataEvents(reporter, "iceberg", "test-pipeline");
+    MetadataEvents metadataEvents =
+        new MetadataEvents(reporter, "iceberg", "default", "test-pipeline", "kafka");
 
     SinkTaskContext context = mock(SinkTaskContext.class);
     Coordinator coordinator =
@@ -305,7 +272,8 @@ public class CoordinatorTest extends ChannelTestBase {
                   commitId,
                   new TableReference("catalog", ImmutableList.of("db"), "tbl"),
                   ImmutableList.of(EventTestUtil.createDataFile()),
-                  ImmutableList.of()));
+                  ImmutableList.of(),
+                  ImmutableList.of(SRC_TOPIC_NAME)));
       consumer.addRecord(
           new ConsumerRecord<>(CTL_TOPIC_NAME, 0, ctlOffset++, "k", AvroUtil.encode(dataWritten)));
 
@@ -319,8 +287,7 @@ public class CoordinatorTest extends ChannelTestBase {
       consumer.addRecord(
           new ConsumerRecord<>(CTL_TOPIC_NAME, 0, ctlOffset++, "k", AvroUtil.encode(dataComplete)));
 
-      // process() #2 of the cycle: consumes the data events, commits to iceberg,
-      // fires CommitToTable + CommitComplete, and runs republishMetadata().
+      // process() #2 consumes the data events, commits to Iceberg, and reports lineage.
       coordinator.process();
     }
   }

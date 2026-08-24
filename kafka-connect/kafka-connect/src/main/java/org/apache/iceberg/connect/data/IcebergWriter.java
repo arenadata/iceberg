@@ -29,7 +29,6 @@ import java.util.stream.Stream;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.connect.IcebergSinkConfig;
-import org.apache.iceberg.connect.MetadataEvents;
 import org.apache.iceberg.data.Record;
 import org.apache.iceberg.io.TaskWriter;
 import org.apache.iceberg.io.WriteResult;
@@ -43,37 +42,27 @@ class IcebergWriter implements RecordWriter {
   private final Table table;
   private final String tableName;
   private final IcebergSinkConfig config;
-  private final MetadataEvents metadataEvents;
   private final List<IcebergWriterResult> writerResults;
   private final Map<String, Operation> operationMappings;
   private final Set<String> ignoredOperations;
+  private final Set<String> sourceTopics;
 
   private RecordConverter recordConverter;
   private TaskWriter<Record> writer;
 
-  IcebergWriter(
-      Table table, String tableName, IcebergSinkConfig config, MetadataEvents metadataEvents) {
-    this(
-        table,
-        RecordUtils.createTableWriter(table, tableName, config),
-        tableName,
-        config,
-        metadataEvents);
+  IcebergWriter(Table table, String tableName, IcebergSinkConfig config) {
+    this(table, RecordUtils.createTableWriter(table, tableName, config), tableName, config);
   }
 
   IcebergWriter(
-      Table table,
-      TaskWriter<Record> writer,
-      String tableName,
-      IcebergSinkConfig config,
-      MetadataEvents metadataEvents) {
+      Table table, TaskWriter<Record> writer, String tableName, IcebergSinkConfig config) {
     this.table = table;
     this.tableName = tableName;
     this.config = config;
-    this.metadataEvents = metadataEvents;
     this.writerResults = Lists.newArrayList();
     this.operationMappings = Maps.newHashMap();
     this.ignoredOperations = Sets.newHashSet();
+    this.sourceTopics = Sets.newHashSet();
     this.writer = writer;
     this.recordConverter = new RecordConverter(table, config);
     initOperationMappings();
@@ -106,6 +95,7 @@ class IcebergWriter implements RecordWriter {
               .flatMap(operation -> convertToRowWithOp(record, operation))
               .orElseGet(() -> convertToRow(record));
       writer.write(row);
+      sourceTopics.add(record.topic());
     } catch (Exception e) {
       throw new DataException(
           String.format(
@@ -141,8 +131,6 @@ class IcebergWriter implements RecordWriter {
       flush();
       // apply the schema updates, this will refresh the table
       SchemaUtils.applySchemaUpdates(table, updates);
-      // Report the schema change to the metadata catalog
-      metadataEvents.schemaEvolved(TableIdentifier.parse(tableName), null, record.valueSchema());
       // initialize a new writer with the new schema
       initNewWriter();
       // convert the row again, this time using the new table schema
@@ -165,7 +153,9 @@ class IcebergWriter implements RecordWriter {
             TableIdentifier.parse(tableName),
             Arrays.asList(writeResult.dataFiles()),
             Arrays.asList(writeResult.deleteFiles()),
-            table.spec().partitionType()));
+            table.spec().partitionType(),
+            Set.copyOf(sourceTopics)));
+    sourceTopics.clear();
   }
 
   @Override

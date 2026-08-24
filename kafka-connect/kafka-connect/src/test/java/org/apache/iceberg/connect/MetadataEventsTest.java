@@ -25,85 +25,42 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
 
 import java.util.Set;
+import org.apache.iceberg.Schema;
 import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableSet;
-import org.apache.kafka.connect.data.Schema;
-import org.apache.kafka.connect.data.SchemaBuilder;
+import org.apache.iceberg.types.Types;
 import org.apache.kafka.connect.metadata.LineageEdge;
 import org.apache.kafka.connect.metadata.MetadataEvent;
 import org.apache.kafka.connect.metadata.MetadataReporter;
-import org.apache.kafka.connect.metadata.SchemaEvolved;
-import org.apache.kafka.connect.metadata.TableCreated;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 class MetadataEventsTest {
 
   private final TableIdentifier ident = TableIdentifier.of(Namespace.of("db", "schema"), "events");
-  private final Schema schema = SchemaBuilder.struct().field("id", Schema.INT64_SCHEMA).build();
+  private final Schema schema =
+      new Schema(Types.NestedField.required(1, "id", Types.LongType.get()));
 
   @Test
   void noopIsNoOpEvenWithEvents() {
     MetadataEvents events = MetadataEvents.NOOP;
     assertThatNoException()
         .isThrownBy(
-            () -> {
-              events.tableCreated(ident, schema);
-              events.schemaEvolved(ident, null, schema);
-              events.lineageCommit(ImmutableSet.of("topic-a"), ident);
-            });
+            () -> events.lineageCommit(ImmutableSet.of("topic-a"), ident, schema));
     assertThat(events.enabled()).isFalse();
-  }
-
-  @Test
-  void tableCreatedReportsCatalogDbAndTable() {
-    MetadataReporter reporter = mock(MetadataReporter.class);
-    MetadataEvents events = new MetadataEvents(reporter, "iceberg", "my-pipe");
-
-    events.tableCreated(ident, schema);
-
-    ArgumentCaptor<MetadataEvent> captor = ArgumentCaptor.forClass(MetadataEvent.class);
-    verify(reporter).report(captor.capture());
-    TableCreated tc = (TableCreated) captor.getValue();
-    assertThat(tc.catalogName()).isEqualTo("iceberg");
-    assertThat(tc.databaseName()).isEqualTo("default.db.schema");
-    assertThat(tc.tableName()).isEqualTo("events");
-    assertThat(tc.schema()).isSameAs(schema);
-  }
-
-  @Test
-  void tableCreatedSkipsWhenSchemaIsNull() {
-    MetadataReporter reporter = mock(MetadataReporter.class);
-    new MetadataEvents(reporter, "iceberg", "my-pipe").tableCreated(ident, null);
-    verifyNoInteractions(reporter);
-  }
-
-  @Test
-  void schemaEvolvedUsesFqnAndAllowsNullOldSchema() {
-    MetadataReporter reporter = mock(MetadataReporter.class);
-    MetadataEvents events = new MetadataEvents(reporter, "iceberg", "my-pipe");
-
-    events.schemaEvolved(ident, null, schema);
-
-    ArgumentCaptor<MetadataEvent> captor = ArgumentCaptor.forClass(MetadataEvent.class);
-    verify(reporter).report(captor.capture());
-    SchemaEvolved se = (SchemaEvolved) captor.getValue();
-    assertThat(se.tableFqn()).isEqualTo("iceberg.default.db.schema.events");
-    assertThat(se.oldSchema()).isNull();
-    assertThat(se.newSchema()).isSameAs(schema);
   }
 
   @Test
   void lineageCommitEmitsOneEdgePerTopic() {
     MetadataReporter reporter = mock(MetadataReporter.class);
-    MetadataEvents events = new MetadataEvents(reporter, "iceberg", "my-pipe");
+    MetadataEvents events =
+        new MetadataEvents(reporter, "iceberg", "warehouse", "my-pipe", "kafka");
     Set<String> topics = ImmutableSet.of("a", "b", "c");
 
-    events.lineageCommit(topics, ident);
+    events.lineageCommit(topics, ident, schema);
 
     ArgumentCaptor<MetadataEvent> captor = ArgumentCaptor.forClass(MetadataEvent.class);
     verify(reporter, org.mockito.Mockito.times(3)).report(captor.capture());
@@ -111,15 +68,18 @@ class MetadataEventsTest {
         .allSatisfy(
             e -> {
               LineageEdge edge = (LineageEdge) e;
-              assertThat(edge.target().name()).isEqualTo("iceberg.default.db.schema.events");
+              assertThat(edge.source().name()).startsWith("kafka.");
+              assertThat(edge.target().name()).isEqualTo("iceberg.warehouse.db.schema.events");
               assertThat(edge.pipelineName()).isEqualTo("my-pipe");
+              assertThat(edge.columnsLineage()).hasSize(1);
             });
   }
 
   @Test
   void lineageCommitNoopOnEmptyTopics() {
     MetadataReporter reporter = mock(MetadataReporter.class);
-    new MetadataEvents(reporter, "iceberg", "my-pipe").lineageCommit(ImmutableSet.of(), ident);
+    new MetadataEvents(reporter, "iceberg", "default", "my-pipe", "kafka")
+        .lineageCommit(ImmutableSet.of(), ident, schema);
     verify(reporter, never()).report(any());
   }
 
@@ -127,14 +87,10 @@ class MetadataEventsTest {
   void reporterErrorsDoNotPropagate() {
     MetadataReporter reporter = mock(MetadataReporter.class);
     doThrow(new RuntimeException("kaboom")).when(reporter).report(any());
-    MetadataEvents events = new MetadataEvents(reporter, "iceberg", "my-pipe");
+    MetadataEvents events =
+        new MetadataEvents(reporter, "iceberg", "default", "my-pipe", "kafka");
 
     assertThatNoException()
-        .isThrownBy(
-            () -> {
-              events.tableCreated(ident, schema);
-              events.schemaEvolved(ident, null, schema);
-              events.lineageCommit(ImmutableSet.of("topic"), ident);
-            });
+        .isThrownBy(() -> events.lineageCommit(ImmutableSet.of("topic"), ident, schema));
   }
 }

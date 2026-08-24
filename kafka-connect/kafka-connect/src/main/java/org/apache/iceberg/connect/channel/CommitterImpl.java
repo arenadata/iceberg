@@ -83,7 +83,7 @@ public class CommitterImpl implements Committer {
     }
 
     LOG.info("Starting commit worker");
-    SinkWriter sinkWriter = new SinkWriter(catalog, config, metadataEvents);
+    SinkWriter sinkWriter = new SinkWriter(catalog, config);
     worker = new Worker(config, clientFactory, sinkWriter, context);
     worker.start();
   }

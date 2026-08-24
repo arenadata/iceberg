@@ -55,7 +55,12 @@ public class IcebergSinkTask extends SinkTask {
 
     catalog = CatalogUtils.loadCatalog(config);
     MetadataEvents metadataEvents =
-        MetadataEvents.fromContext(context, config.catalogName(), config.connectorName());
+        MetadataEvents.fromContext(
+            context,
+            config.metadataIcebergServiceName(),
+            config.metadataIcebergDatabaseName(),
+            config.metadataPipelineFqn(),
+            config.metadataKafkaServiceName());
     committer = CommitterFactory.createCommitter(config);
     committer.start(catalog, config, context, metadataEvents);
   }
