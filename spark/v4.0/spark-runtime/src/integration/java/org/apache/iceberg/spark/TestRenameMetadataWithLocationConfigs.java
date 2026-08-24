@@ -19,10 +19,17 @@
 package org.apache.iceberg.spark;
 
 import static java.lang.String.format;
+import static org.apache.iceberg.spark.TestContext.BASE_COLUMN_SCHEMA;
+import static org.apache.iceberg.spark.TestContext.CATALOG_TABLE_NAME;
+import static org.apache.iceberg.spark.TestContext.CATALOG_TABLE_NEW_NAME;
+import static org.apache.iceberg.spark.TestContext.RECORDS;
+import static org.apache.iceberg.spark.TestContext.TABLE_IDENTIFIER;
+import static org.apache.iceberg.spark.TestContext.TABLE_IDENTIFIER_NEW;
 import static org.apache.iceberg.spark.TestContext.TEST_CATALOG;
 import static org.apache.iceberg.spark.TestContext.TEST_DB;
+import static org.apache.iceberg.spark.TestContext.TEST_TABLE;
+import static org.apache.iceberg.spark.TestContext.TEST_TABLE_NEW;
 import static org.apache.iceberg.spark.TestContext.WAREHOUSE_LOCATION;
-import static org.apache.iceberg.spark.service.IcebergTableClient.loadCatalogTableLocation;
 import static org.assertj.core.api.AssertionsForInterfaceTypes.assertThat;
 
 import java.io.IOException;
@@ -40,7 +47,7 @@ import org.junit.jupiter.api.TestTemplate;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 @ExtendWith(ParameterizedTestExtension.class)
-public class TestRenameMetadataWithLocationConfigs extends RenameIcebergTableCatalogTestBase {
+public class TestRenameMetadataWithLocationConfigs extends AbstractTestBase {
 
   @TestTemplate
   public void testRenameMetadataLocationUpdateNonDefaultLocation(Map<String, String> locationConfig)
@@ -48,10 +55,9 @@ public class TestRenameMetadataWithLocationConfigs extends RenameIcebergTableCat
           NoSuchNamespaceException,
           IOException,
           NoSuchTableException {
-    initSpark(
-        TestContext.IcebergCatalogType.HIVE, Map.of("rename.metadata.location.update", "true"));
+    initSpark(IcebergCatalogType.HIVE, Map.of("rename.metadata.location.update", "true"));
     spark().sql(format("CREATE NAMESPACE IF NOT EXISTS %s.%s", TEST_CATALOG, TEST_DB));
-    catalog().createTable(tableIdentifier, baseColumnSchema, new Transform[0], locationConfig);
+    catalog().createTable(TABLE_IDENTIFIER, BASE_COLUMN_SCHEMA, new Transform[0], locationConfig);
     spark()
         .sql(
             format(
@@ -66,12 +72,10 @@ public class TestRenameMetadataWithLocationConfigs extends RenameIcebergTableCat
     assertThat(extractTableRecords(CATALOG_TABLE_NEW_NAME))
         .containsExactlyInAnyOrderElementsOf(RECORDS.subList(0, 4));
     AssertionsForClassTypes.assertThat(
-            loadCatalogTableLocation(catalog().loadTable(tableIdentifierNew)))
-        .isEqualTo(
-            format("%s/%s", TestContext.IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE));
-    assertThat(extractFsContents(TestContext.IcebergCatalogType.HIVE, false))
-        .doesNotContain(
-            format("%s/%s", TestContext.IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE_NEW));
+            loadCatalogTableLocation(catalog().loadTable(TABLE_IDENTIFIER_NEW)))
+        .isEqualTo(format("%s/%s", IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE));
+    assertThat(extractFileSystemContents(IcebergCatalogType.HIVE, false))
+        .doesNotContain(format("%s/%s", IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE_NEW));
   }
 
   @Parameters(name = "locationConfig={0}")

@@ -255,7 +255,7 @@ project(":iceberg-spark:iceberg-spark-runtime-${sparkMajorVersion}_${scalaVersio
     }
     testImplementation "org.testcontainers:testcontainers:1.20.4"
 
-    integrationImplementation "org.apache.hadoop:hadoop-aws:3.4.1"
+    integrationImplementation "org.apache.hadoop:hadoop-aws:3.3.4"
     integrationImplementation "org.scala-lang.modules:scala-collection-compat_${scalaVersion}:${libs.versions.scala.collection.compat.get()}"
     integrationImplementation "org.apache.spark:spark-hive_${scalaVersion}:${libs.versions.spark35.get()}"
     integrationImplementation libs.awaitility

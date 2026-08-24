@@ -20,34 +20,43 @@ package org.apache.iceberg.spark;
 
 import static java.lang.String.format;
 import static java.util.Map.entry;
-import static org.apache.iceberg.spark.service.IcebergTableClient.AWS_ACCESS_KEY;
-import static org.apache.iceberg.spark.service.IcebergTableClient.AWS_REGION;
-import static org.apache.iceberg.spark.service.IcebergTableClient.AWS_SECRET_KEY;
-import static org.apache.iceberg.spark.service.IcebergTableClient.MINIO_PORT;
-import static org.awaitility.Awaitility.await;
 
-import java.io.File;
-import java.time.Duration;
+import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
-import org.apache.hadoop.fs.Path;
 import org.apache.iceberg.CatalogProperties;
-import org.apache.spark.sql.SparkSession;
-import org.apache.spark.sql.connector.catalog.CatalogPlugin;
-import org.apache.spark.sql.connector.catalog.SupportsNamespaces;
-import org.apache.spark.sql.connector.catalog.TableCatalog;
-import org.testcontainers.containers.ComposeContainer;
-import org.testcontainers.containers.wait.strategy.Wait;
+import org.apache.spark.sql.connector.catalog.Column;
+import org.apache.spark.sql.connector.catalog.Identifier;
+import org.apache.spark.sql.types.DataTypes;
 
 public class TestContext {
-
   public static final String HIVE_METASTORE_PORT = "9083";
   public static final String WAREHOUSE_LOCATION = "s3a://warehouse";
   public static final String TEST_DB = "test";
   public static final String TEST_CATALOG = "test_catalog";
+  public static final int MINIO_PORT = 9000;
+  public static final String AWS_ACCESS_KEY = "minioadmin";
+  public static final String AWS_SECRET_KEY = "minioadmin";
+  public static final String AWS_REGION = "us-east-1";
+  public static final String TEST_TABLE = "test_table";
+  public static final String TEST_TABLE_NEW = "test_table_new";
+  public static final String CATALOG_TABLE_NAME =
+      format("%s.%s.%s", TEST_CATALOG, TEST_DB, TEST_TABLE);
+  public static final String CATALOG_TABLE_NEW_NAME =
+      format("%s.%s.%s", TEST_CATALOG, TEST_DB, TEST_TABLE_NEW);
+  public static final String TABLE_NAMESPACE_DIR = format("%s/%s.db", WAREHOUSE_LOCATION, TEST_DB);
+  public static final List<String> RECORDS =
+      List.of("(1, 'Sam')", "(2, 'Bob')", "(3, 'Sue')", "(4, 'Ann')", "(1, 'Tom')", "(2, 'Brian')");
+  public static final Identifier TABLE_IDENTIFIER =
+      Identifier.of(new String[] {TEST_DB}, TEST_TABLE);
+  public static final Identifier TABLE_IDENTIFIER_NEW =
+      Identifier.of(new String[] {TEST_DB}, TEST_TABLE_NEW);
+  public static final Column[] BASE_COLUMN_SCHEMA =
+      new Column[] {
+        Column.create("id", DataTypes.IntegerType, false),
+        Column.create("username", DataTypes.StringType, true)
+      };
 
-  private static final Map<String, String> BASE_CATALOG_CONFIGS =
+  public static final Map<String, String> BASE_CATALOG_CONFIGS =
       Map.ofEntries(
           entry("io.manifest.file-io-impl", "org.apache.iceberg.aws.s3.S3FileIO"),
           entry("s3.delete.enabled", "true"),
@@ -67,135 +76,5 @@ public class TestContext {
               "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider"),
           entry("client.factory", "org.apache.iceberg.aws.DefaultAwsClientFactory"));
 
-  private static volatile TestContext instance;
-
-  private final ComposeContainer container;
-
-  public static synchronized TestContext instance() {
-    if (instance == null) {
-      instance = new TestContext();
-    }
-    return instance;
-  }
-
-  private TestContext() {
-    container =
-        new ComposeContainer(new File("./docker/docker-compose.yml"))
-            .withStartupTimeout(Duration.ofMinutes(2))
-            .withTailChildContainers(true)
-            .waitingFor(
-                "hive-metastore", Wait.forLogMessage(".*Starting Hive Metastore Server.*", 1));
-    container.start();
-  }
-
-  protected SparkSession initLocalSparkSession(
-      IcebergCatalogType catalogType, Map<String, String> customConfigs) {
-    SparkSession.Builder builder =
-        SparkSession.builder()
-            .master("local[*]")
-            .config("spark.driver.host", "localhost")
-            .config(
-                "spark.sql.extensions",
-                "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
-            .config(
-                format("spark.sql.catalog.%s", TEST_CATALOG),
-                "org.apache.iceberg.spark.SparkCatalog")
-            .config(
-                "spark.hadoop.fs.s3a.aws.credentials.provider",
-                "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider")
-            .config("spark.hadoop.fs.s3a.access.key", AWS_ACCESS_KEY)
-            .config("spark.hadoop.fs.s3a.secret.key", AWS_SECRET_KEY)
-            .config("spark.hadoop.fs.s3a.endpoint", "http://localhost:" + MINIO_PORT)
-            .config("spark.hadoop.fs.s3a.endpoint.region", AWS_REGION)
-            .config("spark.hadoop.fs.s3a.path.style.access", "true");
-    fullCatalogConfigs(catalogType, customConfigs)
-        .forEach(
-            (key, val) ->
-                builder.config(format("spark.sql.catalog.%s.%s", TEST_CATALOG, key), val));
-    SparkSession sparkSession = builder.getOrCreate();
-    checkHiveCatalogAvailability(sparkSession);
-    return sparkSession;
-  }
-
-  private void checkHiveCatalogAvailability(SparkSession sparkSession) {
-    await()
-        .atMost(Duration.ofSeconds(30))
-        .pollInterval(Duration.ofMillis(500))
-        .ignoreExceptions()
-        .until(
-            () -> {
-              ((SupportsNamespaces) provideCatalogPlugin(sparkSession)).listNamespaces();
-              return true;
-            });
-  }
-
-  protected TableCatalog provideCatalog(CatalogPlugin catalogPlugin) {
-    return (TableCatalog) catalogPlugin;
-  }
-
-  protected CatalogPlugin provideCatalogPlugin(SparkSession sparkSession) {
-    return sparkSession.sessionState().catalogManager().catalog(TEST_CATALOG);
-  }
-
-  protected static Map<String, String> fullCatalogConfigs(
-      IcebergCatalogType catalogType, Map<String, String> customConfigs) {
-    return Stream.concat(
-            catalogType.getCatalogTypeBaseConfigs().entrySet().stream(),
-            customConfigs.entrySet().stream())
-        .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
-  }
-
-  protected enum IcebergCatalogType {
-    HIVE(
-        Stream.concat(
-                BASE_CATALOG_CONFIGS.entrySet().stream(),
-                Map.ofEntries(
-                    entry("type", "hive"),
-                    entry(CatalogProperties.URI, "thrift://localhost:" + HIVE_METASTORE_PORT),
-                    entry("hive.metastore.uris", "thrift://localhost:9083"),
-                    entry("hive.metastore.schema.verification", "false"),
-                    entry("hive.metastore.authorization.storage.checks", "false"),
-                    entry("hive.metastore.client.capability.check", "false"),
-                    entry("hive.metastore.skip.type.validation", "true"))
-                    .entrySet()
-                    .stream())
-            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue)),
-        format("%s/%s.db", WAREHOUSE_LOCATION, TEST_DB)),
-    HADOOP(
-        Stream.concat(
-                BASE_CATALOG_CONFIGS.entrySet().stream(),
-                Map.of("type", "hadoop").entrySet().stream())
-            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue)),
-        format("%s/%s.db", WAREHOUSE_LOCATION, TEST_DB)),
-    REST(
-        Stream.concat(
-                BASE_CATALOG_CONFIGS.entrySet().stream(),
-                Map.of("type", "rest", "uri", "http://localhost:8181").entrySet().stream())
-            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue)),
-        format("%s/%s", WAREHOUSE_LOCATION, TEST_DB));
-
-    private final Map<String, String> catalogTypeBaseConfigs;
-
-    private final String namespaceDir;
-
-    private final Path namespacePath;
-
-    IcebergCatalogType(Map<String, String> catalogTypeBaseConfigs, String namespaceDir) {
-      this.catalogTypeBaseConfigs = catalogTypeBaseConfigs;
-      this.namespaceDir = namespaceDir;
-      this.namespacePath = new Path(namespaceDir);
-    }
-
-    public Map<String, String> getCatalogTypeBaseConfigs() {
-      return this.catalogTypeBaseConfigs;
-    }
-
-    public String getNamespaceDir() {
-      return this.namespaceDir;
-    }
-
-    public Path getNamespacePath() {
-      return this.namespacePath;
-    }
-  }
+  private TestContext() {}
 }
