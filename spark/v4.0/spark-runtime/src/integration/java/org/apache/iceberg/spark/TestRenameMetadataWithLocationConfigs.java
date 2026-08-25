@@ -19,17 +19,17 @@
 package org.apache.iceberg.spark;
 
 import static java.lang.String.format;
-import static org.apache.iceberg.spark.TestContext.BASE_COLUMN_SCHEMA;
-import static org.apache.iceberg.spark.TestContext.CATALOG_TABLE_NAME;
-import static org.apache.iceberg.spark.TestContext.CATALOG_TABLE_NEW_NAME;
-import static org.apache.iceberg.spark.TestContext.RECORDS;
-import static org.apache.iceberg.spark.TestContext.TABLE_IDENTIFIER;
-import static org.apache.iceberg.spark.TestContext.TABLE_IDENTIFIER_NEW;
-import static org.apache.iceberg.spark.TestContext.TEST_CATALOG;
-import static org.apache.iceberg.spark.TestContext.TEST_DB;
-import static org.apache.iceberg.spark.TestContext.TEST_TABLE;
-import static org.apache.iceberg.spark.TestContext.TEST_TABLE_NEW;
-import static org.apache.iceberg.spark.TestContext.WAREHOUSE_LOCATION;
+import static org.apache.iceberg.spark.IcebergCatalogService.BASE_COLUMN_SCHEMA;
+import static org.apache.iceberg.spark.IcebergCatalogService.CATALOG_TABLE_NAME;
+import static org.apache.iceberg.spark.IcebergCatalogService.CATALOG_TABLE_NEW_NAME;
+import static org.apache.iceberg.spark.IcebergCatalogService.RECORDS;
+import static org.apache.iceberg.spark.IcebergCatalogService.TABLE_IDENTIFIER;
+import static org.apache.iceberg.spark.IcebergCatalogService.TABLE_IDENTIFIER_NEW;
+import static org.apache.iceberg.spark.IcebergCatalogService.TEST_CATALOG;
+import static org.apache.iceberg.spark.IcebergCatalogService.TEST_DB;
+import static org.apache.iceberg.spark.IcebergCatalogService.TEST_TABLE;
+import static org.apache.iceberg.spark.IcebergCatalogService.TEST_TABLE_NEW;
+import static org.apache.iceberg.spark.IcebergCatalogService.WAREHOUSE_LOCATION;
 import static org.assertj.core.api.AssertionsForInterfaceTypes.assertThat;
 
 import java.io.IOException;

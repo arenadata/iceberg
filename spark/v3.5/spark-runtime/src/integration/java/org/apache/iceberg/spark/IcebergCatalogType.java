@@ -20,10 +20,10 @@ package org.apache.iceberg.spark;
 
 import static java.lang.String.format;
 import static java.util.Map.entry;
-import static org.apache.iceberg.spark.TestContext.BASE_CATALOG_CONFIGS;
-import static org.apache.iceberg.spark.TestContext.HIVE_METASTORE_PORT;
-import static org.apache.iceberg.spark.TestContext.TEST_DB;
-import static org.apache.iceberg.spark.TestContext.WAREHOUSE_LOCATION;
+import static org.apache.iceberg.spark.IcebergCatalogService.BASE_CATALOG_CONFIGS;
+import static org.apache.iceberg.spark.IcebergCatalogService.HIVE_METASTORE_PORT;
+import static org.apache.iceberg.spark.IcebergCatalogService.TEST_DB;
+import static org.apache.iceberg.spark.IcebergCatalogService.WAREHOUSE_LOCATION;
 
 import java.util.Map;
 import java.util.stream.Collectors;

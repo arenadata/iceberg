@@ -19,16 +19,16 @@
 package org.apache.iceberg.spark;
 
 import static java.lang.String.format;
-import static org.apache.iceberg.spark.TestContext.AWS_ACCESS_KEY;
-import static org.apache.iceberg.spark.TestContext.AWS_REGION;
-import static org.apache.iceberg.spark.TestContext.AWS_SECRET_KEY;
-import static org.apache.iceberg.spark.TestContext.BASE_CATALOG_CONFIGS;
-import static org.apache.iceberg.spark.TestContext.MINIO_PORT;
-import static org.apache.iceberg.spark.TestContext.TEST_CATALOG;
-import static org.apache.iceberg.spark.TestContext.TEST_DB;
-import static org.apache.iceberg.spark.TestContext.TEST_TABLE;
-import static org.apache.iceberg.spark.TestContext.TEST_TABLE_NEW;
-import static org.apache.iceberg.spark.TestContext.WAREHOUSE_LOCATION;
+import static org.apache.iceberg.spark.IcebergCatalogService.AWS_ACCESS_KEY;
+import static org.apache.iceberg.spark.IcebergCatalogService.AWS_REGION;
+import static org.apache.iceberg.spark.IcebergCatalogService.AWS_SECRET_KEY;
+import static org.apache.iceberg.spark.IcebergCatalogService.BASE_CATALOG_CONFIGS;
+import static org.apache.iceberg.spark.IcebergCatalogService.MINIO_PORT;
+import static org.apache.iceberg.spark.IcebergCatalogService.TEST_CATALOG;
+import static org.apache.iceberg.spark.IcebergCatalogService.TEST_DB;
+import static org.apache.iceberg.spark.IcebergCatalogService.TEST_TABLE;
+import static org.apache.iceberg.spark.IcebergCatalogService.TEST_TABLE_NEW;
+import static org.apache.iceberg.spark.IcebergCatalogService.WAREHOUSE_LOCATION;
 import static org.awaitility.Awaitility.await;
 
 import java.io.File;
@@ -55,7 +55,6 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.testcontainers.containers.ComposeContainer;
-import org.testcontainers.containers.wait.strategy.Wait;
 
 public class AbstractTestBase {
   private static ComposeContainer container;
@@ -65,20 +64,7 @@ public class AbstractTestBase {
 
   @BeforeAll
   public static void baseBeforeAll() {
-    getContainer();
-  }
-
-  private static synchronized ComposeContainer getContainer() {
-    if (container == null) {
-      container =
-          new ComposeContainer(new File("./docker/docker-compose.yml"))
-              .withStartupTimeout(Duration.ofMinutes(2))
-              .withTailChildContainers(true)
-              .waitingFor(
-                  "hive-metastore", Wait.forLogMessage(".*Starting Hive Metastore Server.*", 1));
-      container.start();
-    }
-    return container;
+    TestContext.instance();
   }
 
   @BeforeEach
