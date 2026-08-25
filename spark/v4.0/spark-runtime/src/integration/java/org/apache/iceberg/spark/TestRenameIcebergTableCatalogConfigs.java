@@ -29,7 +29,6 @@ import static org.apache.iceberg.spark.IcebergCatalogService.TEST_CATALOG;
 import static org.apache.iceberg.spark.IcebergCatalogService.TEST_DB;
 import static org.apache.iceberg.spark.IcebergCatalogService.TEST_TABLE;
 import static org.apache.iceberg.spark.IcebergCatalogService.TEST_TABLE_NEW;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.AssertionsForInterfaceTypes.assertThat;
 
 import java.io.IOException;

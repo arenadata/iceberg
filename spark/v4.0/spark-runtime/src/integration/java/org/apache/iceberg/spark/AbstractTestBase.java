@@ -31,7 +31,6 @@ import static org.apache.iceberg.spark.IcebergCatalogService.TEST_TABLE_NEW;
 import static org.apache.iceberg.spark.IcebergCatalogService.WAREHOUSE_LOCATION;
 import static org.awaitility.Awaitility.await;
 
-import java.io.File;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.Arrays;
