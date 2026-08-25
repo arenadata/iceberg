@@ -93,6 +93,7 @@ public class TestUnpartitionedDeltaWriter extends TestBaseWriter {
     // In upsert mode, UPDATE = delete by key + insert
     assertThat(result.dataFiles()).hasSize(1);
     assertThat(result.deleteFiles()).hasSize(1);
+    assertPuffinDeleteFile(result.deleteFiles()[0]);
   }
 
   @ParameterizedTest

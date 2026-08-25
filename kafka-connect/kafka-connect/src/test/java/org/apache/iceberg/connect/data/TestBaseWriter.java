@@ -27,6 +27,8 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.List;
 import java.util.UUID;
+import org.apache.iceberg.DeleteFile;
+import org.apache.iceberg.FileFormat;
 import org.apache.iceberg.HasTableOperations;
 import org.apache.iceberg.LocationProviders;
 import org.apache.iceberg.PartitionSpec;
@@ -41,6 +43,7 @@ import org.apache.iceberg.data.GenericRecord;
 import org.apache.iceberg.data.Record;
 import org.apache.iceberg.encryption.PlaintextEncryptionManager;
 import org.apache.iceberg.inmemory.InMemoryFileIO;
+import org.apache.iceberg.io.SeekableInputStream;
 import org.apache.iceberg.io.TaskWriter;
 import org.apache.iceberg.io.WriteResult;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
@@ -124,5 +127,19 @@ public class TestBaseWriter {
     row.setField("data", data);
     row.setField("id2", id);
     return new RecordWrapper(row, op);
+  }
+
+  protected void assertPuffinDeleteFile(DeleteFile deleteFile) {
+    assertThat(deleteFile.format()).isEqualTo(FileFormat.PUFFIN);
+
+    String location = deleteFile.location().toString();
+    assertThat(location).endsWith(".puffin");
+
+    try (SeekableInputStream input = fileIO.newInputFile(location).newStream()) {
+      assertThat(input.readNBytes(4))
+          .containsExactly((byte) 0x50, (byte) 0x46, (byte) 0x41, (byte) 0x31);
+    } catch (IOException e) {
+      throw new UncheckedIOException("Failed to read deletion vector: " + location, e);
+    }
   }
 }
