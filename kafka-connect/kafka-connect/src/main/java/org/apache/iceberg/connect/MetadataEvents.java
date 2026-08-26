@@ -142,9 +142,7 @@ public class MetadataEvents {
 
   private String fqn(TableIdentifier identifier) {
     String[] namespaceLevels = identifier.namespace().levels();
-    String schema =
-        namespaceLevels.length == 0 ? "default" : String.join(".", namespaceLevels);
-    return String.join(
-        ".", icebergServiceName, icebergDatabaseName, schema, identifier.name());
+    String schema = namespaceLevels.length == 0 ? "default" : String.join(".", namespaceLevels);
+    return String.join(".", icebergServiceName, icebergDatabaseName, schema, identifier.name());
   }
 }

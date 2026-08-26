@@ -48,8 +48,7 @@ class TestMetadataEvents {
   void noopIsNoOpEvenWithEvents() {
     MetadataEvents events = MetadataEvents.NOOP;
     assertThatNoException()
-        .isThrownBy(
-            () -> events.lineageCommit(ImmutableSet.of("topic-a"), ident, schema));
+        .isThrownBy(() -> events.lineageCommit(ImmutableSet.of("topic-a"), ident, schema));
     assertThat(events.enabled()).isFalse();
   }
 
@@ -87,8 +86,7 @@ class TestMetadataEvents {
   void reporterErrorsDoNotPropagate() {
     MetadataReporter reporter = mock(MetadataReporter.class);
     doThrow(new RuntimeException("kaboom")).when(reporter).report(any());
-    MetadataEvents events =
-        new MetadataEvents(reporter, "iceberg", "default", "my-pipe", "kafka");
+    MetadataEvents events = new MetadataEvents(reporter, "iceberg", "default", "my-pipe", "kafka");
 
     assertThatNoException()
         .isThrownBy(() -> events.lineageCommit(ImmutableSet.of("topic"), ident, schema));
