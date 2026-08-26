@@ -119,6 +119,7 @@ allprojects {
   version = projectVersion
   repositories {
     maven {
+      name = 'arenadata'
       url = 'https://maven.pkg.github.com/arenadata/*'
       credentials {
         username = project.findProperty("gpr.user") ?: System.getenv("GITHUB_USERNAME")
@@ -126,14 +127,6 @@ allprojects {
       }
     }
     mavenCentral()
-    maven {
-      name = 'arenadata'
-      url = uri('https://maven.pkg.github.com/arenadata/*')
-      credentials {
-        username = System.getenv('GITHUB_ACTOR') ?: ''
-        password = System.getenv('GITHUB_TOKEN') ?: ''
-      }
-    }
     mavenLocal()
   }
 }
