@@ -40,6 +40,12 @@ services:
     volumes:
       - data:/data
     command: server /data --console-address ":9001"
+    healthcheck:
+      test: [ "CMD", "mc", "ready", "local" ]
+      interval: 3s
+      timeout: 2s
+      retries: 5
+      start_period: 2s
 
   create-bucket:
     image: minio/mc
@@ -97,6 +103,12 @@ services:
         -Dfs.s3a.connection.ssl.enabled=false
     command: >
       /opt/hive/bin/hive --service metastore -p 9083
+    healthcheck:
+      test: [ "CMD-SHELL", "HADOOP_OPTS=\"$$SERVICE_OPTS\" /opt/hive/bin/schematool -dbType postgres -info" ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
     depends_on:
       metastore-db:
         condition: service_healthy
