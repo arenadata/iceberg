@@ -18,18 +18,32 @@
  */
 package org.apache.iceberg.connect;
 
+import com.fasterxml.jackson.core.JsonFactory;
+import com.fasterxml.jackson.core.StreamReadFeature;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.BufferedReader;
+import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Properties;
 import java.util.Set;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import org.apache.iceberg.IcebergBuild;
+import org.apache.iceberg.catalog.TableIdentifier;
+import org.apache.iceberg.connect.data.RecordRoutingStrategy;
 import org.apache.iceberg.relocated.com.google.common.annotations.VisibleForTesting;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.base.Splitter;
@@ -71,6 +85,11 @@ public class IcebergSinkConfig extends AbstractConfig {
   private static final String TABLES_PROP = "iceberg.tables";
   private static final String TABLES_DYNAMIC_PROP = "iceberg.tables.dynamic-enabled";
   private static final String TABLES_ROUTE_FIELD_PROP = "iceberg.tables.route-field";
+  private static final String TABLES_TOPIC_TO_TABLE_MAPPING_PROP =
+      "iceberg.tables.topic-to-table-mapping";
+  private static final String TABLES_TOPIC_TO_TABLE_MAPPING_FILE_PROP =
+      "iceberg.tables.topic-to-table-mapping-file";
+  private static final String ROUTING_STRATEGY_PROP = "routing.strategy";
   private static final String TABLES_CDC_FIELD_PROP = "iceberg.tables.cdc-field";
   private static final String TABLES_UPSERT_MODE_ENABLED_PROP =
       "iceberg.tables.upsert-mode-enabled";
@@ -136,6 +155,16 @@ public class IcebergSinkConfig extends AbstractConfig {
 
   private static final String COORDINATOR_EXECUTOR_KEEP_ALIVE_TIMEOUT_MS =
       "iceberg.coordinator-executor-keep-alive-timeout-ms";
+  private static final int TOPIC_TO_TABLE_MAPPING_FILE_VERSION = 1;
+  private static final String TOPIC_TO_TABLE_MAPPING_FILE_VERSION_FIELD = "version";
+  private static final String TOPIC_TO_TABLE_MAPPING_FILE_ROUTES_FIELD = "routes";
+  private static final String TOPIC_TO_TABLE_MAPPING_SOURCE_NONE = "none";
+  private static final String TOPIC_TO_TABLE_MAPPING_SOURCE_INLINE = "inline";
+  private static final String TOPIC_TO_TABLE_MAPPING_SOURCE_FILE = "file";
+  private static final ObjectMapper TOPIC_TO_TABLE_MAPPING_FILE_MAPPER =
+      new ObjectMapper(
+              JsonFactory.builder().enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).build())
+          .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
 
   @VisibleForTesting static final String COMMA_NO_PARENS_REGEX = ",(?![^()]*+\\))";
 
@@ -147,24 +176,7 @@ public class IcebergSinkConfig extends AbstractConfig {
 
   private static ConfigDef newConfigDef() {
     ConfigDef configDef = new ConfigDef();
-    configDef.define(
-        TABLES_PROP,
-        ConfigDef.Type.LIST,
-        null,
-        Importance.HIGH,
-        "Comma-delimited list of destination tables");
-    configDef.define(
-        TABLES_DYNAMIC_PROP,
-        ConfigDef.Type.BOOLEAN,
-        false,
-        Importance.MEDIUM,
-        "Enable dynamic routing to tables based on a record value");
-    configDef.define(
-        TABLES_ROUTE_FIELD_PROP,
-        ConfigDef.Type.STRING,
-        null,
-        Importance.MEDIUM,
-        "Source record field for routing records to tables");
+    defineTableRoutingProps(configDef);
     configDef.define(
         TABLES_UPSERT_MODE_ENABLED_PROP,
         ConfigDef.Type.BOOLEAN,
@@ -279,6 +291,45 @@ public class IcebergSinkConfig extends AbstractConfig {
     return configDef;
   }
 
+  private static void defineTableRoutingProps(ConfigDef configDef) {
+    configDef.define(
+        ROUTING_STRATEGY_PROP,
+        ConfigDef.Type.STRING,
+        null,
+        Importance.MEDIUM,
+        "Routing strategy. Supported values: dynamic-field, all-tables, regex, topic-to-table");
+    configDef.define(
+        TABLES_PROP,
+        ConfigDef.Type.LIST,
+        null,
+        Importance.HIGH,
+        "Comma-delimited list of destination tables");
+    configDef.define(
+        TABLES_DYNAMIC_PROP,
+        ConfigDef.Type.BOOLEAN,
+        false,
+        Importance.MEDIUM,
+        "Enable dynamic routing to tables based on a record value");
+    configDef.define(
+        TABLES_ROUTE_FIELD_PROP,
+        ConfigDef.Type.STRING,
+        null,
+        Importance.MEDIUM,
+        "Source record field for routing records to tables");
+    configDef.define(
+        TABLES_TOPIC_TO_TABLE_MAPPING_PROP,
+        ConfigDef.Type.STRING,
+        null,
+        Importance.MEDIUM,
+        "Static mapping from topic name to table name in format topic1:db.table1,topic2:db.table2");
+    configDef.define(
+        TABLES_TOPIC_TO_TABLE_MAPPING_FILE_PROP,
+        ConfigDef.Type.STRING,
+        null,
+        Importance.MEDIUM,
+        "Absolute path to a JSON file with static mapping from topic name to table name");
+  }
+
   private static void defineHdfsKerberosProps(ConfigDef configDef) {
     configDef.define(
         HDFS_AUTHENTICATION_KERBEROS_PROP,
@@ -377,6 +428,9 @@ public class IcebergSinkConfig extends AbstractConfig {
   private final Map<String, String> autoCreateProps;
   private final Map<String, String> writeProps;
   private final Map<String, TableSinkConfig> tableConfigMap = Maps.newHashMap();
+  private final RecordRoutingStrategy recordRoutingStrategy;
+  private final Map<String, String> topicToTableMapping;
+  private final String topicToTableMappingSource;
   private final JsonConverter jsonConverter;
   private final Collection<String> schemaVariantFieldPaths;
   private final Collection<String> schemaTimestampNsFieldPaths;
@@ -403,6 +457,11 @@ public class IcebergSinkConfig extends AbstractConfig {
             ConverterConfig.TYPE_CONFIG,
             ConverterType.VALUE.getName()));
 
+    this.recordRoutingStrategy = resolveRoutingStrategy();
+    TopicToTableMapping topicToTableMappingConfig = loadTopicToTableMapping();
+    this.topicToTableMapping = topicToTableMappingConfig.mapping();
+    this.topicToTableMappingSource = topicToTableMappingConfig.source();
+
     this.schemaVariantFieldPaths =
         parseVariantFieldPaths(getString(TABLES_SCHEMA_VARIANT_FIELDS_PROP));
     this.schemaTimestampNsFieldPaths =
@@ -412,13 +471,40 @@ public class IcebergSinkConfig extends AbstractConfig {
 
   private void validate() {
     checkState(!catalogProps().isEmpty(), "Must specify Iceberg catalog properties");
-    if (tables() != null) {
-      checkState(!dynamicTablesEnabled(), "Cannot specify both static and dynamic table names");
-    } else if (dynamicTablesEnabled()) {
-      checkState(
-          tablesRouteField() != null, "Must specify a route field if using dynamic table names");
+    switch (recordRoutingStrategy) {
+      case DYNAMIC_FIELD:
+        checkState(tables() == null, "Cannot specify both static and dynamic table names");
+        checkState(
+            getTablesRouteField() != null,
+            "Must specify a route field if using dynamic table names");
+        break;
+      case ALL_TABLES:
+        checkState(tables() != null && !tables().isEmpty(), "Must specify table name(s)");
+        break;
+      case REGEX:
+        checkState(tables() != null && !tables().isEmpty(), "Must specify table name(s)");
+        checkState(
+            getTablesRouteField() != null,
+            "Must specify a route field if using regex routing strategy");
+        break;
+      case TOPIC_TO_TABLE:
+        checkState(
+            !topicToTableMapping.isEmpty(),
+            "Must specify either iceberg.tables.topic-to-table-mapping or "
+                + "iceberg.tables.topic-to-table-mapping-file for topic-to-table routing strategy");
+        break;
+      default:
+        throw new ConfigException("Unsupported routing strategy: " + recordRoutingStrategy);
+    }
+
+    if (recordRoutingStrategy == RecordRoutingStrategy.TOPIC_TO_TABLE) {
+      LOG.info(
+          "Using routing strategy: {}, topic-to-table mapping source: {}, route count: {}",
+          recordRoutingStrategy.value(),
+          topicToTableMappingSource,
+          topicToTableMapping.size());
     } else {
-      throw new ConfigException("Must specify table name(s)");
+      LOG.info("Using routing strategy: {}", recordRoutingStrategy.value());
     }
   }
 
@@ -474,7 +560,15 @@ public class IcebergSinkConfig extends AbstractConfig {
   }
 
   public String tablesRouteField() {
-    return getString(TABLES_ROUTE_FIELD_PROP);
+    return getTablesRouteField();
+  }
+
+  public RecordRoutingStrategy routingStrategy() {
+    return recordRoutingStrategy;
+  }
+
+  public Map<String, String> topicToTableMapping() {
+    return topicToTableMapping;
   }
 
   public String tablesDefaultCommitBranch() {
@@ -544,6 +638,190 @@ public class IcebergSinkConfig extends AbstractConfig {
     }
 
     return Arrays.stream(value.split(regex)).map(String::trim).collect(Collectors.toList());
+  }
+
+  private RecordRoutingStrategy resolveRoutingStrategy() {
+    String strategyValue = getString(ROUTING_STRATEGY_PROP);
+    try {
+      RecordRoutingStrategy routingStrategy = RecordRoutingStrategy.fromConfig(strategyValue);
+      if (routingStrategy != null) {
+        return routingStrategy;
+      }
+
+      if (dynamicTablesEnabled()) {
+        return RecordRoutingStrategy.DYNAMIC_FIELD;
+      }
+
+      if (getTablesRouteField() != null) {
+        return RecordRoutingStrategy.REGEX;
+      }
+
+      return RecordRoutingStrategy.ALL_TABLES;
+    } catch (IllegalArgumentException e) {
+      throw new ConfigException(ROUTING_STRATEGY_PROP, strategyValue, e.getMessage());
+    }
+  }
+
+  private String getTablesRouteField() {
+    String routeField = getString(TABLES_ROUTE_FIELD_PROP);
+    return routeField == null || routeField.isBlank() ? null : routeField.trim();
+  }
+
+  private TopicToTableMapping loadTopicToTableMapping() {
+    String mappingValue = getString(TABLES_TOPIC_TO_TABLE_MAPPING_PROP);
+    String mappingFile = getString(TABLES_TOPIC_TO_TABLE_MAPPING_FILE_PROP);
+
+    boolean hasInlineMapping = hasText(mappingValue);
+    boolean hasMappingFile = hasText(mappingFile);
+    checkState(
+        !(hasInlineMapping && hasMappingFile),
+        "Cannot specify both "
+            + TABLES_TOPIC_TO_TABLE_MAPPING_PROP
+            + " and "
+            + TABLES_TOPIC_TO_TABLE_MAPPING_FILE_PROP);
+
+    if (hasMappingFile) {
+      return new TopicToTableMapping(
+          parseTopicToTableMappingFile(mappingFile.trim()), TOPIC_TO_TABLE_MAPPING_SOURCE_FILE);
+    }
+
+    if (hasInlineMapping) {
+      return new TopicToTableMapping(
+          parseInlineTopicToTableMapping(mappingValue), TOPIC_TO_TABLE_MAPPING_SOURCE_INLINE);
+    }
+
+    return new TopicToTableMapping(ImmutableMap.of(), TOPIC_TO_TABLE_MAPPING_SOURCE_NONE);
+  }
+
+  private static boolean hasText(String value) {
+    return value != null && !value.isBlank();
+  }
+
+  private Map<String, String> parseInlineTopicToTableMapping(String mappingValue) {
+    Map<String, String> result = new LinkedHashMap<>();
+    for (String pair : Splitter.on(',').trimResults().split(mappingValue)) {
+      checkState(!pair.isEmpty(), "Empty mapping pair is not allowed");
+
+      String[] split = pair.split(":", 2);
+      checkState(split.length == 2, "Invalid mapping pair: " + pair + ". Expected topic:table");
+
+      String topic = split[0].trim();
+      String table = split[1].trim();
+      checkState(
+          !topic.isEmpty() && !table.isEmpty(),
+          "Topic and table must be non-empty in pair: " + pair);
+
+      checkState(!result.containsKey(topic), "Duplicate topic mapping: " + topic);
+      checkTableName(
+          table, TABLES_TOPIC_TO_TABLE_MAPPING_PROP, "<redacted>", "mapping pair: " + pair);
+
+      result.put(topic, table);
+    }
+
+    return ImmutableMap.copyOf(result);
+  }
+
+  private Map<String, String> parseTopicToTableMappingFile(String mappingFile) {
+    Path mappingPath = Paths.get(mappingFile);
+    checkMappingFile(mappingPath.isAbsolute(), mappingFile, "Mapping file path must be absolute");
+    checkMappingFile(Files.exists(mappingPath), mappingFile, "Mapping file does not exist");
+    checkMappingFile(Files.isRegularFile(mappingPath), mappingFile, "Mapping file must be a file");
+    checkMappingFile(Files.isReadable(mappingPath), mappingFile, "Mapping file is not readable");
+
+    JsonNode root;
+    try (BufferedReader reader = Files.newBufferedReader(mappingPath, StandardCharsets.UTF_8)) {
+      root = TOPIC_TO_TABLE_MAPPING_FILE_MAPPER.readTree(reader);
+    } catch (IOException e) {
+      throw new ConfigException(
+          TABLES_TOPIC_TO_TABLE_MAPPING_FILE_PROP,
+          mappingFile,
+          "Cannot read or parse JSON mapping file: " + e.getMessage());
+    }
+
+    checkMappingFile(
+        root != null && root.isObject(), mappingFile, "Mapping file root must be an object");
+
+    JsonNode version = root.get(TOPIC_TO_TABLE_MAPPING_FILE_VERSION_FIELD);
+    checkMappingFile(
+        version != null && version.isIntegralNumber(),
+        mappingFile,
+        "Mapping file must contain integer version: " + TOPIC_TO_TABLE_MAPPING_FILE_VERSION);
+    checkMappingFile(
+        version.intValue() == TOPIC_TO_TABLE_MAPPING_FILE_VERSION,
+        mappingFile,
+        "Unsupported mapping file version: "
+            + version.asText()
+            + ", expected: "
+            + TOPIC_TO_TABLE_MAPPING_FILE_VERSION);
+
+    JsonNode routes = root.get(TOPIC_TO_TABLE_MAPPING_FILE_ROUTES_FIELD);
+    checkMappingFile(
+        routes != null && routes.isObject(), mappingFile, "Mapping file routes must be an object");
+
+    Map<String, String> result = new LinkedHashMap<>();
+    Iterator<Entry<String, JsonNode>> routeEntries = routes.fields();
+    while (routeEntries.hasNext()) {
+      Entry<String, JsonNode> route = routeEntries.next();
+      String topic = route.getKey();
+      JsonNode tableNode = route.getValue();
+
+      checkMappingFile(!topic.isBlank(), mappingFile, "Route topic must be non-empty");
+      checkMappingFile(
+          topic.equals(topic.trim()),
+          mappingFile,
+          "Route topic must not have leading or trailing whitespace: " + topic);
+      checkMappingFile(
+          tableNode != null && tableNode.isTextual(),
+          mappingFile,
+          "Route table for topic " + topic + " must be a string");
+
+      String table = tableNode.textValue();
+      checkMappingFile(
+          !table.isBlank(), mappingFile, "Route table for topic " + topic + " must be non-empty");
+      checkMappingFile(
+          table.equals(table.trim()),
+          mappingFile,
+          "Route table for topic " + topic + " must not have leading or trailing whitespace");
+
+      checkTableName(
+          table, TABLES_TOPIC_TO_TABLE_MAPPING_FILE_PROP, mappingFile, "topic: " + topic);
+      result.put(topic, table);
+    }
+
+    checkMappingFile(!result.isEmpty(), mappingFile, "Mapping file routes must not be empty");
+    return ImmutableMap.copyOf(result);
+  }
+
+  private void checkMappingFile(boolean condition, String mappingFile, String message) {
+    if (!condition) {
+      throw new ConfigException(TABLES_TOPIC_TO_TABLE_MAPPING_FILE_PROP, mappingFile, message);
+    }
+  }
+
+  private void checkTableName(String table, String property, String value, String context) {
+    try {
+      TableIdentifier.parse(table);
+    } catch (RuntimeException e) {
+      throw new ConfigException(property, value, "Invalid table identifier for " + context);
+    }
+  }
+
+  private static class TopicToTableMapping {
+    private final Map<String, String> mapping;
+    private final String source;
+
+    TopicToTableMapping(Map<String, String> mapping, String source) {
+      this.mapping = mapping;
+      this.source = source;
+    }
+
+    Map<String, String> mapping() {
+      return mapping;
+    }
+
+    String source() {
+      return source;
+    }
   }
 
   public String controlTopic() {

@@ -165,9 +165,12 @@ project(':iceberg-kafka-connect:iceberg-kafka-connect-runtime') {
     implementation 'com.google.cloud:google-cloud-core'
 
     implementation project(':iceberg-azure')
+    implementation project(':iceberg-data')
+    implementation project(':iceberg-hive-metastore')
     implementation platform(libs.azuresdk.bom)
     implementation 'com.azure:azure-storage-file-datalake'
     implementation 'com.azure:azure-identity'
+    testImplementation "org.testcontainers:testcontainers:1.20.4"
 
     hive project(':iceberg-hive-metastore')
     hive(libs.hive2.metastore) {
@@ -199,6 +202,45 @@ project(':iceberg-kafka-connect:iceberg-kafka-connect-runtime') {
     integrationImplementation project(':iceberg-api')
     integrationImplementation project(':iceberg-common')
     integrationImplementation project(':iceberg-core')
+    integrationImplementation project(':iceberg-hive-metastore')
+    implementation("org.apache.hive:hive-metastore:2.3.10.2-4.3.0-0") {
+      transitive = false
+    }
+    implementation("org.apache.hive:hive-common:2.3.10.2-4.3.0-0") {
+      transitive = false
+    }
+    implementation("org.apache.hive:hive-serde:2.3.10.2-4.3.0-0") {
+      transitive = false
+    }
+    implementation("org.apache.hive:hive-shims:2.3.10.2-4.3.0-0") {
+      transitive = false
+    }
+    implementation("org.apache.hive.shims:hive-shims-common:2.3.10.2-4.3.0-0") {
+      transitive = false
+    }
+    implementation("org.apache.hive.shims:hive-shims-0.23:2.3.10.2-4.3.0-0") {
+      transitive = false
+    }
+    implementation("org.apache.thrift:libthrift:0.16.0") {
+      transitive = false
+    }
+    implementation("org.apache.thrift:libfb303:0.9.3") {
+      transitive = false
+    }
+    implementation("org.apache.hadoop:hadoop-mapreduce-client-core:3.4.1") {
+      transitive = false
+      exclude group: "org.apache.iceberg"
+    }
+    implementation("org.apache.commons:commons-configuration2:2.10.1") {
+      transitive = false
+    }
+    integrationRuntimeOnly("org.apache.hadoop:hadoop-common:3.4.1") {
+      exclude group: "org.apache.iceberg"
+    }
+    integrationRuntimeOnly("org.apache.hadoop:hadoop-auth:3.4.1") {
+      exclude group: "org.apache.iceberg"
+    }
+    integrationRuntimeOnly("org.apache.hive:hive-storage-api:2.7.2")
     integrationImplementation project(path: ':iceberg-bundled-guava', configuration: 'shadow')
     integrationImplementation platform(libs.jackson.bom)
     integrationImplementation libs.jackson.core

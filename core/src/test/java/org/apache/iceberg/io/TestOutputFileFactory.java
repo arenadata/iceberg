@@ -50,6 +50,22 @@ public class TestOutputFileFactory extends TestBase {
   }
 
   @TestTemplate
+  public void testOutputFileFactoryWithFormatOverride() {
+    OutputFileFactory fileFactory =
+        OutputFileFactory.builderFor(table, PARTITION_ID, TASK_ID)
+            .operationId("append")
+            .format(FileFormat.PARQUET)
+            .build();
+
+    String dataLocation = fileFactory.newOutputFile().encryptingOutputFile().location();
+    String puffinLocation =
+        fileFactory.withFormat(FileFormat.PUFFIN).newOutputFile().encryptingOutputFile().location();
+
+    assertThat(dataLocation).endsWith("data/00001-100-append-00001.parquet");
+    assertThat(puffinLocation).endsWith("data/00001-100-append-00002.puffin");
+  }
+
+  @TestTemplate
   public void testOutputFileFactoryWithMultipleSpecs() {
     OutputFileFactory fileFactory =
         OutputFileFactory.builderFor(table, PARTITION_ID, TASK_ID).operationId("append").build();

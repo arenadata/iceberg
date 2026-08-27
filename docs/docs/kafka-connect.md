@@ -61,9 +61,12 @@ for exactly-once semantics. This requires Kafka 2.5 or later.
 
 | Property                                   | Description                                                                                                      |
 |--------------------------------------------|------------------------------------------------------------------------------------------------------------------|
+| routing.strategy                           | Record routing strategy: `all-tables`, `regex`, `dynamic-field`, or `topic-to-table`                             |
 | iceberg.tables                             | Comma-separated list of destination tables                                                                       |
 | iceberg.tables.dynamic-enabled             | Set to `true` to route to a table specified in `routeField` instead of using `routeRegex`, default is `false`    |
 | iceberg.tables.route-field                 | For multi-table fan-out, the name of the field used to route records to tables                                   |
+| iceberg.tables.topic-to-table-mapping      | Comma-separated static mapping from Kafka topic names to Iceberg tables, for example `topic1:db.table1`          |
+| iceberg.tables.topic-to-table-mapping-file | Absolute path to a JSON file with static mapping from Kafka topic names to Iceberg tables                        |
 | iceberg.tables.default-commit-branch       | Default branch for commits, main is used if not specified                                                        |
 | iceberg.tables.default-id-columns          | Default comma-separated list of columns that identify a row in tables (primary key)                              |
 | iceberg.tables.default-partition-by        | Default comma-separated list of partition field names to use when creating tables                                |
@@ -96,9 +99,27 @@ for exactly-once semantics. This requires Kafka 2.5 or later.
 | iceberg.hadoop.*                           | Properties passed through to the Hadoop configuration                                                            |
 | iceberg.kafka.*                            | Properties passed through to control topic Kafka client initialization                                           |
 
-If `iceberg.tables.dynamic-enabled` is `false` (the default) then you must specify `iceberg.tables`. If
-`iceberg.tables.dynamic-enabled` is `true` then you must specify `iceberg.tables.route-field` which will
-contain the name of the table.
+If `routing.strategy` is not set, the connector keeps the existing behavior for backward compatibility:
+it uses `dynamic-field` when `iceberg.tables.dynamic-enabled` is `true`, `regex` when
+`iceberg.tables.route-field` is set, and `all-tables` otherwise.
+
+The supported routing strategies are:
+
+* `all-tables` - routes every record to every table listed in `iceberg.tables`
+* `regex` - routes records by matching `iceberg.tables.route-field` against each table's `route-regex`
+* `dynamic-field` - routes records to the table name stored in `iceberg.tables.route-field`
+* `topic-to-table` - routes records by matching the Kafka topic name against `iceberg.tables.topic-to-table-mapping`
+  or `iceberg.tables.topic-to-table-mapping-file`
+
+For `all-tables` and `regex`, `iceberg.tables` must be specified. For `regex` and `dynamic-field`,
+`iceberg.tables.route-field` must be specified. For `topic-to-table`,
+exactly one of `iceberg.tables.topic-to-table-mapping` or `iceberg.tables.topic-to-table-mapping-file`
+must be specified. The inline mapping format is `topic_name1:table_name1,topic_name2:table_name2`.
+The file mapping must be a JSON file with `version` set to `1` and a non-empty `routes`
+object whose keys are Kafka topic names and whose values are Iceberg table identifiers.
+
+Records that do not match the selected routing strategy are skipped. For example, a record whose topic is
+not present in the configured topic-to-table mapping is not written to any table.
 
 ### Kafka configuration
 
@@ -398,7 +419,85 @@ See above for creating two tables.
 }
 ```
 
+### Topic-to-table routing
+
+This example writes records from the Kafka topic `sales-topic` to the Iceberg table `default.sales`
+and records from `logs-topic` to `default.logs`. Records from topics that are not present in
+`iceberg.tables.topic-to-table-mapping` are skipped.
+
+#### Create two destination tables
+
+```sql
+CREATE TABLE default.sales (
+    id STRING,
+    ts TIMESTAMP,
+    payload STRING)
+PARTITIONED BY (hours(ts));
+
+CREATE TABLE default.logs (
+    id STRING,
+    ts TIMESTAMP,
+    payload STRING)
+PARTITIONED BY (hours(ts));
+```
+
+#### Connector config
+
+```json
+{
+  "name": "events-sink",
+  "config": {
+    "connector.class": "org.apache.iceberg.connect.IcebergSinkConnector",
+    "tasks.max": "2",
+    "topics": "sales-topic,logs-topic",
+    "routing.strategy": "topic-to-table",
+    "iceberg.tables.topic-to-table-mapping": "sales-topic:default.sales,logs-topic:default.logs",
+    "iceberg.catalog.type": "rest",
+    "iceberg.catalog.uri": "https://localhost",
+    "iceberg.catalog.credential": "<credential>",
+    "iceberg.catalog.warehouse": "<warehouse name>"
+  }
+}
+```
+
+For large mappings, use `iceberg.tables.topic-to-table-mapping-file` instead of storing all routes
+in the connector config. The file must be present at the same absolute path on every Kafka Connect
+worker. It is read when the task starts; changes to the file are not reloaded until the connector
+is restarted or reconfigured.
+
+Example mapping file:
+
+```json
+{
+  "version": 1,
+  "routes": {
+    "sales-topic": "default.sales",
+    "logs-topic": "default.logs"
+  }
+}
+```
+
+Example connector config using the file:
+
+```json
+{
+  "name": "events-sink",
+  "config": {
+    "connector.class": "org.apache.iceberg.connect.IcebergSinkConnector",
+    "tasks.max": "2",
+    "topics": "sales-topic,logs-topic",
+    "routing.strategy": "topic-to-table",
+    "iceberg.tables.topic-to-table-mapping-file": "/etc/iceberg/topic-table-routes.json",
+    "iceberg.catalog.type": "rest",
+    "iceberg.catalog.uri": "https://localhost",
+    "iceberg.catalog.credential": "<credential>",
+    "iceberg.catalog.warehouse": "<warehouse name>"
+  }
+}
+```
+
 ### Change data capture
+
 This example applies inserts, updates, and deletes based on the value of a field in the record.
 For example, if the `cdc-field` is set to `I` or `R` then the record is inserted, if `U` then it is
 upserted, and if `D` then it is deleted. This requires that the table `format-version` to be greater than 2.

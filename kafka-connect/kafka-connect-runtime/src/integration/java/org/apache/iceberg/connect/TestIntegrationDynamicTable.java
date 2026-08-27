@@ -62,6 +62,7 @@ public class TestIntegrationDynamicTable extends IntegrationTestBase {
   @Override
   protected KafkaConnectUtils.Config createConfig(boolean useSchema) {
     return createCommonConfig(useSchema)
+        .config("routing.strategy", "dynamic-field")
         .config("iceberg.tables.dynamic-enabled", true)
         .config("iceberg.tables.route-field", "payload");
   }
@@ -78,7 +79,7 @@ public class TestIntegrationDynamicTable extends IntegrationTestBase {
   }
 
   @Override
-  void dropTables() {
+  protected void dropTables() {
     catalog().dropTable(TableIdentifier.of(TEST_DB, TEST_TABLE1));
     catalog().dropTable(TableIdentifier.of(TEST_DB, TEST_TABLE2));
   }
