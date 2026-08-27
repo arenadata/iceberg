@@ -120,9 +120,13 @@ allprojects {
   repositories {
     maven {
       name = 'arenadata'
-      url = 'https://maven.pkg.github.com/arenadata/*'
+      url = uri('https://maven.pkg.github.com/arenadata/*')
       credentials {
-        username = project.findProperty("gpr.user") ?: System.getenv("GITHUB_USERNAME")
+        // gpr.* come from ~/.gradle/gradle.properties for local builds;
+        // CI supplies GITHUB_USERNAME or GITHUB_ACTOR
+        username = project.findProperty("gpr.user")
+            ?: System.getenv("GITHUB_USERNAME")
+            ?: System.getenv("GITHUB_ACTOR")
         password = project.findProperty("gpr.key") ?: System.getenv("GITHUB_TOKEN")
       }
     }
