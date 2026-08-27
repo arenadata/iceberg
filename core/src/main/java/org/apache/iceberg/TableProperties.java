@@ -18,8 +18,10 @@
  */
 package org.apache.iceberg;
 
+import java.util.List;
 import java.util.Set;
 import org.apache.iceberg.deletes.DeleteGranularity;
+import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableSet;
 
 public class TableProperties {
@@ -277,6 +279,15 @@ public class TableProperties {
 
   public static final String WRITE_PARTITION_SUMMARY_LIMIT = "write.summary.partition-limit";
   public static final int WRITE_PARTITION_SUMMARY_LIMIT_DEFAULT = 0;
+
+  public static final List<String> CUSTOM_WRITE_PATH_PROPERTIES =
+      ImmutableList.of(
+          TableProperties.WRITE_DATA_LOCATION,
+          TableProperties.WRITE_METADATA_LOCATION,
+          TableProperties.WRITE_LOCATION_PROVIDER_IMPL,
+          // legacy aliases still honored by LocationProviders
+          TableProperties.OBJECT_STORE_PATH,
+          TableProperties.WRITE_FOLDER_STORAGE_LOCATION);
 
   /**
    * @deprecated will be removed in 2.0.0, writing manifest lists is always enabled
