@@ -279,7 +279,6 @@ project(":iceberg-spark:iceberg-spark-runtime-${sparkMajorVersion}_${scalaVersio
     testImplementation('io.netty:netty-handler')   { version { strictly '4.2.13.Final' } }
     testImplementation('io.netty:netty-codec')     { version { strictly '4.2.13.Final' } }
 
-
     integrationImplementation "org.apache.hadoop:hadoop-aws:3.5.0"
     integrationImplementation "org.scala-lang.modules:scala-collection-compat_${scalaVersion}:${libs.versions.scala.collection.compat.get()}"
     integrationImplementation "org.apache.spark:spark-hive_${scalaVersion}:${libs.versions.spark42.get()}"
