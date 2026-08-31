@@ -56,11 +56,7 @@ public class TestDropBaseDirectory extends AbstractTestBase {
             BASE_COLUMN_SCHEMA,
             new Transform[0],
             Map.of("drop.base-directory.enabled", String.valueOf(isDropBaseDirectoryEnabled)));
-    spark()
-        .sql(
-            format(
-                "INSERT INTO %s VALUES %s",
-                CATALOG_TABLE_NAME, String.join(", ", RECORDS.subList(0, 2))));
+    insertData(CATALOG_TABLE_NAME, RECORDS.subList(0, 2));
     assertThat(loadCatalogTableLocation(catalog().loadTable(TABLE_IDENTIFIER)))
         .isEqualTo(format("%s/%s", IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE));
     AssertionsForInterfaceTypes.assertThat(

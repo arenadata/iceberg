@@ -19,6 +19,7 @@
 package org.apache.iceberg.spark;
 
 import static java.lang.String.format;
+import static org.apache.iceberg.spark.IcebergCatalogService.ALT_RECORDS;
 import static org.apache.iceberg.spark.IcebergCatalogService.BASE_COLUMN_SCHEMA;
 import static org.apache.iceberg.spark.IcebergCatalogService.CATALOG_TABLE_NAME;
 import static org.apache.iceberg.spark.IcebergCatalogService.CATALOG_TABLE_NEW_NAME;
@@ -34,15 +35,12 @@ import static org.assertj.core.api.AssertionsForInterfaceTypes.assertThat;
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
-import org.apache.iceberg.ParameterizedTestExtension;
 import org.apache.spark.sql.catalyst.analysis.NoSuchNamespaceException;
 import org.apache.spark.sql.catalyst.analysis.NoSuchTableException;
 import org.apache.spark.sql.catalyst.analysis.TableAlreadyExistsException;
 import org.apache.spark.sql.connector.expressions.Transform;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
 
-@ExtendWith(ParameterizedTestExtension.class)
 public class TestRenameIcebergTableCatalogConfigs extends AbstractTestBase {
 
   @Test
@@ -70,28 +68,16 @@ public class TestRenameIcebergTableCatalogConfigs extends AbstractTestBase {
           NoSuchTableException {
     initSpark(IcebergCatalogType.HIVE, Map.of("rename.metadata.location.update", "true"));
     catalog().createTable(TABLE_IDENTIFIER, BASE_COLUMN_SCHEMA, new Transform[0], Map.of());
-    spark()
-        .sql(
-            format(
-                "INSERT INTO %s VALUES %s",
-                CATALOG_TABLE_NAME, String.join(", ", RECORDS.subList(0, 2))));
+    insertData(CATALOG_TABLE_NAME, RECORDS.subList(0, 2));
     spark().sql(format("ALTER TABLE %s RENAME TO %s", CATALOG_TABLE_NAME, CATALOG_TABLE_NEW_NAME));
-    spark()
-        .sql(
-            format(
-                "INSERT INTO %s VALUES %s",
-                CATALOG_TABLE_NEW_NAME, String.join(", ", RECORDS.subList(2, 4))));
+    insertData(CATALOG_TABLE_NEW_NAME, RECORDS.subList(2, 4));
     catalog()
         .createTable(
             TABLE_IDENTIFIER,
             BASE_COLUMN_SCHEMA,
             new Transform[0],
             Map.of("drop.base-directory.enabled", "true"));
-    spark()
-        .sql(
-            format(
-                "INSERT INTO %s VALUES %s",
-                CATALOG_TABLE_NAME, String.join(", ", RECORDS.subList(4, 6))));
+    insertData(CATALOG_TABLE_NAME, ALT_RECORDS);
     assertThat(extractFileSystemContents(IcebergCatalogType.HIVE, false))
         .containsExactlyInAnyOrderElementsOf(
             List.of(
@@ -101,10 +87,8 @@ public class TestRenameIcebergTableCatalogConfigs extends AbstractTestBase {
         .isEqualTo(format("%s/%s", IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE_NEW));
     assertThat(loadCatalogTableLocation(catalog().loadTable(TABLE_IDENTIFIER)))
         .isEqualTo(format("%s/%s", IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE));
-    assertThat(extractTableRecords(CATALOG_TABLE_NEW_NAME))
-        .containsExactlyInAnyOrderElementsOf(RECORDS.subList(0, 4));
-    assertThat(extractTableRecords(CATALOG_TABLE_NAME))
-        .containsExactlyInAnyOrderElementsOf(RECORDS.subList(4, 6));
+    assertRecords(CATALOG_TABLE_NEW_NAME, RECORDS);
+    assertRecords(CATALOG_TABLE_NAME, ALT_RECORDS);
     List<String> testTableFiles = extractTableFiles(TEST_TABLE);
     List<String> testTableNewFiles = extractTableFiles(TEST_TABLE_NEW);
     catalog().purgeTable(TABLE_IDENTIFIER);
@@ -115,8 +99,7 @@ public class TestRenameIcebergTableCatalogConfigs extends AbstractTestBase {
             List.of(
                 format("%s/%s", IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE),
                 format("%s/%s", IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE_NEW)));
-    assertThat(extractTableRecords(CATALOG_TABLE_NEW_NAME))
-        .containsExactlyInAnyOrderElementsOf(RECORDS.subList(0, 4));
+    assertRecords(CATALOG_TABLE_NEW_NAME, RECORDS);
     List<String> namespaceFilesContents = extractFileSystemContents(IcebergCatalogType.HIVE, true);
     assertThat(namespaceFilesContents).doesNotContainAnyElementsOf(testTableFiles);
     assertThat(namespaceFilesContents).containsAnyElementsOf(testTableNewFiles);

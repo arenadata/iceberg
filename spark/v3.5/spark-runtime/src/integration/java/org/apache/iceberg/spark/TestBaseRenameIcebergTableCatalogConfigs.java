@@ -61,11 +61,7 @@ public class TestBaseRenameIcebergTableCatalogConfigs extends AbstractTestBase {
             "rename.metadata.location.update",
             String.valueOf(isRenameMetadataLocationUpdateEnabled)));
     catalog().createTable(TABLE_IDENTIFIER, BASE_COLUMN_SCHEMA, new Transform[0], Map.of());
-    spark()
-        .sql(
-            format(
-                "INSERT INTO %s VALUES %s",
-                CATALOG_TABLE_NAME, String.join(", ", RECORDS.subList(0, 2))));
+    insertData(CATALOG_TABLE_NAME, RECORDS.subList(0, 2));
     assertThat(loadCatalogTableLocation(catalog().loadTable(TABLE_IDENTIFIER)))
         .isEqualTo(format("%s/%s", IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE));
     AssertionsForInterfaceTypes.assertThat(
@@ -73,11 +69,7 @@ public class TestBaseRenameIcebergTableCatalogConfigs extends AbstractTestBase {
         .containsExactlyInAnyOrderElementsOf(
             List.of(format("%s/%s", IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE)));
     spark().sql(format("ALTER TABLE %s RENAME TO %s", CATALOG_TABLE_NAME, CATALOG_TABLE_NEW_NAME));
-    spark()
-        .sql(
-            format(
-                "INSERT INTO %s VALUES %s",
-                CATALOG_TABLE_NEW_NAME, String.join(", ", RECORDS.subList(2, 4))));
+    insertData(CATALOG_TABLE_NEW_NAME, RECORDS.subList(2, 4));
     assertThat(loadCatalogTableLocation(catalog().loadTable(TABLE_IDENTIFIER_NEW)))
         .isEqualTo(format("%s/%s", IcebergCatalogType.HIVE.getNamespaceDir(), tableDir));
     AssertionsForInterfaceTypes.assertThat(

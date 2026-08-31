@@ -29,6 +29,7 @@ import static org.apache.iceberg.spark.IcebergCatalogService.TEST_DB;
 import static org.apache.iceberg.spark.IcebergCatalogService.TEST_TABLE;
 import static org.apache.iceberg.spark.IcebergCatalogService.TEST_TABLE_NEW;
 import static org.apache.iceberg.spark.IcebergCatalogService.WAREHOUSE_LOCATION;
+import static org.assertj.core.api.AssertionsForInterfaceTypes.assertThat;
 import static org.awaitility.Awaitility.await;
 
 import java.io.IOException;
@@ -53,10 +54,8 @@ import org.apache.spark.sql.connector.catalog.TableCatalog;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
-import org.testcontainers.containers.ComposeContainer;
 
 public class AbstractTestBase {
-  private static ComposeContainer container;
   private TableCatalog catalog;
   private SparkSession spark;
   private FileSystem fileSystem;
@@ -174,7 +173,7 @@ public class AbstractTestBase {
 
   public List<String> extractTableRecords(String catalogTableName) {
     return spark().sql(format("SELECT * FROM %s", catalogTableName)).collectAsList().stream()
-        .map(row -> format("(%s, '%s')", row.get(0), row.get(1)))
+        .map(row -> row.mkString(", "))
         .collect(Collectors.toList());
   }
 
@@ -182,7 +181,7 @@ public class AbstractTestBase {
     return table.properties().get("location");
   }
 
-  protected List<String> extractTableFiles(String tableName) throws NoSuchTableException {
+  public List<String> extractTableFiles(String tableName) throws NoSuchTableException {
     List<String> tableDataFiles =
         spark()
             .sql(format("SELECT path FROM %s.%s.%s.manifests", TEST_CATALOG, TEST_DB, tableName))
@@ -190,18 +189,35 @@ public class AbstractTestBase {
             .stream()
             .map(Row::mkString)
             .collect(Collectors.toList());
-    tableDataFiles.addAll(
-        spark()
-            .sql(format("SELECT file_path FROM %s.%s.%s.files", TEST_CATALOG, TEST_DB, tableName))
-            .collectAsList()
-            .stream()
-            .map(Row::mkString)
-            .collect(Collectors.toList()));
+    tableDataFiles.addAll(extractTableDataFiles(tableName));
     tableDataFiles.addAll(
         ReachableFileUtil.metadataFileLocations(
             ((SparkTable) catalog().loadTable(Identifier.of(new String[] {TEST_DB}, tableName)))
                 .table(),
             true));
     return tableDataFiles;
+  }
+
+  public List<String> extractTableDataFiles(String tableName) {
+    return spark()
+        .sql(format("SELECT file_path FROM %s.%s.%s.files", TEST_CATALOG, TEST_DB, tableName))
+        .collectAsList()
+        .stream()
+        .map(Row::mkString)
+        .collect(Collectors.toList());
+  }
+
+  public void insertData(String catalogTableName, List<String> records) {
+    spark.sql(
+        format(
+            "INSERT INTO %s VALUES %s",
+            catalogTableName,
+            records.stream().map(rec -> "(" + rec + ")").collect(Collectors.joining(", "))));
+  }
+
+  public void assertRecords(String catalogTableName, List<String> insertedRecords) {
+    assertThat(extractTableRecords(catalogTableName))
+        .containsExactlyInAnyOrderElementsOf(
+            insertedRecords.stream().map(rec -> rec.replace("'", "")).collect(Collectors.toList()));
   }
 }

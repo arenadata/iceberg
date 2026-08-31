@@ -43,9 +43,9 @@ public class IcebergCatalogService {
       format("%s.%s.%s", TEST_CATALOG, TEST_DB, TEST_TABLE);
   public static final String CATALOG_TABLE_NEW_NAME =
       format("%s.%s.%s", TEST_CATALOG, TEST_DB, TEST_TABLE_NEW);
-  public static final String TABLE_NAMESPACE_DIR = format("%s/%s.db", WAREHOUSE_LOCATION, TEST_DB);
   public static final List<String> RECORDS =
-      List.of("(1, 'Sam')", "(2, 'Bob')", "(3, 'Sue')", "(4, 'Ann')", "(1, 'Tom')", "(2, 'Brian')");
+      List.of("1, 'Sam'", "2, 'Bob'", "3, 'Sue'", "4, 'Ann'");
+  public static final List<String> ALT_RECORDS = List.of("1, 'Tom'", "2, 'Brian'");
   public static final Identifier TABLE_IDENTIFIER =
       Identifier.of(new String[] {TEST_DB}, TEST_TABLE);
   public static final Identifier TABLE_IDENTIFIER_NEW =
