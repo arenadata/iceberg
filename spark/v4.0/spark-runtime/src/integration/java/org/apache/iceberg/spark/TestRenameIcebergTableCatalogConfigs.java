@@ -26,7 +26,6 @@ import static org.apache.iceberg.spark.IcebergCatalogProperties.CATALOG_TABLE_NE
 import static org.apache.iceberg.spark.IcebergCatalogProperties.RECORDS;
 import static org.apache.iceberg.spark.IcebergCatalogProperties.TABLE_IDENTIFIER;
 import static org.apache.iceberg.spark.IcebergCatalogProperties.TABLE_IDENTIFIER_NEW;
-import static org.apache.iceberg.spark.IcebergCatalogProperties.TEST_CATALOG;
 import static org.apache.iceberg.spark.IcebergCatalogProperties.TEST_DB;
 import static org.apache.iceberg.spark.IcebergCatalogProperties.TEST_TABLE;
 import static org.apache.iceberg.spark.IcebergCatalogProperties.TEST_TABLE_NEW;
@@ -47,7 +46,6 @@ public class TestRenameIcebergTableCatalogConfigs extends IntegrationTestBase {
   public void testRenameMetadataLocationUpdateRestNegative()
       throws IOException, TableAlreadyExistsException, NoSuchNamespaceException {
     initSpark(IcebergCatalogType.REST, Map.of("rename.metadata.location.update", "true"));
-    spark().sql(format("CREATE NAMESPACE IF NOT EXISTS %s.%s", TEST_CATALOG, TEST_DB));
     catalog().createTable(TABLE_IDENTIFIER, BASE_COLUMN_SCHEMA, new Transform[0], Map.of());
     List<String> namespaceDirsBeforeAlter =
         List.of(format("%s/%s", IcebergCatalogType.REST.getNamespaceDir(), TEST_TABLE));
