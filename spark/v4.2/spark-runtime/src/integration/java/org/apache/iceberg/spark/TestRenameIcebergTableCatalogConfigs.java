@@ -19,17 +19,17 @@
 package org.apache.iceberg.spark;
 
 import static java.lang.String.format;
-import static org.apache.iceberg.spark.IcebergCatalogService.ALT_RECORDS;
-import static org.apache.iceberg.spark.IcebergCatalogService.BASE_COLUMN_SCHEMA;
-import static org.apache.iceberg.spark.IcebergCatalogService.CATALOG_TABLE_NAME;
-import static org.apache.iceberg.spark.IcebergCatalogService.CATALOG_TABLE_NEW_NAME;
-import static org.apache.iceberg.spark.IcebergCatalogService.RECORDS;
-import static org.apache.iceberg.spark.IcebergCatalogService.TABLE_IDENTIFIER;
-import static org.apache.iceberg.spark.IcebergCatalogService.TABLE_IDENTIFIER_NEW;
-import static org.apache.iceberg.spark.IcebergCatalogService.TEST_CATALOG;
-import static org.apache.iceberg.spark.IcebergCatalogService.TEST_DB;
-import static org.apache.iceberg.spark.IcebergCatalogService.TEST_TABLE;
-import static org.apache.iceberg.spark.IcebergCatalogService.TEST_TABLE_NEW;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.ALT_RECORDS;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.BASE_COLUMN_SCHEMA;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.CATALOG_TABLE_NAME;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.CATALOG_TABLE_NEW_NAME;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.RECORDS;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.TABLE_IDENTIFIER;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.TABLE_IDENTIFIER_NEW;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.TEST_CATALOG;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.TEST_DB;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.TEST_TABLE;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.TEST_TABLE_NEW;
 import static org.assertj.core.api.AssertionsForInterfaceTypes.assertThat;
 
 import java.io.IOException;
@@ -41,7 +41,7 @@ import org.apache.spark.sql.catalyst.analysis.TableAlreadyExistsException;
 import org.apache.spark.sql.connector.expressions.Transform;
 import org.junit.jupiter.api.Test;
 
-public class TestRenameIcebergTableCatalogConfigs extends AbstractTestBase {
+public class TestRenameIcebergTableCatalogConfigs extends IntegrationTestBase {
 
   @Test
   public void testRenameMetadataLocationUpdateRestNegative()

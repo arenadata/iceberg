@@ -19,11 +19,11 @@
 package org.apache.iceberg.spark;
 
 import static java.lang.String.format;
-import static org.apache.iceberg.spark.IcebergCatalogService.BASE_COLUMN_SCHEMA;
-import static org.apache.iceberg.spark.IcebergCatalogService.CATALOG_TABLE_NAME;
-import static org.apache.iceberg.spark.IcebergCatalogService.RECORDS;
-import static org.apache.iceberg.spark.IcebergCatalogService.TABLE_IDENTIFIER;
-import static org.apache.iceberg.spark.IcebergCatalogService.TEST_TABLE;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.BASE_COLUMN_SCHEMA;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.CATALOG_TABLE_NAME;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.RECORDS;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.TABLE_IDENTIFIER;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.TEST_TABLE;
 import static org.assertj.core.api.AssertionsForClassTypes.assertThat;
 
 import java.time.LocalDateTime;
@@ -43,7 +43,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 @ExtendWith(ParameterizedTestExtension.class)
-public class TestOrcTableMigration extends AbstractTestBase {
+public class TestOrcTableMigration extends IntegrationTestBase {
 
   private static final String TIMESTAMP_VAL =
       LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.S"));

@@ -19,16 +19,16 @@
 package org.apache.iceberg.spark;
 
 import static java.lang.String.format;
-import static org.apache.iceberg.spark.IcebergCatalogService.AWS_ACCESS_KEY;
-import static org.apache.iceberg.spark.IcebergCatalogService.AWS_REGION;
-import static org.apache.iceberg.spark.IcebergCatalogService.AWS_SECRET_KEY;
-import static org.apache.iceberg.spark.IcebergCatalogService.BASE_CATALOG_CONFIGS;
-import static org.apache.iceberg.spark.IcebergCatalogService.MINIO_PORT;
-import static org.apache.iceberg.spark.IcebergCatalogService.TEST_CATALOG;
-import static org.apache.iceberg.spark.IcebergCatalogService.TEST_DB;
-import static org.apache.iceberg.spark.IcebergCatalogService.TEST_TABLE;
-import static org.apache.iceberg.spark.IcebergCatalogService.TEST_TABLE_NEW;
-import static org.apache.iceberg.spark.IcebergCatalogService.WAREHOUSE_LOCATION;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.AWS_ACCESS_KEY;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.AWS_REGION;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.AWS_SECRET_KEY;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.BASE_CATALOG_CONFIGS;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.MINIO_PORT;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.TEST_CATALOG;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.TEST_DB;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.TEST_TABLE;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.TEST_TABLE_NEW;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.WAREHOUSE_LOCATION;
 import static org.assertj.core.api.AssertionsForInterfaceTypes.assertThat;
 import static org.awaitility.Awaitility.await;
 
@@ -55,7 +55,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 
-public class AbstractTestBase {
+public class IntegrationTestBase {
   private TableCatalog catalog;
   private SparkSession spark;
   private FileSystem fileSystem;
