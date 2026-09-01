@@ -68,9 +68,36 @@ class TestMetadataEvents {
             e -> {
               LineageEdge edge = (LineageEdge) e;
               assertThat(edge.source().name()).startsWith("kafka.");
-              assertThat(edge.target().name()).isEqualTo("iceberg.warehouse.db.schema.events");
+              assertThat(edge.target().name()).isEqualTo("iceberg.warehouse.\"db.schema\".events");
               assertThat(edge.pipelineName()).isEqualTo("my-pipe");
               assertThat(edge.columnsLineage()).hasSize(1);
+            });
+  }
+
+  @Test
+  void lineageCommitQuotesDottedFqnSegments() {
+    MetadataReporter reporter = mock(MetadataReporter.class);
+    MetadataEvents events =
+        new MetadataEvents(reporter, "iceberg", "warehouse", "my-pipe", "kafka");
+    TableIdentifier dottedIdent = TableIdentifier.of(Namespace.of("sales", "daily"), "events.v1");
+    Schema dottedSchema =
+        new Schema(Types.NestedField.required(1, "payload.id", Types.LongType.get()));
+
+    events.lineageCommit(ImmutableSet.of("orders.v1"), dottedIdent, dottedSchema);
+
+    ArgumentCaptor<MetadataEvent> captor = ArgumentCaptor.forClass(MetadataEvent.class);
+    verify(reporter).report(captor.capture());
+    LineageEdge edge = (LineageEdge) captor.getValue();
+    assertThat(edge.source().name()).isEqualTo("kafka.\"orders.v1\"");
+    assertThat(edge.target().name()).isEqualTo("iceberg.warehouse.\"sales.daily\".\"events.v1\"");
+    assertThat(edge.columnsLineage())
+        .singleElement()
+        .satisfies(
+            lineage -> {
+              assertThat(lineage.fromColumns())
+                  .containsExactly("kafka.\"orders.v1\".\"payload.id\"");
+              assertThat(lineage.toColumn())
+                  .isEqualTo("iceberg.warehouse.\"sales.daily\".\"events.v1\".\"payload.id\"");
             });
   }
 

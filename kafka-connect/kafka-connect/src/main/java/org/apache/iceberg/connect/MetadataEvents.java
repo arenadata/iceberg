@@ -114,7 +114,7 @@ public class MetadataEvents {
     String targetFqn = fqn(targetTable);
     for (String topic : sourceTopics) {
       try {
-        String sourceFqn = kafkaServiceName + "." + topic;
+        String sourceFqn = OpenMetadataFqn.build(kafkaServiceName, topic);
         reporter.report(
             new LineageEdge(
                 new EntityReference(EntityReference.TYPE_KAFKA_TOPIC, sourceFqn),
@@ -134,8 +134,8 @@ public class MetadataEvents {
       String columnName = column.name();
       mappings.add(
           new ColumnLineage(
-              Collections.singletonList(sourceFqn + "." + columnName),
-              targetFqn + "." + columnName));
+              Collections.singletonList(OpenMetadataFqn.append(sourceFqn, columnName)),
+              OpenMetadataFqn.append(targetFqn, columnName)));
     }
     return mappings;
   }
@@ -143,6 +143,7 @@ public class MetadataEvents {
   private String fqn(TableIdentifier identifier) {
     String[] namespaceLevels = identifier.namespace().levels();
     String schema = namespaceLevels.length == 0 ? "default" : String.join(".", namespaceLevels);
-    return String.join(".", icebergServiceName, icebergDatabaseName, schema, identifier.name());
+    return OpenMetadataFqn.build(
+        icebergServiceName, icebergDatabaseName, schema, identifier.name());
   }
 }

@@ -950,7 +950,7 @@ public class IcebergSinkConfig extends AbstractConfig {
   }
 
   public String metadataPipelineFqn() {
-    return getString(METADATA_PIPELINE_SERVICE_NAME_PROP) + "." + connectorName();
+    return OpenMetadataFqn.build(getString(METADATA_PIPELINE_SERVICE_NAME_PROP), connectorName());
   }
 
   public String metadataIcebergServiceName() {
