@@ -46,6 +46,8 @@ class IcebergWriter implements RecordWriter {
   private final List<IcebergWriterResult> writerResults;
   private final Map<String, Operation> operationMappings;
   private final Set<String> ignoredOperations;
+  private final Set<String> sourceTopics;
+
   private RecordConverter recordConverter;
   private TaskWriter<Record> writer;
 
@@ -68,6 +70,7 @@ class IcebergWriter implements RecordWriter {
     this.writerResults = Lists.newArrayList();
     this.operationMappings = Maps.newHashMap();
     this.ignoredOperations = Sets.newHashSet();
+    this.sourceTopics = Sets.newHashSet();
     this.writer = writer;
     this.recordConverter = new RecordConverter(table, config);
     initOperationMappings();
@@ -95,6 +98,7 @@ class IcebergWriter implements RecordWriter {
               .flatMap(operation -> convertToRowWithOp(record, operation))
               .orElseGet(() -> convertToRow(record));
       writer.write(row);
+      sourceTopics.add(record.topic());
     } catch (Exception e) {
       throw new DataException(
           String.format(
@@ -155,7 +159,9 @@ class IcebergWriter implements RecordWriter {
             tableReference,
             Arrays.asList(writeResult.dataFiles()),
             Arrays.asList(writeResult.deleteFiles()),
-            table.spec().partitionType()));
+            table.spec().partitionType(),
+            Set.copyOf(sourceTopics)));
+    sourceTopics.clear();
   }
 
   private void initNewWriter() {

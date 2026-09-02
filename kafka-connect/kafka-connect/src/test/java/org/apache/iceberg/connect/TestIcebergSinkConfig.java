@@ -67,6 +67,15 @@ public class TestIcebergSinkConfig {
   }
 
   @Test
+  public void testMetadataPipelineFqnQuotesDottedSegments() {
+    Map<String, String> props = Maps.newHashMap(propsWith("name", "orders.connector"));
+    props.put("iceberg.metadata.pipeline-service-name", "kafka.connect");
+
+    assertThat(new IcebergSinkConfig(props).metadataPipelineFqn())
+        .isEqualTo("\"kafka.connect\".\"orders.connector\"");
+  }
+
+  @Test
   public void testSchemaTimestampNsFieldPaths() {
     IcebergSinkConfig config =
         new IcebergSinkConfig(
