@@ -162,4 +162,19 @@ public class CatalogProperties {
 
   public static final String ENCRYPTION_KMS_TYPE = "encryption.kms-type";
   public static final String ENCRYPTION_KMS_IMPL = "encryption.kms-impl";
+
+  /**
+   * Controls whether a table's metadata {@code location} is updated to the new default warehouse
+   * path when a managed table is renamed. When disabled (default), rename only repoints the
+   * metastore entry, matching the Iceberg specification. When enabled, a default-located table is
+   * relocated to the new name's default path so that re-creating a table with the old name does not
+   * share a directory with the renamed table.
+   *
+   * <p><b>Limit.</b> Only writes made <i>after</i> the rename land under the new directory. Data
+   * files written before the rename keep their absolute paths under the old directory, so an
+   * external directory-level purge of the old directory will still destroy those pre-rename files.
+   */
+  public static final String RENAME_UPDATE_METADATA_LOCATION = "rename.metadata.location.update";
+
+  public static final boolean RENAME_UPDATE_LOCATION_DEFAULT = false;
 }

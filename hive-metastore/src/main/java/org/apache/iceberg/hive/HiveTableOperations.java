@@ -81,6 +81,7 @@ public class HiveTableOperations extends BaseMetastoreTableOperations
   private final FileIO fileIO;
   private final KeyManagementClient keyManagementClient;
   private final ClientPool<IMetaStoreClient, TException> metaClients;
+  private final HmsTablePreCommitHandler hmsTablePreCommitHandler;
 
   private EncryptionManager encryptionManager;
   private EncryptingFileIO encryptingFileIO;
@@ -96,10 +97,31 @@ public class HiveTableOperations extends BaseMetastoreTableOperations
       String catalogName,
       String database,
       String table) {
+    this(
+        conf,
+        metaClients,
+        fileIO,
+        keyManagementClient,
+        HmsTablePreCommitHandler.NO_OP_HANDLER,
+        catalogName,
+        database,
+        table);
+  }
+
+  protected HiveTableOperations(
+      Configuration conf,
+      ClientPool<IMetaStoreClient, TException> metaClients,
+      FileIO fileIO,
+      KeyManagementClient keyManagementClient,
+      HmsTablePreCommitHandler hmsTablePreCommitHandler,
+      String catalogName,
+      String database,
+      String table) {
     this.conf = conf;
     this.metaClients = metaClients;
     this.fileIO = fileIO;
     this.keyManagementClient = keyManagementClient;
+    this.hmsTablePreCommitHandler = hmsTablePreCommitHandler;
     this.fullName = catalogName + "." + database + "." + table;
     this.catalogName = catalogName;
     this.database = database;
@@ -300,6 +322,8 @@ public class HiveTableOperations extends BaseMetastoreTableOperations
           hiveEngineEnabled,
           maxHiveTablePropertySize,
           currentMetadataLocation());
+
+      hmsTablePreCommitHandler.handle(tbl);
 
       if (!keepHiveStats) {
         tbl.getParameters().remove(StatsSetupConst.COLUMN_STATS_ACCURATE);

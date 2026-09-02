@@ -73,7 +73,13 @@ jobs:
     strategy:
       matrix:
         jvm: [11, 17, 21]
-        flink: ['1.19', '1.20', '2.0']
+        flink: ['1.19', '1.20', '2.0', '2.2']
+        exclude:
+          # Arenadata Flink (2.2.1.1-4.3.0-0) is built with Java 21
+          - jvm: 11
+            flink: '2.2'
+          - jvm: 17
+            flink: '2.2'
     env:
       SPARK_LOCAL_IP: localhost
     steps:

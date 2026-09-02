@@ -19,15 +19,19 @@
 package org.apache.iceberg.spark.sql;
 
 import static org.apache.iceberg.CatalogUtil.ICEBERG_CATALOG_TYPE;
+import static org.apache.iceberg.CatalogUtil.ICEBERG_CATALOG_TYPE_HIVE;
 import static org.apache.iceberg.CatalogUtil.ICEBERG_CATALOG_TYPE_REST;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assumptions.assumeThat;
 
+import org.apache.iceberg.CatalogProperties;
 import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.hadoop.HadoopCatalog;
+import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.spark.CatalogTestBase;
+import org.apache.iceberg.spark.SparkCatalog;
 import org.apache.iceberg.types.Types;
 import org.apache.iceberg.types.Types.NestedField;
 import org.apache.spark.SparkException;
@@ -306,6 +310,70 @@ public class TestAlterTable extends CatalogTestBase {
         .as("Initial name should not exist")
         .isFalse();
     assertThat(validationCatalog.tableExists(renamedIdent)).as("New name should exist").isTrue();
+  }
+
+  @TestTemplate
+  public void testRenameProtectsAgainstBaseDirectoryDropEnabled() {
+    runRenameProtectsAgainstBaseDirectoryDrop(true);
+  }
+
+  @TestTemplate
+  public void testRenameProtectsAgainstBaseDirectoryDropDisabled() {
+    runRenameProtectsAgainstBaseDirectoryDrop(false);
+  }
+
+  private void runRenameProtectsAgainstBaseDirectoryDrop(boolean dropBaseDirEnabled) {
+    assumeThat(catalogConfig.get(ICEBERG_CATALOG_TYPE))
+        .as("rename.metadata.location.update is only implemented for the Hive catalog")
+        .isEqualTo(ICEBERG_CATALOG_TYPE_HIVE);
+
+    String renameCatalog = "rename_loc_cat";
+    spark.conf().set("spark.sql.catalog." + renameCatalog, SparkCatalog.class.getName());
+    spark.conf().set("spark.sql.catalog." + renameCatalog + ".type", ICEBERG_CATALOG_TYPE_HIVE);
+    spark
+        .conf()
+        .set(
+            "spark.sql.catalog."
+                + renameCatalog
+                + "."
+                + CatalogProperties.RENAME_UPDATE_METADATA_LOCATION,
+            "true");
+
+    String suffix = dropBaseDirEnabled ? "enabled" : "disabled";
+    String src = renameCatalog + ".default.rename_drop_src_" + suffix;
+    String dst = renameCatalog + ".default.rename_drop_dst_" + suffix;
+    String tblProperties =
+        "TBLPROPERTIES ('drop.base-directory.enabled' = '" + dropBaseDirEnabled + "')";
+
+    try {
+      sql("CREATE NAMESPACE IF NOT EXISTS %s.default", renameCatalog);
+      sql("CREATE TABLE %s (id INT, name STRING) USING iceberg %s", src, tblProperties);
+
+      // Pre-rename write: data file lands under the old src directory.
+      sql("INSERT INTO %s VALUES (0, 'old-data')", src);
+
+      sql("ALTER TABLE %s RENAME TO %s", src, dst);
+
+      // Post-rename write: data file lands under the new dst directory.
+      sql("INSERT INTO %s VALUES (1, 'post-rename')", dst);
+
+      // Re-create the old name. It takes the now-vacated default directory.
+      sql("CREATE TABLE %s (id INT, name STRING) USING iceberg %s", src, tblProperties);
+      sql("INSERT INTO %s VALUES (2, 'new-src-data')", src);
+
+      // DROP PURGE runs the per-file purge for the new src table. When the table-property is
+      // true, the opportunistic directory delete also runs and skips because dst's pre-rename
+      // files remain under the prefix. Either way, dst's data must be untouched.
+      sql("DROP TABLE %s PURGE", src);
+
+      assertEquals(
+          "Renamed table data must survive purge of the old name",
+          ImmutableList.of(row(0, "old-data"), row(1, "post-rename")),
+          sql("SELECT * FROM %s ORDER BY id", dst));
+    } finally {
+      sql("DROP TABLE IF EXISTS %s", src);
+      sql("DROP TABLE IF EXISTS %s", dst);
+    }
   }
 
   @TestTemplate
