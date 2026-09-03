@@ -589,8 +589,7 @@ public class TestVariantMetrics {
             props,
             MetricsConfig.getDefault(),
             ParquetFileWriter.Mode.CREATE,
-            null,
-            false);
+            null);
 
     try (writer) {
       record.setField("id", 1L);
