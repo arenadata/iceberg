@@ -29,6 +29,7 @@ import static org.assertj.core.api.AssertionsForClassTypes.assertThat;
 import java.io.IOException;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.stream.Collectors;
 import org.apache.hadoop.fs.Path;
@@ -42,9 +43,10 @@ public class TestOrcTableMigration extends IntegrationTestBase {
   private static final String DB_TEST_TABLE = format("%s.%s", TEST_DB, TEST_TABLE);
   private static final String SPARK_CATALOG_TEST_TABLE =
       format("%s.%s.%s", SPARK_CATALOG, TEST_DB, TEST_TABLE);
-  private static final LocalDateTime CURRENT_TIME = LocalDateTime.now();
+  private static final LocalDateTime CURRENT_TIME =
+      LocalDateTime.now().truncatedTo(ChronoUnit.SECONDS);
   private static final String FORMATTED_TIME =
-      CURRENT_TIME.format(DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS"));
+      CURRENT_TIME.format(DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss"));
 
   @Test
   public void testOrcMigrationTableWithTimestampColumn() throws IOException, NoSuchTableException {
@@ -111,8 +113,7 @@ public class TestOrcTableMigration extends IntegrationTestBase {
                     row,
                     isIceberg
                         ? FORMATTED_TIME
-                        : CURRENT_TIME.format(
-                            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS"))))
+                        : format("%s.0", CURRENT_TIME.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")))))
         .collect(Collectors.toList());
   }
 
