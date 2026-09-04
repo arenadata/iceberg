@@ -125,8 +125,7 @@ case class ExtendedDataSourceV2Strategy(spark: SparkSession) extends Strategy wi
           s"Cannot move view between catalogs: from=${oldCatalog.name} and to=${newIdent.catalog().name()}")
       }
 
-      val targetIdent = qualifyViewRenameTarget(oldIdent, newIdent.identifier())
-      RenameV2ViewExec(oldCatalog, oldIdent, targetIdent) :: Nil
+      IcebergRenameV2ViewExec(oldCatalog, oldIdent, newIdent.identifier()) :: Nil
 
     case DropIcebergView(ResolvedIdentifier(viewCatalog: ViewCatalog, ident), ifExists) =>
       DropV2ViewExec(viewCatalog, ident, ifExists) :: Nil
@@ -188,16 +187,6 @@ case class ExtendedDataSourceV2Strategy(spark: SparkSession) extends Strategy wi
       IcebergAlterV2ViewUnsetPropertiesExec(catalog, ident, propertyKeys, ifExists) :: Nil
 
     case _ => Nil
-  }
-
-  private def qualifyViewRenameTarget(
-      sourceIdent: Identifier,
-      targetIdent: Identifier): Identifier = {
-    if (targetIdent.namespace().isEmpty) {
-      Identifier.of(sourceIdent.namespace(), targetIdent.name())
-    } else {
-      targetIdent
-    }
   }
 
   private object IcebergCatalogAndIdentifier {
