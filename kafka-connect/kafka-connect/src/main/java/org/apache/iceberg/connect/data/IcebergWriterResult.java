@@ -19,6 +19,7 @@
 package org.apache.iceberg.connect.data;
 
 import java.util.List;
+import java.util.Set;
 import org.apache.iceberg.DataFile;
 import org.apache.iceberg.DeleteFile;
 import org.apache.iceberg.catalog.TableIdentifier;
@@ -31,16 +32,27 @@ public class IcebergWriterResult {
   private final List<DataFile> dataFiles;
   private final List<DeleteFile> deleteFiles;
   private final StructType partitionStruct;
+  private final Set<String> sourceTopics;
 
   public IcebergWriterResult(
       TableReference tableReference,
       List<DataFile> dataFiles,
       List<DeleteFile> deleteFiles,
       StructType partitionStruct) {
+    this(tableReference, dataFiles, deleteFiles, partitionStruct, Set.of());
+  }
+
+  public IcebergWriterResult(
+      TableReference tableReference,
+      List<DataFile> dataFiles,
+      List<DeleteFile> deleteFiles,
+      StructType partitionStruct,
+      Set<String> sourceTopics) {
     this.tableReference = tableReference;
     this.dataFiles = dataFiles;
     this.deleteFiles = deleteFiles;
     this.partitionStruct = partitionStruct;
+    this.sourceTopics = sourceTopics;
   }
 
   /**
@@ -53,10 +65,7 @@ public class IcebergWriterResult {
       List<DataFile> dataFiles,
       List<DeleteFile> deleteFiles,
       StructType partitionStruct) {
-    this.tableReference = TableReference.of("unknown", tableIdentifier);
-    this.dataFiles = dataFiles;
-    this.deleteFiles = deleteFiles;
-    this.partitionStruct = partitionStruct;
+    this(TableReference.of("unknown", tableIdentifier), dataFiles, deleteFiles, partitionStruct);
   }
 
   public TableReference tableReference() {
@@ -82,5 +91,9 @@ public class IcebergWriterResult {
 
   public StructType partitionStruct() {
     return partitionStruct;
+  }
+
+  public Set<String> sourceTopics() {
+    return sourceTopics;
   }
 }

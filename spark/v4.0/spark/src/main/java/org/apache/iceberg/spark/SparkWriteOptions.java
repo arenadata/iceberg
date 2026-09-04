@@ -85,4 +85,10 @@ public class SparkWriteOptions {
 
   // Overrides the delete granularity
   public static final String DELETE_GRANULARITY = "delete-granularity";
+
+  // Controls whether to shred variant columns during write operations
+  public static final String SHRED_VARIANTS = "shred-variants";
+
+  // Controls how many rows to buffer before inferring shredded variant schemas
+  public static final String VARIANT_INFERENCE_BUFFER_SIZE = "variant-inference-buffer-size";
 }

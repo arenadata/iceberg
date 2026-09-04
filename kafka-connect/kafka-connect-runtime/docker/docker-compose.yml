@@ -89,7 +89,7 @@ services:
       CLUSTER_ID: E-JXLvCaTiaUYDb1LwZ1JQ
 
   connect:
-    image: confluentinc/cp-kafka-connect:8.1.2
+    image: arenadata/kafka-connect:4.3.1.1-4.1.0-1
     depends_on:
       kafka:
         condition: service_started
@@ -101,6 +101,7 @@ services:
     volumes:
       - ../build/install:/test/kafka-connect
       - ./kms/iceberg-test-kms-1.0.0.jar:/test/kafka-connect/iceberg-kafka-connect-runtime/lib/iceberg-test-kms-1.0.0.jar:ro
+      - ./connect-libs/commons-collections-3.2.2.jar:/test/kafka-connect/iceberg-kafka-connect-runtime/lib/commons-collections-3.2.2.jar:ro
       - ./connect-libs/s3-transfer-manager-2.42.39.jar:/test/kafka-connect/iceberg-kafka-connect-runtime/lib/s3-transfer-manager-2.42.39.jar:ro
       - ./connect-libs/hadoop-aws-3.4.1.jar:/test/kafka-connect/iceberg-kafka-connect-runtime/lib/hadoop-aws-3.4.1.jar:ro
       - ./connect-libs/hadoop-auth-3.4.1.jar:/test/kafka-connect/iceberg-kafka-connect-runtime/lib/hadoop-auth-3.4.1.jar:ro
