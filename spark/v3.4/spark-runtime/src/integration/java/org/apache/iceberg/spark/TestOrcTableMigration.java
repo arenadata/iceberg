@@ -113,7 +113,10 @@ public class TestOrcTableMigration extends IntegrationTestBase {
                     row,
                     isIceberg
                         ? FORMATTED_TIME
-                        : format("%s.0", CURRENT_TIME.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")))))
+                        : format(
+                            "%s.0",
+                            CURRENT_TIME.format(
+                                DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")))))
         .collect(Collectors.toList());
   }
 
