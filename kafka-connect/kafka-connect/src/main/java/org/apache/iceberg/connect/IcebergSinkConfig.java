@@ -69,6 +69,14 @@ public class IcebergSinkConfig extends AbstractConfig {
 
   public static final String INTERNAL_TRANSACTIONAL_SUFFIX_PROP =
       "iceberg.coordinator.transactional.suffix";
+  public static final String METADATA_KAFKA_SERVICE_NAME_PROP =
+      "iceberg.metadata.kafka-service-name";
+  public static final String METADATA_PIPELINE_SERVICE_NAME_PROP =
+      "iceberg.metadata.pipeline-service-name";
+  public static final String METADATA_ICEBERG_SERVICE_NAME_PROP =
+      "iceberg.metadata.iceberg-service-name";
+  public static final String METADATA_ICEBERG_DATABASE_NAME_PROP =
+      "iceberg.metadata.iceberg-database-name";
   private static final String ROUTE_REGEX = "route-regex";
   private static final String ID_COLUMNS = "id-columns";
   private static final String PARTITION_BY = "partition-by";
@@ -149,6 +157,10 @@ public class IcebergSinkConfig extends AbstractConfig {
   private static final String DEFAULT_CATALOG_NAME = "iceberg";
   private static final String DEFAULT_CONTROL_TOPIC = "control-iceberg";
   public static final String DEFAULT_CONTROL_GROUP_PREFIX = "cg-control-";
+
+  private static final String METADATA_KAFKA_SERVICE_NAME_DEFAULT = "kafka";
+  private static final String METADATA_PIPELINE_SERVICE_NAME_DEFAULT = "kafka-connect";
+  private static final String METADATA_ICEBERG_DATABASE_NAME_DEFAULT = "default";
 
   public static final int SCHEMA_UPDATE_RETRIES = 2; // 3 total attempts
   public static final int CREATE_TABLE_RETRIES = 2; // 3 total attempts
@@ -287,6 +299,7 @@ public class IcebergSinkConfig extends AbstractConfig {
         "config to control coordinator executor keep alive time");
     defineHdfsKerberosProps(configDef);
     defineV3NewTypesSupportProps(configDef);
+    defineMetadataProps(configDef);
     defineCdcProps(configDef);
     return configDef;
   }
@@ -386,6 +399,34 @@ public class IcebergSinkConfig extends AbstractConfig {
         false,
         Importance.MEDIUM,
         "Enable mapping Kafka Connect schema default values to Iceberg write-default/initial-default");
+  }
+
+  private static void defineMetadataProps(ConfigDef configDef) {
+    configDef.define(
+        METADATA_KAFKA_SERVICE_NAME_PROP,
+        ConfigDef.Type.STRING,
+        METADATA_KAFKA_SERVICE_NAME_DEFAULT,
+        Importance.LOW,
+        "OpenMetadata messaging service name used to build Kafka topic FQNs.");
+    configDef.define(
+        METADATA_PIPELINE_SERVICE_NAME_PROP,
+        ConfigDef.Type.STRING,
+        METADATA_PIPELINE_SERVICE_NAME_DEFAULT,
+        Importance.LOW,
+        "OpenMetadata pipeline service name used to build the connector pipeline FQN.");
+    configDef.define(
+        METADATA_ICEBERG_SERVICE_NAME_PROP,
+        ConfigDef.Type.STRING,
+        null,
+        Importance.LOW,
+        "OpenMetadata database service name used to build Iceberg table FQNs. "
+            + "Defaults to the Iceberg catalog name.");
+    configDef.define(
+        METADATA_ICEBERG_DATABASE_NAME_PROP,
+        ConfigDef.Type.STRING,
+        METADATA_ICEBERG_DATABASE_NAME_DEFAULT,
+        Importance.LOW,
+        "OpenMetadata database name used to build Iceberg table FQNs.");
   }
 
   private static void defineCdcProps(ConfigDef configDef) {
@@ -902,6 +943,23 @@ public class IcebergSinkConfig extends AbstractConfig {
 
   public boolean schemaCaseInsensitive() {
     return getBoolean(TABLES_SCHEMA_CASE_INSENSITIVE_PROP);
+  }
+
+  public String metadataKafkaServiceName() {
+    return getString(METADATA_KAFKA_SERVICE_NAME_PROP);
+  }
+
+  public String metadataPipelineFqn() {
+    return OpenMetadataFqn.build(getString(METADATA_PIPELINE_SERVICE_NAME_PROP), connectorName());
+  }
+
+  public String metadataIcebergServiceName() {
+    String serviceName = getString(METADATA_ICEBERG_SERVICE_NAME_PROP);
+    return serviceName == null || serviceName.isEmpty() ? catalogName() : serviceName;
+  }
+
+  public String metadataIcebergDatabaseName() {
+    return getString(METADATA_ICEBERG_DATABASE_NAME_PROP);
   }
 
   public JsonConverter jsonConverter() {

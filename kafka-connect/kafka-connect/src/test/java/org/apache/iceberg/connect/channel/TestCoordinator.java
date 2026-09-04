@@ -19,7 +19,10 @@
 package org.apache.iceberg.connect.channel;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.time.OffsetDateTime;
@@ -32,6 +35,7 @@ import org.apache.iceberg.DeleteFile;
 import org.apache.iceberg.FileFormat;
 import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.Snapshot;
+import org.apache.iceberg.connect.MetadataEvents;
 import org.apache.iceberg.connect.events.AvroUtil;
 import org.apache.iceberg.connect.events.CommitComplete;
 import org.apache.iceberg.connect.events.CommitToTable;
@@ -43,10 +47,15 @@ import org.apache.iceberg.connect.events.StartCommit;
 import org.apache.iceberg.connect.events.TableReference;
 import org.apache.iceberg.connect.events.TopicPartitionOffset;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
+import org.apache.iceberg.relocated.com.google.common.collect.ImmutableSet;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.types.Types.StructType;
+import org.apache.kafka.clients.admin.MemberAssignment;
+import org.apache.kafka.clients.admin.MemberDescription;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.connect.metadata.LineageEdge;
+import org.apache.kafka.connect.metadata.MetadataReporter;
 import org.apache.kafka.connect.sink.SinkTaskContext;
 import org.junit.jupiter.api.Test;
 
@@ -138,6 +147,15 @@ public class TestCoordinator extends ChannelTestBase {
     assertThat(table.snapshots()).isEmpty();
   }
 
+  @Test
+  public void testReportsLineageForWrittenSourceTopic() {
+    MetadataReporter reporter = mock(MetadataReporter.class);
+    runCommitCyclesForMetadata(reporter, 2);
+
+    // Two commits containing data from one source topic produce two lineage events.
+    verify(reporter, times(2)).report(any(LineageEdge.class));
+  }
+
   private void assertCommitTable(int idx, UUID commitId, OffsetDateTime ts) {
     byte[] bytes = producer.history().get(idx).value();
     Event commitTable = AvroUtil.decode(bytes);
@@ -165,7 +183,8 @@ public class TestCoordinator extends ChannelTestBase {
 
     SinkTaskContext context = mock(SinkTaskContext.class);
     Coordinator coordinator =
-        new Coordinator(catalog, config, ImmutableList.of(), clientFactory, context);
+        new Coordinator(
+            catalog, config, ImmutableList.of(), clientFactory, context, MetadataEvents.NOOP);
     coordinator.start();
 
     // init consumer after subscribe()
@@ -252,5 +271,66 @@ public class TestCoordinator extends ChannelTestBase {
     assertThat(table.snapshots()).hasSize(2);
     assertThat(table.currentSnapshot().summary())
         .containsEntry(OFFSETS_SNAPSHOT_PROP, "{\"0\":3,\"1\":7}");
+  }
+
+  private void runCommitCyclesForMetadata(MetadataReporter reporter, int cycles) {
+    when(config.commitIntervalMs()).thenReturn(0);
+    when(config.commitTimeoutMs()).thenReturn(Integer.MAX_VALUE);
+
+    // One fake group member participates in each commit cycle.
+    MemberAssignment assignment = mock(MemberAssignment.class);
+    when(assignment.topicPartitions())
+        .thenReturn(ImmutableSet.of(new TopicPartition(SRC_TOPIC_NAME, 0)));
+    MemberDescription member = mock(MemberDescription.class);
+    when(member.assignment()).thenReturn(assignment);
+
+    MetadataEvents metadataEvents =
+        new MetadataEvents(reporter, "iceberg", "default", "test-pipeline", "kafka");
+
+    SinkTaskContext context = mock(SinkTaskContext.class);
+    Coordinator coordinator =
+        new Coordinator(
+            catalog, config, ImmutableList.of(member), clientFactory, context, metadataEvents);
+    coordinator.start();
+    initConsumer();
+
+    long ctlOffset = 1;
+    for (int i = 0; i < cycles; i++) {
+      // process() #1 of the cycle: emits StartCommit to the control topic.
+      coordinator.process();
+
+      // Read back the StartCommit we just produced to get the commitId.
+      int lastIdx = producer.history().size() - 1;
+      Event startEvent = AvroUtil.decode(producer.history().get(lastIdx).value());
+      assertThat(startEvent.type()).isEqualTo(PayloadType.START_COMMIT);
+      UUID commitId = ((StartCommit) startEvent.payload()).commitId();
+
+      // Inject the (fake) Worker's DataWritten reply.
+      Event dataWritten =
+          new Event(
+              config.connectGroupId(),
+              new DataWritten(
+                  StructType.of(),
+                  commitId,
+                  new TableReference("catalog", ImmutableList.of("db"), "tbl"),
+                  ImmutableList.of(EventTestUtil.createDataFile()),
+                  ImmutableList.of(),
+                  ImmutableList.of(SRC_TOPIC_NAME)));
+      consumer.addRecord(
+          new ConsumerRecord<>(CTL_TOPIC_NAME, 0, ctlOffset++, "k", AvroUtil.encode(dataWritten)));
+
+      // Inject the (fake) Worker's DataComplete reply.
+      OffsetDateTime ts = EventTestUtil.now();
+      Event dataComplete =
+          new Event(
+              config.connectGroupId(),
+              new DataComplete(
+                  commitId, ImmutableList.of(new TopicPartitionOffset("topic", 1, 1L, ts))));
+      consumer.addRecord(
+          new ConsumerRecord<>(CTL_TOPIC_NAME, 0, ctlOffset++, "k", AvroUtil.encode(dataComplete)));
+
+      // process() #2 consumes the data events, commits to Iceberg, and reports lineage.
+      coordinator.process();
+    }
   }
 }

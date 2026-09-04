@@ -118,6 +118,7 @@ allprojects {
   group = "org.apache.iceberg"
   version = projectVersion
   repositories {
+    mavenLocal()
     maven {
       name = 'arenadata'
       url = uri('https://maven.pkg.github.com/arenadata/*')
@@ -131,7 +132,6 @@ allprojects {
       }
     }
     mavenCentral()
-    mavenLocal()
   }
 }
 
