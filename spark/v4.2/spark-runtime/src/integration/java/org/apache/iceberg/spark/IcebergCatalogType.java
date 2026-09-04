@@ -46,13 +46,13 @@ public enum IcebergCatalogType {
                   .entrySet()
                   .stream())
           .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue)),
-      format("%s/%s.db", WAREHOUSE_LOCATION, TEST_DB)),
+      format("%s%s.db", WAREHOUSE_LOCATION, TEST_DB)),
   REST(
       Stream.concat(
               BASE_CATALOG_CONFIGS.entrySet().stream(),
               Map.of("type", "rest", "uri", "http://localhost:8181").entrySet().stream())
           .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue)),
-      format("%s/%s", WAREHOUSE_LOCATION, TEST_DB));
+      format("%s%s", WAREHOUSE_LOCATION, TEST_DB));
 
   private final Map<String, String> catalogTypeBaseConfigs;
 
