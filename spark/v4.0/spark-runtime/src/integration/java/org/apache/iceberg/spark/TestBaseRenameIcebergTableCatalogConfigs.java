@@ -20,8 +20,8 @@ package org.apache.iceberg.spark;
 
 import static java.lang.String.format;
 import static org.apache.iceberg.spark.IcebergCatalogProperties.BASE_COLUMN_SCHEMA;
-import static org.apache.iceberg.spark.IcebergCatalogProperties.CATALOG_TABLE_NAME;
-import static org.apache.iceberg.spark.IcebergCatalogProperties.CATALOG_TABLE_NEW_NAME;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.CATALOG_TEST_TABLE;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.CATALOG_TEST_TABLE_NEW;
 import static org.apache.iceberg.spark.IcebergCatalogProperties.RECORDS;
 import static org.apache.iceberg.spark.IcebergCatalogProperties.TABLE_IDENTIFIER;
 import static org.apache.iceberg.spark.IcebergCatalogProperties.TABLE_IDENTIFIER_NEW;
@@ -60,20 +60,20 @@ public class TestBaseRenameIcebergTableCatalogConfigs extends IntegrationTestBas
         Map.of(
             "rename.metadata.location.update",
             String.valueOf(isRenameMetadataLocationUpdateEnabled)));
-    catalog().createTable(TABLE_IDENTIFIER, BASE_COLUMN_SCHEMA, new Transform[0], Map.of());
-    insertData(CATALOG_TABLE_NAME, RECORDS.subList(0, 2));
-    assertThat(loadCatalogTableLocation(catalog().loadTable(TABLE_IDENTIFIER)))
+    sparkCatalog().createTable(TABLE_IDENTIFIER, BASE_COLUMN_SCHEMA, new Transform[0], Map.of());
+    insertData(CATALOG_TEST_TABLE, RECORDS.subList(0, 2));
+    assertThat(loadCatalogTableLocation(sparkCatalog().loadTable(TABLE_IDENTIFIER)))
         .isEqualTo(format("%s/%s", IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE));
     AssertionsForInterfaceTypes.assertThat(
-            extractFileSystemContents(IcebergCatalogType.HIVE, false))
+            extractFileSystemContents(IcebergCatalogType.HIVE.getNamespacePath(), false))
         .containsExactlyInAnyOrderElementsOf(
             List.of(format("%s/%s", IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE)));
-    spark().sql(format("ALTER TABLE %s RENAME TO %s", CATALOG_TABLE_NAME, CATALOG_TABLE_NEW_NAME));
-    insertData(CATALOG_TABLE_NEW_NAME, RECORDS.subList(2, 4));
-    assertThat(loadCatalogTableLocation(catalog().loadTable(TABLE_IDENTIFIER_NEW)))
+    spark().sql(format("ALTER TABLE %s RENAME TO %s", CATALOG_TEST_TABLE, CATALOG_TEST_TABLE_NEW));
+    insertData(CATALOG_TEST_TABLE_NEW, RECORDS.subList(2, 4));
+    assertThat(loadCatalogTableLocation(sparkCatalog().loadTable(TABLE_IDENTIFIER_NEW)))
         .isEqualTo(format("%s/%s", IcebergCatalogType.HIVE.getNamespaceDir(), tableDir));
     AssertionsForInterfaceTypes.assertThat(
-            extractFileSystemContents(IcebergCatalogType.HIVE, false))
+            extractFileSystemContents(IcebergCatalogType.HIVE.getNamespacePath(), false))
         .containsExactlyInAnyOrderElementsOf(namespaceContents);
   }
 

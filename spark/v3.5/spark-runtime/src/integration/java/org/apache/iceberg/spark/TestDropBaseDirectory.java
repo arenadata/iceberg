@@ -20,7 +20,7 @@ package org.apache.iceberg.spark;
 
 import static java.lang.String.format;
 import static org.apache.iceberg.spark.IcebergCatalogProperties.BASE_COLUMN_SCHEMA;
-import static org.apache.iceberg.spark.IcebergCatalogProperties.CATALOG_TABLE_NAME;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.CATALOG_TEST_TABLE;
 import static org.apache.iceberg.spark.IcebergCatalogProperties.RECORDS;
 import static org.apache.iceberg.spark.IcebergCatalogProperties.TABLE_IDENTIFIER;
 import static org.apache.iceberg.spark.IcebergCatalogProperties.TEST_TABLE;
@@ -50,22 +50,22 @@ public class TestDropBaseDirectory extends IntegrationTestBase {
           TableAlreadyExistsException,
           NoSuchNamespaceException,
           NoSuchTableException {
-    catalog()
+    sparkCatalog()
         .createTable(
             TABLE_IDENTIFIER,
             BASE_COLUMN_SCHEMA,
             new Transform[0],
             Map.of("drop.base-directory.enabled", String.valueOf(isDropBaseDirectoryEnabled)));
-    insertData(CATALOG_TABLE_NAME, RECORDS.subList(0, 2));
-    assertThat(loadCatalogTableLocation(catalog().loadTable(TABLE_IDENTIFIER)))
+    insertData(CATALOG_TEST_TABLE, RECORDS.subList(0, 2));
+    assertThat(loadCatalogTableLocation(sparkCatalog().loadTable(TABLE_IDENTIFIER)))
         .isEqualTo(format("%s/%s", IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE));
     AssertionsForInterfaceTypes.assertThat(
-            extractFileSystemContents(IcebergCatalogType.HIVE, false))
+            extractFileSystemContents(IcebergCatalogType.HIVE.getNamespacePath(), false))
         .containsExactlyInAnyOrderElementsOf(
             List.of(format("%s/%s", IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE)));
-    catalog().purgeTable(TABLE_IDENTIFIER);
+    sparkCatalog().purgeTable(TABLE_IDENTIFIER);
     AssertionsForInterfaceTypes.assertThat(
-            extractFileSystemContents(IcebergCatalogType.HIVE, false))
+            extractFileSystemContents(IcebergCatalogType.HIVE.getNamespacePath(), false))
         .containsExactlyInAnyOrderElementsOf(namespaceContents);
   }
 

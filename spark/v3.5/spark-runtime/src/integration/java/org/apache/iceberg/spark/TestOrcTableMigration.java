@@ -19,63 +19,106 @@
 package org.apache.iceberg.spark;
 
 import static java.lang.String.format;
-import static org.apache.iceberg.spark.IcebergCatalogProperties.BASE_COLUMN_SCHEMA;
-import static org.apache.iceberg.spark.IcebergCatalogProperties.CATALOG_TABLE_NAME;
 import static org.apache.iceberg.spark.IcebergCatalogProperties.RECORDS;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.SPARK_CATALOG;
 import static org.apache.iceberg.spark.IcebergCatalogProperties.TABLE_IDENTIFIER;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.TEST_DB;
 import static org.apache.iceberg.spark.IcebergCatalogProperties.TEST_TABLE;
 import static org.assertj.core.api.AssertionsForClassTypes.assertThat;
 
+import java.io.IOException;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.Arrays;
 import java.util.List;
-import java.util.Map;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
-import org.apache.iceberg.ParameterizedTestExtension;
-import org.apache.spark.sql.catalyst.analysis.NoSuchNamespaceException;
-import org.apache.spark.sql.catalyst.analysis.TableAlreadyExistsException;
-import org.apache.spark.sql.connector.catalog.Column;
-import org.apache.spark.sql.connector.expressions.Transform;
-import org.apache.spark.sql.types.DataTypes;
+import org.apache.hadoop.fs.Path;
+import org.apache.spark.sql.catalyst.analysis.NoSuchTableException;
+import org.apache.spark.sql.connector.catalog.Identifier;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
 
-@ExtendWith(ParameterizedTestExtension.class)
 public class TestOrcTableMigration extends IntegrationTestBase {
 
-  private static final String TIMESTAMP_VAL =
-      LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.S"));
-
-  private static final Column[] COLUMN_SCHEMA_WITH_TIMESTAMP =
-      Stream.concat(
-              Arrays.stream(BASE_COLUMN_SCHEMA),
-              Stream.of(Column.create("create_time", DataTypes.TimestampType, true)))
-          .toArray(Column[]::new);
+  private static final String TEST_TABLE_BACKUP = "test_table_backup";
+  private static final String DB_TEST_TABLE = format("%s.%s", TEST_DB, TEST_TABLE);
+  private static final String SPARK_CATALOG_TEST_TABLE =
+      format("%s.%s.%s", SPARK_CATALOG, TEST_DB, TEST_TABLE);
+  private static final LocalDateTime CURRENT_TIME = LocalDateTime.now();
+  private static final String FORMATTED_TIME =
+      CURRENT_TIME.format(DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS"));
 
   @Test
-  public void testOrcMigrationTableWithTimestampColumn()
-      throws TableAlreadyExistsException, NoSuchNamespaceException {
-    catalog()
-        .createTable(
-            TABLE_IDENTIFIER,
-            COLUMN_SCHEMA_WITH_TIMESTAMP,
-            new Transform[0],
-            Map.of("write.format.default", "orc"));
-    insertData(CATALOG_TABLE_NAME, getRecords(true));
-    assertRecords(CATALOG_TABLE_NAME, getRecords(false));
-    assertThat(extractTableDataFiles(TEST_TABLE).stream().findAny().get()).contains("orc");
-    int abc = 4;
+  public void testOrcMigrationTableWithTimestampColumn() throws IOException, NoSuchTableException {
+    spark()
+        .sql(
+            format(
+                "CREATE TABLE %s (id INTEGER, username STRING, create_time TIMESTAMP) USING orc",
+                SPARK_CATALOG_TEST_TABLE));
+    insertData(SPARK_CATALOG_TEST_TABLE, getInsertTimestampRecords(RECORDS.subList(0, 2)));
+    assertRecords(SPARK_CATALOG_TEST_TABLE, castRecords(RECORDS.subList(0, 2), false));
+    String tableLocation =
+        loadCatalogTableLocation(sparkSessionCatalog().loadTable(TABLE_IDENTIFIER));
+    assertThat(
+            extractFileSystemContents(new Path(tableLocation), true).stream()
+                .anyMatch(s -> s.contains("orc")))
+        .isTrue();
+    assertThat(
+            extractFileSystemContents(new Path(tableLocation), false).stream()
+                .anyMatch(s -> s.contains("parquet")))
+        .isFalse();
+    spark()
+        .sql(
+            format(
+                "CALL %s.system.migrate(table => '%s', backup_table_name => '%s', properties => map('write.format.default', 'parquet'))",
+                SPARK_CATALOG, DB_TEST_TABLE, TEST_TABLE_BACKUP));
+    insertData(SPARK_CATALOG_TEST_TABLE, getInsertTimestampRecords(RECORDS.subList(2, 4)));
+    assertRecords(SPARK_CATALOG_TEST_TABLE, castRecords(RECORDS, true));
+    assertThat(
+            extractFileSystemContents(new Path(tableLocation), true).stream()
+                .anyMatch(s -> s.contains("parquet")))
+        .isTrue();
   }
 
-  private List<String> getRecords(boolean isInsert) {
-    return RECORDS.stream()
+  @Test
+  public void testOrcMigrationTableWithTimestampColumnWithNTZ() {
+    spark()
+        .sql(
+            format(
+                "CREATE TABLE %s (id INTEGER, username STRING, create_time TIMESTAMP) USING orc",
+                SPARK_CATALOG_TEST_TABLE));
+    insertData(SPARK_CATALOG_TEST_TABLE, getInsertTimestampRecords(RECORDS.subList(0, 2)));
+    spark().sql("SET spark.sql.timestampType = TIMESTAMP_NTZ");
+    spark()
+        .sql(
+            format(
+                "CALL %s.system.migrate(table => '%s', backup_table_name => '%s', properties => map('write.format.default', 'parquet'))",
+                SPARK_CATALOG, DB_TEST_TABLE, TEST_TABLE_BACKUP));
+    insertData(SPARK_CATALOG_TEST_TABLE, getInsertTimestampRecords(RECORDS.subList(2, 4)));
+    assertRecords(SPARK_CATALOG_TEST_TABLE, castRecords(RECORDS, true));
+  }
+
+  @Override
+  public void clearTables() {
+    sparkSessionCatalog().dropTable(Identifier.of(new String[] {TEST_DB}, TEST_TABLE_BACKUP));
+    sparkSessionCatalog().dropTable(Identifier.of(new String[] {TEST_DB}, TEST_TABLE));
+  }
+
+  private List<String> castRecords(List<String> records, boolean isIceberg) {
+    return records.stream()
         .map(
             row ->
                 format(
                     "%s, %s",
-                    row, isInsert ? format("TIMESTAMP '%s'", TIMESTAMP_VAL) : TIMESTAMP_VAL))
+                    row,
+                    isIceberg
+                        ? FORMATTED_TIME
+                        : CURRENT_TIME.format(
+                            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS"))))
+        .collect(Collectors.toList());
+  }
+
+  private List<String> getInsertTimestampRecords(List<String> records) {
+    return records.stream()
+        .map(row -> format("%s, TIMESTAMP '%s'", row, FORMATTED_TIME))
         .collect(Collectors.toList());
   }
 }

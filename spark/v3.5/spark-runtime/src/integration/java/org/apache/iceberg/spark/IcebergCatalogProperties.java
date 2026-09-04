@@ -30,18 +30,19 @@ import org.apache.spark.sql.types.DataTypes;
 
 public class IcebergCatalogProperties {
   public static final String HIVE_METASTORE_PORT = "9083";
-  public static final String WAREHOUSE_LOCATION = "s3a://warehouse";
+  public static final String WAREHOUSE_LOCATION = "s3a://warehouse/";
   public static final String TEST_DB = "test";
   public static final String TEST_CATALOG = "test_catalog";
+  public static final String SPARK_CATALOG = "spark_catalog";
   public static final int MINIO_PORT = 9000;
   public static final String AWS_ACCESS_KEY = "minioadmin";
   public static final String AWS_SECRET_KEY = "minioadmin";
   public static final String AWS_REGION = "us-east-1";
   public static final String TEST_TABLE = "test_table";
   public static final String TEST_TABLE_NEW = "test_table_new";
-  public static final String CATALOG_TABLE_NAME =
+  public static final String CATALOG_TEST_TABLE =
       format("%s.%s.%s", TEST_CATALOG, TEST_DB, TEST_TABLE);
-  public static final String CATALOG_TABLE_NEW_NAME =
+  public static final String CATALOG_TEST_TABLE_NEW =
       format("%s.%s.%s", TEST_CATALOG, TEST_DB, TEST_TABLE_NEW);
   public static final List<String> RECORDS =
       List.of("1, 'Sam'", "2, 'Bob'", "3, 'Sue'", "4, 'Ann'");
