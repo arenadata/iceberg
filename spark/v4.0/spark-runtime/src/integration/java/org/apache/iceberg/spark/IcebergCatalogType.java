@@ -20,10 +20,10 @@ package org.apache.iceberg.spark;
 
 import static java.lang.String.format;
 import static java.util.Map.entry;
-import static org.apache.iceberg.spark.IcebergCatalogService.BASE_CATALOG_CONFIGS;
-import static org.apache.iceberg.spark.IcebergCatalogService.HIVE_METASTORE_PORT;
-import static org.apache.iceberg.spark.IcebergCatalogService.TEST_DB;
-import static org.apache.iceberg.spark.IcebergCatalogService.WAREHOUSE_LOCATION;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.BASE_CATALOG_CONFIGS;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.HIVE_METASTORE_PORT;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.TEST_DB;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.WAREHOUSE_LOCATION;
 
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -38,7 +38,7 @@ public enum IcebergCatalogType {
               Map.ofEntries(
                   entry("type", "hive"),
                   entry(CatalogProperties.URI, "thrift://localhost:" + HIVE_METASTORE_PORT),
-                  entry("hive.metastore.uris", "thrift://localhost:9083"),
+                  entry("hive.metastore.uris", "thrift://localhost:" + HIVE_METASTORE_PORT),
                   entry("hive.metastore.schema.verification", "false"),
                   entry("hive.metastore.authorization.storage.checks", "false"),
                   entry("hive.metastore.client.capability.check", "false"),
@@ -46,13 +46,13 @@ public enum IcebergCatalogType {
                   .entrySet()
                   .stream())
           .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue)),
-      format("%s/%s.db", WAREHOUSE_LOCATION, TEST_DB)),
+      format("%s%s.db", WAREHOUSE_LOCATION, TEST_DB)),
   REST(
       Stream.concat(
               BASE_CATALOG_CONFIGS.entrySet().stream(),
               Map.of("type", "rest", "uri", "http://localhost:8181").entrySet().stream())
           .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue)),
-      format("%s/%s", WAREHOUSE_LOCATION, TEST_DB));
+      format("%s%s", WAREHOUSE_LOCATION, TEST_DB));
 
   private final Map<String, String> catalogTypeBaseConfigs;
 
