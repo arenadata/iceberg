@@ -57,6 +57,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 
 public class IntegrationTestBase {
+  public static final List<String> MAIN_COLUMNS = List.of("id", "username");
   private TableCatalog sparkCatalog;
   private TableCatalog sparkSessionCatalog;
   private SparkSession spark;
@@ -187,8 +188,11 @@ public class IntegrationTestBase {
             .collect(Collectors.toList());
   }
 
-  public List<String> extractTableRecords(String catalogTableName) {
-    return spark().sql(format("SELECT * FROM %s", catalogTableName)).collectAsList().stream()
+  public List<String> extractTableRecords(String catalogTableName, List<String> columns) {
+    return spark()
+        .sql(format("SELECT %s FROM %s", String.join(", ", columns), catalogTableName))
+        .collectAsList()
+        .stream()
         .map(row -> row.mkString(", "))
         .collect(Collectors.toList());
   }
@@ -232,8 +236,9 @@ public class IntegrationTestBase {
             records.stream().map(rec -> "(" + rec + ")").collect(Collectors.joining(", "))));
   }
 
-  public void assertRecords(String catalogTableName, List<String> insertedRecords) {
-    assertThat(extractTableRecords(catalogTableName))
+  public void assertRecords(
+      String catalogTableName, List<String> columns, List<String> insertedRecords) {
+    assertThat(extractTableRecords(catalogTableName, columns))
         .containsExactlyInAnyOrderElementsOf(
             insertedRecords.stream().map(rec -> rec.replace("'", "")).collect(Collectors.toList()));
   }

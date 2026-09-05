@@ -46,7 +46,9 @@ public class TestOrcTableMigration extends IntegrationTestBase {
   private static final LocalDateTime CURRENT_TIME =
       LocalDateTime.now().truncatedTo(ChronoUnit.SECONDS);
   private static final String FORMATTED_TIME =
-      CURRENT_TIME.format(DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss"));
+      CURRENT_TIME.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+  private static final List<String> COLUMNS =
+      List.of("id", "username", "date_format(create_time, 'yyyy-MM-dd HH:mm:ss') AS timestamp_col");
 
   @Test
   public void testOrcMigrationTableWithTimestampColumn() throws IOException, NoSuchTableException {
@@ -56,7 +58,7 @@ public class TestOrcTableMigration extends IntegrationTestBase {
                 "CREATE TABLE %s (id INTEGER, username STRING, create_time TIMESTAMP) USING orc",
                 SPARK_CATALOG_TEST_TABLE));
     insertData(SPARK_CATALOG_TEST_TABLE, getInsertTimestampRecords(RECORDS.subList(0, 2)));
-    assertRecords(SPARK_CATALOG_TEST_TABLE, castRecords(RECORDS.subList(0, 2), false));
+    assertRecords(SPARK_CATALOG_TEST_TABLE, COLUMNS, castRecords(RECORDS.subList(0, 2)));
     String tableLocation =
         loadCatalogTableLocation(sparkSessionCatalog().loadTable(TABLE_IDENTIFIER));
     assertThat(
@@ -73,7 +75,7 @@ public class TestOrcTableMigration extends IntegrationTestBase {
                 "CALL %s.system.migrate(table => '%s', backup_table_name => '%s', properties => map('write.format.default', 'parquet'))",
                 SPARK_CATALOG, DB_TEST_TABLE, TEST_TABLE_BACKUP));
     insertData(SPARK_CATALOG_TEST_TABLE, getInsertTimestampRecords(RECORDS.subList(2, 4)));
-    assertRecords(SPARK_CATALOG_TEST_TABLE, castRecords(RECORDS, true));
+    assertRecords(SPARK_CATALOG_TEST_TABLE, COLUMNS, castRecords(RECORDS));
     assertThat(
             extractFileSystemContents(new Path(tableLocation), true).stream()
                 .anyMatch(s -> s.contains("parquet")))
@@ -95,7 +97,7 @@ public class TestOrcTableMigration extends IntegrationTestBase {
                 "CALL %s.system.migrate(table => '%s', backup_table_name => '%s', properties => map('write.format.default', 'parquet'))",
                 SPARK_CATALOG, DB_TEST_TABLE, TEST_TABLE_BACKUP));
     insertData(SPARK_CATALOG_TEST_TABLE, getInsertTimestampRecords(RECORDS.subList(2, 4)));
-    assertRecords(SPARK_CATALOG_TEST_TABLE, castRecords(RECORDS, true));
+    assertRecords(SPARK_CATALOG_TEST_TABLE, COLUMNS, castRecords(RECORDS));
   }
 
   @Override
@@ -104,19 +106,9 @@ public class TestOrcTableMigration extends IntegrationTestBase {
     sparkSessionCatalog().dropTable(Identifier.of(new String[] {TEST_DB}, TEST_TABLE));
   }
 
-  private List<String> castRecords(List<String> records, boolean isIceberg) {
+  private List<String> castRecords(List<String> records) {
     return records.stream()
-        .map(
-            row ->
-                format(
-                    "%s, %s",
-                    row,
-                    isIceberg
-                        ? FORMATTED_TIME
-                        : format(
-                            "%s.0",
-                            CURRENT_TIME.format(
-                                DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")))))
+        .map(row -> format("%s, %s", row, FORMATTED_TIME))
         .collect(Collectors.toList());
   }
 

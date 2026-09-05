@@ -60,7 +60,7 @@ public class TestRenameMetadataWithLocationConfigs extends IntegrationTestBase {
     insertData(CATALOG_TEST_TABLE, RECORDS.subList(0, 2));
     spark().sql(format("ALTER TABLE %s RENAME TO %s", CATALOG_TEST_TABLE, TEST_TABLE_NEW));
     insertData(CATALOG_TEST_TABLE_NEW, RECORDS.subList(2, 4));
-    assertRecords(CATALOG_TEST_TABLE_NEW, RECORDS);
+    assertRecords(CATALOG_TEST_TABLE_NEW, MAIN_COLUMNS, RECORDS);
     AssertionsForClassTypes.assertThat(
             loadCatalogTableLocation(sparkCatalog().loadTable(TABLE_IDENTIFIER_NEW)))
         .isEqualTo(format("%s/%s", IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE));

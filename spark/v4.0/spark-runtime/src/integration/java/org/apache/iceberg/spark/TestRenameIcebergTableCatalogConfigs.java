@@ -85,8 +85,8 @@ public class TestRenameIcebergTableCatalogConfigs extends IntegrationTestBase {
         .isEqualTo(format("%s/%s", IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE_NEW));
     assertThat(loadCatalogTableLocation(sparkCatalog().loadTable(TABLE_IDENTIFIER)))
         .isEqualTo(format("%s/%s", IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE));
-    assertRecords(CATALOG_TEST_TABLE_NEW, RECORDS);
-    assertRecords(CATALOG_TEST_TABLE, ALT_RECORDS);
+    assertRecords(CATALOG_TEST_TABLE_NEW, MAIN_COLUMNS, RECORDS);
+    assertRecords(CATALOG_TEST_TABLE, MAIN_COLUMNS, ALT_RECORDS);
     List<String> testTableFiles = extractTableFiles(TEST_TABLE);
     List<String> testTableNewFiles = extractTableFiles(TEST_TABLE_NEW);
     sparkCatalog().purgeTable(TABLE_IDENTIFIER);
@@ -97,7 +97,7 @@ public class TestRenameIcebergTableCatalogConfigs extends IntegrationTestBase {
             List.of(
                 format("%s/%s", IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE),
                 format("%s/%s", IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE_NEW)));
-    assertRecords(CATALOG_TEST_TABLE_NEW, RECORDS);
+    assertRecords(CATALOG_TEST_TABLE_NEW, MAIN_COLUMNS, RECORDS);
     List<String> namespaceFilesContents =
         extractFileSystemContents(IcebergCatalogType.HIVE.getNamespacePath(), true);
     assertThat(namespaceFilesContents).doesNotContainAnyElementsOf(testTableFiles);
