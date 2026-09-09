@@ -19,46 +19,42 @@
 package org.apache.iceberg.spark;
 
 import static java.lang.String.format;
-import static org.apache.iceberg.spark.IcebergCatalogService.BASE_COLUMN_SCHEMA;
-import static org.apache.iceberg.spark.IcebergCatalogService.CATALOG_TABLE_NAME;
-import static org.apache.iceberg.spark.IcebergCatalogService.CATALOG_TABLE_NEW_NAME;
-import static org.apache.iceberg.spark.IcebergCatalogService.RECORDS;
-import static org.apache.iceberg.spark.IcebergCatalogService.TABLE_IDENTIFIER;
-import static org.apache.iceberg.spark.IcebergCatalogService.TABLE_IDENTIFIER_NEW;
-import static org.apache.iceberg.spark.IcebergCatalogService.TEST_CATALOG;
-import static org.apache.iceberg.spark.IcebergCatalogService.TEST_DB;
-import static org.apache.iceberg.spark.IcebergCatalogService.TEST_TABLE;
-import static org.apache.iceberg.spark.IcebergCatalogService.TEST_TABLE_NEW;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.ALT_RECORDS;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.BASE_COLUMN_SCHEMA;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.CATALOG_TEST_TABLE;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.CATALOG_TEST_TABLE_NEW;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.RECORDS;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.TABLE_IDENTIFIER;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.TABLE_IDENTIFIER_NEW;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.TEST_DB;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.TEST_TABLE;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.TEST_TABLE_NEW;
 import static org.assertj.core.api.AssertionsForInterfaceTypes.assertThat;
 
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
-import org.apache.iceberg.ParameterizedTestExtension;
 import org.apache.spark.sql.catalyst.analysis.NoSuchNamespaceException;
 import org.apache.spark.sql.catalyst.analysis.NoSuchTableException;
 import org.apache.spark.sql.catalyst.analysis.TableAlreadyExistsException;
 import org.apache.spark.sql.connector.expressions.Transform;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
 
-@ExtendWith(ParameterizedTestExtension.class)
-public class TestRenameIcebergTableCatalogConfigs extends AbstractTestBase {
+public class TestRenameIcebergTableCatalogConfigs extends IntegrationTestBase {
 
   @Test
   public void testRenameMetadataLocationUpdateRestNegative()
       throws IOException, TableAlreadyExistsException, NoSuchNamespaceException {
     initSpark(IcebergCatalogType.REST, Map.of("rename.metadata.location.update", "true"));
-    spark().sql(format("CREATE NAMESPACE IF NOT EXISTS %s.%s", TEST_CATALOG, TEST_DB));
-    catalog().createTable(TABLE_IDENTIFIER, BASE_COLUMN_SCHEMA, new Transform[0], Map.of());
+    sparkCatalog().createTable(TABLE_IDENTIFIER, BASE_COLUMN_SCHEMA, new Transform[0], Map.of());
     List<String> namespaceDirsBeforeAlter =
         List.of(format("%s/%s", IcebergCatalogType.REST.getNamespaceDir(), TEST_TABLE));
-    assertThat(extractFileSystemContents(IcebergCatalogType.REST, false))
+    assertThat(extractFileSystemContents(IcebergCatalogType.REST.getNamespacePath(), false))
         .containsExactlyInAnyOrderElementsOf(namespaceDirsBeforeAlter);
-    spark().sql(format("ALTER TABLE %s RENAME TO %s", CATALOG_TABLE_NAME, TEST_TABLE_NEW));
-    assertThat(catalog().listTables(new String[] {TEST_DB}))
+    spark().sql(format("ALTER TABLE %s RENAME TO %s", CATALOG_TEST_TABLE, TEST_TABLE_NEW));
+    assertThat(sparkCatalog().listTables(new String[] {TEST_DB}))
         .containsExactlyInAnyOrderElementsOf(List.of(TABLE_IDENTIFIER_NEW));
-    assertThat(extractFileSystemContents(IcebergCatalogType.REST, false))
+    assertThat(extractFileSystemContents(IcebergCatalogType.REST.getNamespacePath(), false))
         .containsExactlyInAnyOrderElementsOf(namespaceDirsBeforeAlter);
   }
 
@@ -69,55 +65,41 @@ public class TestRenameIcebergTableCatalogConfigs extends AbstractTestBase {
           NoSuchNamespaceException,
           NoSuchTableException {
     initSpark(IcebergCatalogType.HIVE, Map.of("rename.metadata.location.update", "true"));
-    catalog().createTable(TABLE_IDENTIFIER, BASE_COLUMN_SCHEMA, new Transform[0], Map.of());
-    spark()
-        .sql(
-            format(
-                "INSERT INTO %s VALUES %s",
-                CATALOG_TABLE_NAME, String.join(", ", RECORDS.subList(0, 2))));
-    spark().sql(format("ALTER TABLE %s RENAME TO %s", CATALOG_TABLE_NAME, CATALOG_TABLE_NEW_NAME));
-    spark()
-        .sql(
-            format(
-                "INSERT INTO %s VALUES %s",
-                CATALOG_TABLE_NEW_NAME, String.join(", ", RECORDS.subList(2, 4))));
-    catalog()
+    sparkCatalog().createTable(TABLE_IDENTIFIER, BASE_COLUMN_SCHEMA, new Transform[0], Map.of());
+    insertData(CATALOG_TEST_TABLE, RECORDS.subList(0, 2));
+    spark().sql(format("ALTER TABLE %s RENAME TO %s", CATALOG_TEST_TABLE, CATALOG_TEST_TABLE_NEW));
+    insertData(CATALOG_TEST_TABLE_NEW, RECORDS.subList(2, 4));
+    sparkCatalog()
         .createTable(
             TABLE_IDENTIFIER,
             BASE_COLUMN_SCHEMA,
             new Transform[0],
             Map.of("drop.base-directory.enabled", "true"));
-    spark()
-        .sql(
-            format(
-                "INSERT INTO %s VALUES %s",
-                CATALOG_TABLE_NAME, String.join(", ", RECORDS.subList(4, 6))));
-    assertThat(extractFileSystemContents(IcebergCatalogType.HIVE, false))
+    insertData(CATALOG_TEST_TABLE, ALT_RECORDS);
+    assertThat(extractFileSystemContents(IcebergCatalogType.HIVE.getNamespacePath(), false))
         .containsExactlyInAnyOrderElementsOf(
             List.of(
                 format("%s/%s", IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE),
                 format("%s/%s", IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE_NEW)));
-    assertThat(loadCatalogTableLocation(catalog().loadTable(TABLE_IDENTIFIER_NEW)))
+    assertThat(loadCatalogTableLocation(sparkCatalog().loadTable(TABLE_IDENTIFIER_NEW)))
         .isEqualTo(format("%s/%s", IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE_NEW));
-    assertThat(loadCatalogTableLocation(catalog().loadTable(TABLE_IDENTIFIER)))
+    assertThat(loadCatalogTableLocation(sparkCatalog().loadTable(TABLE_IDENTIFIER)))
         .isEqualTo(format("%s/%s", IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE));
-    assertThat(extractTableRecords(CATALOG_TABLE_NEW_NAME))
-        .containsExactlyInAnyOrderElementsOf(RECORDS.subList(0, 4));
-    assertThat(extractTableRecords(CATALOG_TABLE_NAME))
-        .containsExactlyInAnyOrderElementsOf(RECORDS.subList(4, 6));
+    assertRecords(CATALOG_TEST_TABLE_NEW, MAIN_COLUMNS, RECORDS);
+    assertRecords(CATALOG_TEST_TABLE, MAIN_COLUMNS, ALT_RECORDS);
     List<String> testTableFiles = extractTableFiles(TEST_TABLE);
     List<String> testTableNewFiles = extractTableFiles(TEST_TABLE_NEW);
-    catalog().purgeTable(TABLE_IDENTIFIER);
-    assertThat(catalog().listTables(new String[] {TEST_DB}))
+    sparkCatalog().purgeTable(TABLE_IDENTIFIER);
+    assertThat(sparkCatalog().listTables(new String[] {TEST_DB}))
         .containsExactlyInAnyOrderElementsOf(List.of(TABLE_IDENTIFIER_NEW));
-    assertThat(extractFileSystemContents(IcebergCatalogType.HIVE, false))
+    assertThat(extractFileSystemContents(IcebergCatalogType.HIVE.getNamespacePath(), false))
         .containsExactlyInAnyOrderElementsOf(
             List.of(
                 format("%s/%s", IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE),
                 format("%s/%s", IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE_NEW)));
-    assertThat(extractTableRecords(CATALOG_TABLE_NEW_NAME))
-        .containsExactlyInAnyOrderElementsOf(RECORDS.subList(0, 4));
-    List<String> namespaceFilesContents = extractFileSystemContents(IcebergCatalogType.HIVE, true);
+    assertRecords(CATALOG_TEST_TABLE_NEW, MAIN_COLUMNS, RECORDS);
+    List<String> namespaceFilesContents =
+        extractFileSystemContents(IcebergCatalogType.HIVE.getNamespacePath(), true);
     assertThat(namespaceFilesContents).doesNotContainAnyElementsOf(testTableFiles);
     assertThat(namespaceFilesContents).containsAnyElementsOf(testTableNewFiles);
   }

@@ -19,17 +19,16 @@
 package org.apache.iceberg.spark;
 
 import static java.lang.String.format;
-import static org.apache.iceberg.spark.IcebergCatalogService.BASE_COLUMN_SCHEMA;
-import static org.apache.iceberg.spark.IcebergCatalogService.CATALOG_TABLE_NAME;
-import static org.apache.iceberg.spark.IcebergCatalogService.CATALOG_TABLE_NEW_NAME;
-import static org.apache.iceberg.spark.IcebergCatalogService.RECORDS;
-import static org.apache.iceberg.spark.IcebergCatalogService.TABLE_IDENTIFIER;
-import static org.apache.iceberg.spark.IcebergCatalogService.TABLE_IDENTIFIER_NEW;
-import static org.apache.iceberg.spark.IcebergCatalogService.TEST_CATALOG;
-import static org.apache.iceberg.spark.IcebergCatalogService.TEST_DB;
-import static org.apache.iceberg.spark.IcebergCatalogService.TEST_TABLE;
-import static org.apache.iceberg.spark.IcebergCatalogService.TEST_TABLE_NEW;
-import static org.apache.iceberg.spark.IcebergCatalogService.WAREHOUSE_LOCATION;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.BASE_COLUMN_SCHEMA;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.CATALOG_TEST_TABLE;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.CATALOG_TEST_TABLE_NEW;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.RECORDS;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.TABLE_IDENTIFIER;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.TABLE_IDENTIFIER_NEW;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.TEST_DB;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.TEST_TABLE;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.TEST_TABLE_NEW;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.WAREHOUSE_LOCATION;
 import static org.assertj.core.api.AssertionsForInterfaceTypes.assertThat;
 
 import java.io.IOException;
@@ -47,7 +46,7 @@ import org.junit.jupiter.api.TestTemplate;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 @ExtendWith(ParameterizedTestExtension.class)
-public class TestRenameMetadataWithLocationConfigs extends AbstractTestBase {
+public class TestRenameMetadataWithLocationConfigs extends IntegrationTestBase {
 
   @TestTemplate
   public void testRenameMetadataLocationUpdateNonDefaultLocation(Map<String, String> locationConfig)
@@ -56,25 +55,16 @@ public class TestRenameMetadataWithLocationConfigs extends AbstractTestBase {
           IOException,
           NoSuchTableException {
     initSpark(IcebergCatalogType.HIVE, Map.of("rename.metadata.location.update", "true"));
-    spark().sql(format("CREATE NAMESPACE IF NOT EXISTS %s.%s", TEST_CATALOG, TEST_DB));
-    catalog().createTable(TABLE_IDENTIFIER, BASE_COLUMN_SCHEMA, new Transform[0], locationConfig);
-    spark()
-        .sql(
-            format(
-                "INSERT INTO %s VALUES %s",
-                CATALOG_TABLE_NAME, String.join(", ", RECORDS.subList(0, 2))));
-    spark().sql(format("ALTER TABLE %s RENAME TO %s", CATALOG_TABLE_NAME, TEST_TABLE_NEW));
-    spark()
-        .sql(
-            format(
-                "INSERT INTO %s VALUES %s",
-                CATALOG_TABLE_NEW_NAME, String.join(", ", RECORDS.subList(2, 4))));
-    assertThat(extractTableRecords(CATALOG_TABLE_NEW_NAME))
-        .containsExactlyInAnyOrderElementsOf(RECORDS.subList(0, 4));
+    sparkCatalog()
+        .createTable(TABLE_IDENTIFIER, BASE_COLUMN_SCHEMA, new Transform[0], locationConfig);
+    insertData(CATALOG_TEST_TABLE, RECORDS.subList(0, 2));
+    spark().sql(format("ALTER TABLE %s RENAME TO %s", CATALOG_TEST_TABLE, TEST_TABLE_NEW));
+    insertData(CATALOG_TEST_TABLE_NEW, RECORDS.subList(2, 4));
+    assertRecords(CATALOG_TEST_TABLE_NEW, MAIN_COLUMNS, RECORDS);
     AssertionsForClassTypes.assertThat(
-            loadCatalogTableLocation(catalog().loadTable(TABLE_IDENTIFIER_NEW)))
+            loadCatalogTableLocation(sparkCatalog().loadTable(TABLE_IDENTIFIER_NEW)))
         .isEqualTo(format("%s/%s", IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE));
-    assertThat(extractFileSystemContents(IcebergCatalogType.HIVE, false))
+    assertThat(extractFileSystemContents(IcebergCatalogType.HIVE.getNamespacePath(), false))
         .doesNotContain(format("%s/%s", IcebergCatalogType.HIVE.getNamespaceDir(), TEST_TABLE_NEW));
   }
 
