@@ -30,7 +30,7 @@ import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.S3ClientBuilder;
 
 public class MinioUtil {
-  public static final String LATEST_TAG = "latest";
+  public static final String LATEST_TAG = "RELEASE.2025-09-07T16-13-09Z";
   // This version doesn't support strong integrity checks
   static final String LEGACY_TAG = "RELEASE.2024-12-18T13-15-44Z";
 
@@ -41,7 +41,11 @@ public class MinioUtil {
   }
 
   public static MinIOContainer createContainer(String tag, AwsCredentials credentials) {
-    var container = new MinIOContainer(DockerImageName.parse("minio/minio").withTag(tag));
+    var container =
+        new MinIOContainer(
+            DockerImageName.parse("quay.io/minio/minio")
+                .withTag(tag)
+                .asCompatibleSubstituteFor("minio/minio"));
 
     // this enables virtual-host-style requests. see
     // https://github.com/minio/minio/tree/master/docs/config#domain
