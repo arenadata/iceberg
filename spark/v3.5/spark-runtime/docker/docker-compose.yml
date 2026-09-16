@@ -28,7 +28,7 @@ services:
       - ./hive-libs:/hive-jars
 
   minio:
-    image: minio/minio
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
     hostname: minio
     environment:
       - MINIO_ROOT_USER=minioadmin
@@ -48,7 +48,7 @@ services:
       start_period: 2s
 
   create-bucket:
-    image: minio/mc
+    image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
     depends_on:
       - minio
     volumes:

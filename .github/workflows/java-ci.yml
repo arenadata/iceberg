@@ -94,9 +94,11 @@ jobs:
     - uses: actions/upload-artifact@v4
       if: failure()
       with:
-        name: test logs
+        name: core-java-${{ matrix.jvm }}-test-results
         path: |
           **/build/testlogs
+          **/build/test-results/**
+          **/build/reports/tests/**
 
   build-checks:
     runs-on: ubuntu-22.04
@@ -115,7 +117,7 @@ jobs:
       with:
         distribution: zulu
         java-version: ${{ matrix.jvm }}
-    - run: ./gradlew -DallModules -DknownFlinkVersions=${{ matrix.flinkVersions }} build -x test -x javadoc -x integrationTest
+    - run: ./gradlew -DallModules -DknownSparkVersions=3.5,4.2 -DknownFlinkVersions=${{ matrix.flinkVersions }} build -x test -x javadoc -x integrationTest
       env:
         GITHUB_USERNAME: ${{ github.actor }}
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
