@@ -26,7 +26,7 @@ import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.connect.events.TableReference;
 import org.apache.iceberg.types.Types.StructType;
 
-public class IcebergWriterResult {
+public class IcebergWriterResult implements RecordWriteResult {
 
   private final TableReference tableReference;
   private final List<DataFile> dataFiles;
@@ -68,6 +68,12 @@ public class IcebergWriterResult {
     this(TableReference.of("unknown", tableIdentifier), dataFiles, deleteFiles, partitionStruct);
   }
 
+  @Override
+  public Kind kind() {
+    return Kind.DATA_FILES;
+  }
+
+  @Override
   public TableReference tableReference() {
     return tableReference;
   }
@@ -93,6 +99,7 @@ public class IcebergWriterResult {
     return partitionStruct;
   }
 
+  @Override
   public Set<String> sourceTopics() {
     return sourceTopics;
   }

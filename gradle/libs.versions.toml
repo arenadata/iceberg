@@ -96,7 +96,7 @@ spark35 = "3.5.6"
 spark40 = "4.0.0"
 spark42 = "4.2.0.1-4.3.0-2"
 sqlite-jdbc = "3.50.3.0"
-testcontainers = "1.21.3"
+testcontainers = "1.21.4"
 tez010 = "0.10.3"
 tez08 = { strictly = "0.8.4"}  # see rich version usage explanation above
 ozone = "2.0.0"

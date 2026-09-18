@@ -23,6 +23,7 @@ import java.util.Map;
 import java.util.Set;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.StructLike;
+import org.apache.iceberg.data.GenericRecord;
 import org.apache.iceberg.data.Record;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.primitives.Ints;
@@ -249,9 +250,30 @@ public class RecordProjection implements Record {
     return get(pos, Object.class);
   }
 
+  /**
+   * A standalone record holding this projection's current values, safe to keep past the next {@link
+   * #wrap}, as far as this projection is concerned.
+   *
+   * <p>Nested struct columns are copied, recursively: a projection re-points one view object per
+   * struct column at every row, so a shallow copy ends up reading whichever row was wrapped last.
+   * Any caller that lets a row outlive the iteration (buffering, sorting, collecting) has to come
+   * through here.
+   *
+   * <p>Everything else, including {@code list} and {@code map} contents, is the source record's own
+   * object. That is safe while the source record is the caller's alone (a row held in a change set,
+   * or one from a reader with container reuse switched off) but not over a reader that reuses
+   * containers.
+   */
   @Override
   public Record copy() {
-    throw new UnsupportedOperationException();
+    GenericRecord copy = GenericRecord.create(type);
+    for (int pos = 0; pos < type.fields().size(); pos++) {
+      Object value = get(pos);
+      // a nested struct comes back as the shared view; anything else is the source record's own
+      // object, which no one else is holding
+      copy.set(pos, value instanceof RecordProjection ? ((RecordProjection) value).copy() : value);
+    }
+    return copy;
   }
 
   @Override
