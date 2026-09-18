@@ -55,6 +55,12 @@
     <!-- Suppress checks for CometColumnReader -->
     <suppress files="org.apache.iceberg.spark.data.vectorized.CometColumnReader" checks="IllegalImport"/>
 
+    <!-- The copy-on-write drain state is a struct shared between the three entry points of
+         CowTableCommitter, all in the same package: plain mutable fields under one explicit lock,
+         not an object with behaviour. Thirty-five pairs of accessors would hide that rather than
+         protect anything: the guarantee is the lock, and it is documented on the class. -->
+    <suppress files="org.apache.iceberg.connect.channel.TableDrainState" checks="VisibilityModifier"/>
+
     <!-- Suppress TestClassNamingConvention for main source files -->
     <suppress files=".*[/\\]src[/\\]main[/\\].*" id="TestClassNamingConvention" />
 </suppressions>

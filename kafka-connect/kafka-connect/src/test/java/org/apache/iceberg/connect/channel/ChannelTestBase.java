@@ -28,6 +28,8 @@ import static org.mockito.Mockito.when;
 import java.io.IOException;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.catalog.Namespace;
@@ -43,6 +45,7 @@ import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.DescribeTopicsResult;
 import org.apache.kafka.clients.admin.TopicDescription;
 import org.apache.kafka.clients.consumer.ConsumerRebalanceListener;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.MockConsumer;
 import org.apache.kafka.clients.consumer.OffsetResetStrategy;
 import org.apache.kafka.clients.producer.MockProducer;
@@ -101,6 +104,9 @@ public class ChannelTestBase {
     when(config.commitThreads()).thenReturn(1);
     when(config.connectGroupId()).thenReturn(CONNECT_CONSUMER_GROUP_ID);
     when(config.tableConfig(any())).thenReturn(mock(TableSinkConfig.class));
+    // longer than any rewrite of these tests waits in the queue of its task: a mock would otherwise
+    // report no timeout at all, and every assignment would look like one the coordinator gave up on
+    when(config.copyOnWriteRewriteTimeoutMs()).thenReturn(TimeUnit.MINUTES.toMillis(1));
 
     TopicPartitionInfo partitionInfo = mock(TopicPartitionInfo.class);
     when(partitionInfo.partition()).thenReturn(0);
@@ -134,6 +140,39 @@ public class ChannelTestBase {
     TopicPartition tp = new TopicPartition(CTL_TOPIC_NAME, 0);
     consumer.rebalance(ImmutableList.of(tp));
     consumer.updateBeginningOffsets(ImmutableMap.of(tp, 0L));
+  }
+
+  /**
+   * Keeps the control topic busy: every poll of the channel finds one more record, {@code event},
+   * at the next offset of partition 0 from {@code fromOffset}, until {@code durationMs} have
+   * passed. Each poll takes a few milliseconds, as a fetch from a broker would.
+   *
+   * @return whether the flood is over
+   */
+  protected AtomicBoolean floodControlTopic(byte[] event, long fromOffset, long durationMs) {
+    AtomicBoolean over = new AtomicBoolean(false);
+    long endNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(durationMs);
+    consumer.schedulePollTask(
+        new Runnable() {
+          private long offset = fromOffset;
+
+          @Override
+          public void run() {
+            if (System.nanoTime() >= endNanos) {
+              over.set(true);
+              return;
+            }
+
+            consumer.addRecord(new ConsumerRecord<>(CTL_TOPIC_NAME, 0, offset++, "key", event));
+            try {
+              Thread.sleep(2);
+            } catch (InterruptedException e) {
+              Thread.currentThread().interrupt();
+            }
+            consumer.schedulePollTask(this);
+          }
+        });
+    return over;
   }
 
   private class Listener implements ConsumerRebalanceListener {

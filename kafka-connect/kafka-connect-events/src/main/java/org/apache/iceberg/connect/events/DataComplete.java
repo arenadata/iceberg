@@ -22,8 +22,10 @@ import java.util.List;
 import java.util.UUID;
 import org.apache.avro.Schema;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
+import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.types.Types.ListType;
 import org.apache.iceberg.types.Types.NestedField;
+import org.apache.iceberg.types.Types.StringType;
 import org.apache.iceberg.types.Types.StructType;
 import org.apache.iceberg.types.Types.UUIDType;
 
@@ -35,19 +37,31 @@ public class DataComplete implements Payload {
 
   private UUID commitId;
   private List<TopicPartitionOffset> assignments;
+  private String taskId;
   private final Schema avroSchema;
 
   static final int COMMIT_ID = 10_100;
   static final int ASSIGNMENTS = 10_101;
   static final int ASSIGNMENTS_ELEMENT = 10_102;
+  static final int TASK_ID = 10_103;
 
-  private static final StructType ICEBERG_SCHEMA =
+  // the schema from before task_id: an older reader throws on any field it does not know, because
+  // the Avro reader calls get() on the record for every field of the writer's schema
+  private static final StructType ICEBERG_SCHEMA_WITHOUT_TASK_ID =
       StructType.of(
           NestedField.required(COMMIT_ID, "commit_id", UUIDType.get()),
           NestedField.optional(
               ASSIGNMENTS,
               "assignments",
               ListType.ofRequired(ASSIGNMENTS_ELEMENT, TopicPartitionOffset.ICEBERG_SCHEMA)));
+  private static final StructType ICEBERG_SCHEMA =
+      StructType.of(
+          ImmutableList.<NestedField>builder()
+              .addAll(ICEBERG_SCHEMA_WITHOUT_TASK_ID.fields())
+              .add(NestedField.optional(TASK_ID, "task_id", StringType.get()))
+              .build());
+  private static final Schema AVRO_SCHEMA_WITHOUT_TASK_ID =
+      AvroUtil.convert(ICEBERG_SCHEMA_WITHOUT_TASK_ID, DataComplete.class);
   private static final Schema AVRO_SCHEMA = AvroUtil.convert(ICEBERG_SCHEMA, DataComplete.class);
 
   // Used by Avro reflection to instantiate this class when reading events
@@ -56,10 +70,20 @@ public class DataComplete implements Payload {
   }
 
   public DataComplete(UUID commitId, List<TopicPartitionOffset> assignments) {
+    this(commitId, assignments, null);
+  }
+
+  /**
+   * @param taskId the sending task, which copy-on-write needs to list rewrite executors, or null.
+   *     Without it the event is written in the schema without the field, which a connector one
+   *     version behind still reads; with it, that connector cannot decode the event.
+   */
+  public DataComplete(UUID commitId, List<TopicPartitionOffset> assignments, String taskId) {
     Preconditions.checkNotNull(commitId, "Commit ID cannot be null");
     this.commitId = commitId;
     this.assignments = assignments;
-    this.avroSchema = AVRO_SCHEMA;
+    this.taskId = taskId;
+    this.avroSchema = taskId == null ? AVRO_SCHEMA_WITHOUT_TASK_ID : AVRO_SCHEMA;
   }
 
   @Override
@@ -75,9 +99,13 @@ public class DataComplete implements Payload {
     return assignments;
   }
 
+  public String taskId() {
+    return taskId;
+  }
+
   @Override
   public StructType writeSchema() {
-    return ICEBERG_SCHEMA;
+    return taskId == null ? ICEBERG_SCHEMA_WITHOUT_TASK_ID : ICEBERG_SCHEMA;
   }
 
   @Override
@@ -95,6 +123,9 @@ public class DataComplete implements Payload {
       case ASSIGNMENTS:
         this.assignments = (List<TopicPartitionOffset>) v;
         return;
+      case TASK_ID:
+        this.taskId = v == null ? null : v.toString();
+        return;
       default:
         // ignore the object, it must be from a newer version of the format
     }
@@ -107,8 +138,11 @@ public class DataComplete implements Payload {
         return commitId;
       case ASSIGNMENTS:
         return assignments;
+      case TASK_ID:
+        return taskId;
       default:
-        throw new UnsupportedOperationException("Unknown field ordinal: " + i);
+        // a newer version's field: the reader gets it for reuse before put() ignores it
+        return null;
     }
   }
 }

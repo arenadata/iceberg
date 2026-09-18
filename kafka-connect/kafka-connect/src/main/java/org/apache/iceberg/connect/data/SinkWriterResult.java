@@ -23,16 +23,16 @@ import java.util.Map;
 import org.apache.kafka.common.TopicPartition;
 
 public class SinkWriterResult {
-  private final List<IcebergWriterResult> writerResults;
+  private final List<RecordWriteResult> writerResults;
   private final Map<TopicPartition, Offset> sourceOffsets;
 
   public SinkWriterResult(
-      List<IcebergWriterResult> writerResults, Map<TopicPartition, Offset> sourceOffsets) {
+      List<RecordWriteResult> writerResults, Map<TopicPartition, Offset> sourceOffsets) {
     this.writerResults = writerResults;
     this.sourceOffsets = sourceOffsets;
   }
 
-  public List<IcebergWriterResult> writerResults() {
+  public List<RecordWriteResult> writerResults() {
     return writerResults;
   }
 

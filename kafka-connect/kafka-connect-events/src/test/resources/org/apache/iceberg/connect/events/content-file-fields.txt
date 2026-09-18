@@ -1,0 +1,25 @@
+# Fields of DataFile.getType the control protocol was checked against: id, name, optionality, type.
+# A reader of this version skips an optional field of a data or delete file that is not listed and
+# refuses a required one. When Iceberg core changes the type, check that a reader of the previous
+# version may lose the new field during a rolling upgrade, then update this file.
+134 content optional int
+100 file_path required string
+101 file_format required string
+141 spec_id optional int
+102 partition required struct<>
+103 record_count required long
+104 file_size_in_bytes required long
+108 column_sizes optional map<int, long>
+109 value_counts optional map<int, long>
+110 null_value_counts optional map<int, long>
+137 nan_value_counts optional map<int, long>
+125 lower_bounds optional map<int, binary>
+128 upper_bounds optional map<int, binary>
+131 key_metadata optional binary
+132 split_offsets optional list<long>
+135 equality_ids optional list<int>
+140 sort_order_id optional int
+142 first_row_id optional long
+143 referenced_data_file optional string
+144 content_offset optional long
+145 content_size_in_bytes optional long
