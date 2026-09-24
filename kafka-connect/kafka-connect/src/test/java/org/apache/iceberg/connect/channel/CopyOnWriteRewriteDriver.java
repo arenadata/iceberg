@@ -18,6 +18,7 @@
  */
 package org.apache.iceberg.connect.channel;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -144,6 +145,10 @@ class CopyOnWriteRewriteDriver {
 
   Set<TableReference> pendingTables() {
     return committer.pendingTables();
+  }
+
+  Collection<Envelope> replayAnchors() {
+    return committer.replayAnchors();
   }
 
   /** The coordinator stopping, as {@code Coordinator.terminate()} tells its committer. */

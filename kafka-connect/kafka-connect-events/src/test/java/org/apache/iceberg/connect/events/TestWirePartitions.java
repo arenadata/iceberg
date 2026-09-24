@@ -55,7 +55,9 @@ public class TestWirePartitions {
 
   private static DataFile fileUnder(PartitionSpec spec) {
     PartitionData partition = new PartitionData(spec.partitionType());
-    partition.set(0, 1L);
+    if (spec.isPartitioned()) {
+      partition.set(0, 1L);
+    }
     if (spec.fields().size() > 1) {
       partition.set(1, "a");
     }
@@ -120,9 +122,33 @@ public class TestWirePartitions {
     oneFieldDeleteFile.put(2, TWO_FIELDS.specId());
     assertThatThrownBy(() -> rewriteAssigned(TWO_FIELDS.partitionType(), oneFieldDeleteFile))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("delete file path/to/deletes.parquet")
-        .hasMessageContaining("partition tuple has 1 field(s)")
-        .hasMessageContaining("partition type has 2");
+        .hasMessageContaining("delete file path/to/deletes.parquet of partition spec 0")
+        .hasMessageContaining("with its partition tuple");
+  }
+
+  @Test
+  public void testADeleteFileOfAnotherSpecTravelsWithoutItsPartitionTuple() {
+    // an unpartitioned spec's delete applies to the data files of every spec. It keeps its own spec
+    // id, and with no tuple of its own nothing lands under the data file's partition fields
+    PartitionSpec unpartitioned = PartitionSpec.builderFor(SCHEMA).withSpecId(2).build();
+    FileScanTaskDescriptor withGlobalDelete =
+        new FileScanTaskDescriptor(
+            fileUnder(TWO_FIELDS),
+            ImmutableList.of(deleteUnder(unpartitioned)),
+            TWO_FIELDS.specId(),
+            TWO_FIELDS.partitionType());
+    rewriteAssigned(TWO_FIELDS.partitionType(), withGlobalDelete);
+
+    assertThatThrownBy(
+            () ->
+                new FileScanTaskDescriptor(
+                    fileUnder(TWO_FIELDS),
+                    ImmutableList.of(deleteUnder(ONE_FIELD)),
+                    TWO_FIELDS.specId(),
+                    TWO_FIELDS.partitionType()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("delete file path/to/deletes.parquet of partition spec 0")
+        .hasMessageContaining("with its partition tuple");
   }
 
   @Test

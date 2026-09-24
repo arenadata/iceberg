@@ -19,6 +19,7 @@
 package org.apache.iceberg.connect.channel;
 
 import java.time.Duration;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -30,19 +31,23 @@ import org.apache.iceberg.connect.events.AvroUtil;
 import org.apache.iceberg.connect.events.Event;
 import org.apache.iceberg.connect.events.EventHeader;
 import org.apache.iceberg.connect.events.PayloadType;
+import org.apache.iceberg.relocated.com.google.common.annotations.VisibleForTesting;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
+import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.relocated.com.google.common.collect.Sets;
 import org.apache.iceberg.util.Pair;
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.consumer.Consumer;
+import org.apache.kafka.clients.consumer.ConsumerRebalanceListener;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.clients.producer.Producer;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.connect.errors.ConnectException;
 import org.apache.kafka.connect.sink.SinkTaskContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -64,8 +69,12 @@ abstract class Channel {
   // how long one call reads a control topic that keeps bringing events, see consumeAvailable()
   private static final Duration READ_QUOTA = Duration.ofSeconds(1);
 
+  // the metadata of a committed offset held back below what was read, see commitConsumerOffsets()
+  @VisibleForTesting static final String HELD_OFFSET_METADATA = "held";
+
   private final String controlTopic;
   private final String connectGroupId;
+  private final String consumerGroupId;
   private final Producer<String, byte[]> producer;
   private final Consumer<String, byte[]> consumer;
   private final SinkTaskContext context;
@@ -88,6 +97,7 @@ abstract class Channel {
       SinkTaskContext context) {
     this.controlTopic = config.controlTopic();
     this.connectGroupId = config.connectGroupId();
+    this.consumerGroupId = consumerGroupId;
     this.context = context;
 
     String transactionalId = config.transactionalPrefix() + name + config.transactionalSuffix();
@@ -346,17 +356,113 @@ abstract class Channel {
   /**
    * Commits control topic offsets that may lag {@link #controlTopicOffsets()}: a caller that has
    * consumed an event but not yet acted on it holds its offset back, or a restart loses the event.
+   *
+   * <p>An offset held back is committed with {@link #HELD_OFFSET_METADATA}: the event at it has not
+   * been acted on, so a restart that finds it deleted by retention has lost it, see {@link
+   * #checkCommittedOffsetsKept}.
    */
   protected void commitConsumerOffsets(Map<Integer, Long> offsets) {
+    Map<Integer, Long> read = controlTopicOffsets();
     Map<TopicPartition, OffsetAndMetadata> offsetsToCommit = Maps.newHashMap();
     offsets.forEach(
-        (k, v) ->
-            offsetsToCommit.put(new TopicPartition(controlTopic, k), new OffsetAndMetadata(v)));
+        (k, v) -> {
+          Long readTo = read.get(k);
+          String metadata = readTo != null && v < readTo ? HELD_OFFSET_METADATA : "";
+          offsetsToCommit.put(
+              new TopicPartition(controlTopic, k), new OffsetAndMetadata(v, metadata));
+        });
     consumer.commitSync(offsetsToCommit);
   }
 
+  /**
+   * Checks the committed offsets of partitions just assigned against what the control topic still
+   * keeps, before the first fetch: a committed offset below the oldest kept one would send the
+   * consumer to {@code auto.offset.reset}, {@code latest} by default, past every event still kept.
+   *
+   * <p>An offset committed as held was the oldest event not yet acted on (the oldest response of a
+   * table that cannot commit, typically): retention deleted it, with the only references to its
+   * staged files and the source offsets its worker committed along with it. Reading on would lose
+   * the changes without a word, so this fails, on every start, until the offsets of the group are
+   * reset. Any other committed offset was read up to: what retention deleted below it was acted on
+   * already, or was a transaction marker or another connector's event, so reading goes on from the
+   * oldest event kept.
+   */
+  private void checkCommittedOffsetsKept(Collection<TopicPartition> partitions) {
+    if (partitions.isEmpty()) {
+      return;
+    }
+
+    Map<TopicPartition, OffsetAndMetadata> committed = Maps.newHashMap();
+    consumer
+        .committed(Sets.newHashSet(partitions))
+        .forEach(
+            (partition, offset) -> {
+              if (offset != null) {
+                committed.put(partition, offset);
+              }
+            });
+    if (committed.isEmpty()) {
+      return;
+    }
+
+    Map<TopicPartition, Long> beginningOffsets = consumer.beginningOffsets(committed.keySet());
+    List<String> deleted = Lists.newArrayList();
+    committed.forEach(
+        (partition, offset) -> {
+          Long oldestKept = beginningOffsets.get(partition);
+          if (oldestKept == null || offset.offset() >= oldestKept) {
+            return;
+          }
+
+          if (HELD_OFFSET_METADATA.equals(offset.metadata())) {
+            deleted.add(
+                String.format(
+                    "partition %s: offsets %s to %s",
+                    partition.partition(), offset.offset(), oldestKept - 1));
+          } else {
+            LOG.warn(
+                "Control topic partition {} keeps no events below offset {}, while consumer group "
+                    + "{} committed {}; nothing was held there, so reading goes on from {}",
+                partition.partition(),
+                oldestKept,
+                consumerGroupId,
+                offset.offset(),
+                oldestKept);
+            consumer.seek(partition, oldestKept);
+          }
+        });
+
+    if (!deleted.isEmpty()) {
+      String message =
+          String.format(
+              "Retention of control topic %s deleted events consumer group %s held its offsets at, "
+                  + "not yet applied to their tables (%s). Their workers committed the source "
+                  + "offsets along with them, so the changes they name are not read from the "
+                  + "source again, and nothing else references their staged files. Not reading on "
+                  + "past them: this fails on every start until the offsets of the group are reset. "
+                  + "Before resetting, recover what can be recovered from the staged files of the "
+                  + "tables that stood (they carry _topic, _partition and _offset of every change), "
+                  + "since the staging sweep deletes them once the connector runs again; else "
+                  + "re-read the source from before the loss. Keep retention.ms of the control "
+                  + "topic well above the time it takes to fix a table that stopped",
+              controlTopic, consumerGroupId, String.join(", ", deleted));
+      LOG.error("{}", message);
+      throw new ConnectException(message);
+    }
+  }
+
   void start() {
-    consumer.subscribe(ImmutableList.of(controlTopic));
+    consumer.subscribe(
+        ImmutableList.of(controlTopic),
+        new ConsumerRebalanceListener() {
+          @Override
+          public void onPartitionsRevoked(Collection<TopicPartition> partitions) {}
+
+          @Override
+          public void onPartitionsAssigned(Collection<TopicPartition> partitions) {
+            checkCommittedOffsetsKept(partitions);
+          }
+        });
 
     // initial poll with longer duration so the consumer will initialize...
     consumeAvailable(Duration.ofSeconds(1));

@@ -125,12 +125,6 @@ class CopyOnWriteTableCommitter implements TableCommitter {
     this.exec = exec;
     this.configuredTables = configuredTables(config);
     this.unresumedTables = Sets.newConcurrentHashSet(configuredTables);
-    if (config.routingStrategy() == RecordRoutingStrategy.DYNAMIC_FIELD) {
-      LOG.info(
-          "Tables are routed dynamically: a copy-on-write drain a restart cut short resumes with "
-              + "the next record written to its table; switch to static routing and list the "
-              + "tables in iceberg.tables to resume it on start instead");
-    }
     this.changeSets = new ChangeSetStore(config);
     this.sliceCommitter = new SliceCommitter(config);
     this.planner = new SlicePlanner(config);
@@ -193,7 +187,7 @@ class CopyOnWriteTableCommitter implements TableCommitter {
    * again. So {@link #pendingTables()} lists every configured table under a reference without a
    * UUID (only a loaded table can supply one) until its pointer has been read, and a drain to
    * resume runs under the reference a worker names the table by. A table routed dynamically is not
-   * known here until a record names it.
+   * named here: its replay anchor (see {@link #replayAnchors()}) brings it back.
    */
   private CommitResult resumeAfterRestart(TableCommitRequest request) {
     TableIdentifier tableIdentifier = request.tableReference().identifier();
@@ -238,6 +232,27 @@ class CopyOnWriteTableCommitter implements TableCommitter {
       return ImmutableSet.of();
     }
     return names.stream().map(TableIdentifier::parse).collect(ImmutableSet.toImmutableSet());
+  }
+
+  /**
+   * Under dynamic routing, holds the control topic at the latest response of the table in {@code
+   * envelopes}, if there is one (ADR-0042). A table the configuration names needs no anchor: it is
+   * probed after a restart. A merge-on-read tail is not one: the start spends it outright.
+   */
+  private void anchorAt(TableDrainState state, List<Envelope> envelopes) {
+    if (config.routingStrategy() != RecordRoutingStrategy.DYNAMIC_FIELD) {
+      return;
+    }
+    Envelope latest =
+        Envelopes.latest(
+            envelopes.stream()
+                .filter(
+                    envelope ->
+                        envelope.event().payload().type() == PayloadType.ROW_CHANGES_WRITTEN)
+                .collect(Collectors.toList()));
+    if (latest != null) {
+      state.replayAnchor = latest;
+    }
   }
 
   private CommitResult commitTable(TableCommitRequest request) {
@@ -354,6 +369,26 @@ class CopyOnWriteTableCommitter implements TableCommitter {
     unresumedTables.forEach(
         tableIdentifier -> pending.add(TableReference.of(catalog.name(), tableIdentifier, null)));
     return pending;
+  }
+
+  /**
+   * The replay anchors of the tables with a change set left to drain. Read without their locks: an
+   * anchor a transition clears as this runs holds the offsets one cycle longer, and one is set only
+   * in {@code commit()}, which runs before this in the same cycle.
+   */
+  @Override
+  public Collection<Envelope> replayAnchors() {
+    List<Envelope> anchors = Lists.newArrayList();
+    states
+        .values()
+        .forEach(
+            state -> {
+              Envelope anchor = state.replayAnchor;
+              if (anchor != null) {
+                anchors.add(anchor);
+              }
+            });
+    return anchors;
   }
 
   @Override
@@ -597,6 +632,9 @@ class CopyOnWriteTableCommitter implements TableCommitter {
     // must leave the table offered a commit every cycle, buffered responses or not
     if (!start.carryOverFiles().isEmpty()) {
       state.unfinishedDrain = true;
+    } else if (start.manifest() == null) {
+      // nothing left to drain: whatever the last change set anchored at is applied
+      state.replayAnchor = null;
     }
 
     TableCommitRequest offered = request;
@@ -630,6 +668,9 @@ class CopyOnWriteTableCommitter implements TableCommitter {
       state.manifestLocation = frozen.location();
       state.cursor = null;
       state.frozenEnvelopes = ImmutableList.copyOf(offered.envelopes());
+      // a change set adopting the files of a dropped one, frozen from an empty buffer, keeps the
+      // anchor the dropped one had
+      anchorAt(state, offered.envelopes());
       state.spent = false;
       state.freshlyFrozen = true;
       state.unfinishedDrain = !start.carryOverFiles().isEmpty();
@@ -647,6 +688,9 @@ class CopyOnWriteTableCommitter implements TableCommitter {
       // a persisted change set that is not finished: the table has to be revisited every cycle
       // from here on, whether or not anything new is ever written to it again
       state.unfinishedDrain = true;
+      // the envelope a restart replayed to get here is the one to replay after the next restart,
+      // though the freeze after this drain will find it applied
+      anchorAt(state, request.envelopes());
       LOG.info(
           "Resuming copy-on-write change set {} for table {} from cursor {}",
           start.manifest().changeSetId(),
@@ -691,8 +735,9 @@ class CopyOnWriteTableCommitter implements TableCommitter {
           table.uuid(),
           state.sliceSeq);
       // abandoned rather than interrupted: there is nothing to resume, so the table need not be
-      // offered a commit again until something new is written to it
+      // offered a commit again until something new is written to it, nor found after a restart
       state.unfinishedDrain = false;
+      state.replayAnchor = null;
       failDrain(state);
       return;
     }
@@ -983,6 +1028,7 @@ class CopyOnWriteTableCommitter implements TableCommitter {
 
       if (state.drained) {
         state.unfinishedDrain = false;
+        state.replayAnchor = null;
         state.reset();
       } else {
         state.cursor = state.slice.lastKey().orElse(state.cursor);
@@ -1067,6 +1113,22 @@ class CopyOnWriteTableCommitter implements TableCommitter {
           e);
       discardSliceFiles(state, false);
       state.unfinishedDrain = false;
+      state.replayAnchor = null;
+      failDrain(state);
+      return false;
+    } catch (SliceCommitter.IdentifierFieldsChangedException e) {
+      // the same as the check at the start of the slice, found later: changed while the slice was
+      // rewritten. Nothing landed, the files are this attempt's; the next cycle's loadDrainState
+      // checks the change set against the fields again and drops it, or resumes it if they are back
+      LOG.warn(
+          "Identifier fields of table {} changed while slice {} of change set {} was being "
+              + "committed; nothing is committed, the next cycle checks the change set against "
+              + "them again",
+          state.tableReference.identifier(),
+          state.sliceSeq,
+          state.manifest.changeSetId(),
+          e);
+      discardSliceFiles(state, false);
       failDrain(state);
       return false;
     } catch (RuntimeException e) {

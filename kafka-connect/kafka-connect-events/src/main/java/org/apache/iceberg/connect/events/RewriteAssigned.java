@@ -171,7 +171,7 @@ public class RewriteAssigned implements Payload {
     WirePartitions.checkPartitionTypeFits(partitionType, file.dataFile(), "data file");
     if (file.deleteFiles() != null) {
       for (DeleteFile deleteFile : file.deleteFiles()) {
-        WirePartitions.checkPartitionTypeFits(partitionType, deleteFile, "delete file");
+        WirePartitions.checkDeleteFileFits(partitionType, deleteFile, file.specId());
       }
     }
   }

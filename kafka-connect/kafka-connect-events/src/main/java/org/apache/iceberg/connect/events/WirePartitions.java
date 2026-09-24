@@ -51,4 +51,28 @@ class WirePartitions {
         actual,
         expected);
   }
+
+  /**
+   * Rejects a delete file the payload cannot carry next to a data file of {@code dataFileSpecId}.
+   *
+   * <p>A delete of the data file's spec is checked as any other file. A delete of another spec (an
+   * unpartitioned spec's delete applies to the data files of every spec) keeps its spec id but must
+   * come without a partition tuple: encoded under the data file's partition type, its values would
+   * land under other fields. It is decoded with a tuple of nulls, which the reader does not use.
+   */
+  static void checkDeleteFileFits(
+      StructType partitionType, ContentFile<?> file, int dataFileSpecId) {
+    if (file.specId() == dataFileSpecId) {
+      checkPartitionTypeFits(partitionType, file, "delete file");
+      return;
+    }
+
+    Preconditions.checkArgument(
+        file.partition().size() == 0,
+        "Cannot put delete file %s of partition spec %s on the wire with its partition tuple: the "
+            + "event's partition type is of the data file's spec %s",
+        file.location(),
+        file.specId(),
+        dataFileSpecId);
+  }
 }

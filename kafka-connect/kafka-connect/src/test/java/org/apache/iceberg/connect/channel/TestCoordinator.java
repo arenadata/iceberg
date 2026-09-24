@@ -80,7 +80,11 @@ import org.apache.iceberg.types.Types.StructType;
 import org.apache.kafka.clients.admin.MemberAssignment;
 import org.apache.kafka.clients.admin.MemberDescription;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.clients.consumer.ConsumerRecords;
+import org.apache.kafka.clients.consumer.MockConsumer;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
+import org.apache.kafka.clients.consumer.OffsetOutOfRangeException;
+import org.apache.kafka.clients.consumer.OffsetResetStrategy;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.connect.errors.ConnectException;
 import org.apache.kafka.connect.metadata.LineageEdge;
@@ -250,7 +254,9 @@ public class TestCoordinator extends ChannelTestBase {
     // control topic offsets are held back to the response that has not reached its table, so a
     // restarted coordinator re-reads it
     assertThat(consumer.committed(ImmutableSet.of(new TopicPartition(CTL_TOPIC_NAME, 0))))
-        .containsEntry(new TopicPartition(CTL_TOPIC_NAME, 0), new OffsetAndMetadata(2L));
+        .containsEntry(
+            new TopicPartition(CTL_TOPIC_NAME, 0),
+            new OffsetAndMetadata(2L, Channel.HELD_OFFSET_METADATA));
   }
 
   @Test
@@ -295,7 +301,9 @@ public class TestCoordinator extends ChannelTestBase {
     table.refresh();
     assertThat(table.snapshots()).isEmpty();
     assertThat(consumer.committed(ImmutableSet.of(new TopicPartition(CTL_TOPIC_NAME, 0))))
-        .containsEntry(new TopicPartition(CTL_TOPIC_NAME, 0), new OffsetAndMetadata(1L));
+        .containsEntry(
+            new TopicPartition(CTL_TOPIC_NAME, 0),
+            new OffsetAndMetadata(1L, Channel.HELD_OFFSET_METADATA));
   }
 
   @Test
@@ -353,12 +361,122 @@ public class TestCoordinator extends ChannelTestBase {
     // the response is still buffered: the offsets are held back to it, so a restarted coordinator
     // sees it again rather than losing it
     assertThat(consumer.committed(ImmutableSet.of(new TopicPartition(CTL_TOPIC_NAME, 0))))
-        .containsEntry(new TopicPartition(CTL_TOPIC_NAME, 0), new OffsetAndMetadata(1L));
+        .containsEntry(
+            new TopicPartition(CTL_TOPIC_NAME, 0),
+            new OffsetAndMetadata(1L, Channel.HELD_OFFSET_METADATA));
     table.refresh();
     assertThat(table.snapshots()).isEmpty();
     // StartCommit, CommitComplete: the table did not commit, so no valid-through timestamp
     assertThat(producer.history()).hasSize(2);
     assertCommitComplete(1, commitId, null);
+  }
+
+  @Test
+  public void testARestartFailsWhenRetentionDeletedTheResponsesTheOffsetsWereHeldAt() {
+    // a table that cannot commit holds the offsets at its oldest response for as long as it
+    // stands. Once retention deletes that response, a restarted consumer would find no record at
+    // the committed offset and go to auto.offset.reset: the response, whose source offsets its
+    // worker committed long ago, and the staged files it names are then lost without a word
+    TopicPartition partition = new TopicPartition(CTL_TOPIC_NAME, 0);
+    Coordinator coordinator = startCoordinator();
+    UUID commitId = startCommitId(0);
+    addRowChangesWritten(UUID.randomUUID(), TABLE_NAME, 1);
+    addDataComplete(commitId, EventTestUtil.now(), 2);
+    coordinator.process();
+    Map<TopicPartition, OffsetAndMetadata> held = consumer.committed(ImmutableSet.of(partition));
+    assertThat(held.get(partition).offset()).isEqualTo(1L);
+    coordinator.terminate();
+
+    MockConsumer<String, byte[]> restarted = restartedConsumer(held, partition, 3L);
+
+    Coordinator next =
+        new Coordinator(
+            catalog,
+            config,
+            ImmutableList.of(),
+            clientFactory,
+            mock(SinkTaskContext.class),
+            MetadataEvents.NOOP);
+    assertThatThrownBy(next::start)
+        .isInstanceOf(ConnectException.class)
+        .hasMessageContaining("partition 0: offsets 1 to 2");
+    assertThat(restarted.committed(ImmutableSet.of(partition))).isEqualTo(held);
+  }
+
+  @Test
+  public void testARestartAfterRetentionDeletedOnlyEventsAlreadyReadReadsOnFromTheOldestKept() {
+    // nothing held the offsets back: the connector was stopped longer than retention, and what
+    // retention deleted was read before the stop (or belongs to other connectors of a shared
+    // control topic). No reason to fail, but no reason either to skip to the end of the topic
+    // past the events that are still there, which auto.offset.reset=latest would do
+    TopicPartition partition = new TopicPartition(CTL_TOPIC_NAME, 0);
+    Coordinator coordinator = startCoordinator();
+    UUID commitId = startCommitId(0);
+    addDataComplete(commitId, EventTestUtil.now(), 1);
+    coordinator.process();
+    Map<TopicPartition, OffsetAndMetadata> read = consumer.committed(ImmutableSet.of(partition));
+    assertThat(read).containsEntry(partition, new OffsetAndMetadata(2L));
+    coordinator.terminate();
+
+    byte[] otherConnector =
+        AvroUtil.encode(new Event("other-connector", new StartCommit(UUID.randomUUID())));
+    MockConsumer<String, byte[]> restarted =
+        restartedConsumer(read, partition, 5L, otherConnector, otherConnector);
+
+    Coordinator next =
+        new Coordinator(
+            catalog,
+            config,
+            ImmutableList.of(),
+            clientFactory,
+            mock(SinkTaskContext.class),
+            MetadataEvents.NOOP);
+    next.start();
+
+    // read, not skipped: the channel records every event it reads, whatever its group
+    assertThat(next.controlTopicOffsets()).containsExactly(Map.entry(0, 7L));
+    next.terminate();
+  }
+
+  /**
+   * A control topic consumer of a restarted coordinator: the group's committed offsets are {@code
+   * committed}, retention has deleted everything below {@code beginning}, {@code kept} follow from
+   * there, and the partition is assigned in the first poll, as a group join does. A position below
+   * {@code beginning} goes to the end of the partition, as {@code auto.offset.reset=latest} does
+   * for a real consumer, where a MockConsumer throws.
+   */
+  private MockConsumer<String, byte[]> restartedConsumer(
+      Map<TopicPartition, OffsetAndMetadata> committed,
+      TopicPartition partition,
+      long beginning,
+      byte[]... kept) {
+    MockConsumer<String, byte[]> restarted =
+        new MockConsumer<>(OffsetResetStrategy.LATEST) {
+          @Override
+          public synchronized ConsumerRecords<String, byte[]> poll(Duration timeout) {
+            try {
+              return super.poll(timeout);
+            } catch (OffsetOutOfRangeException e) {
+              seekToEnd(e.partitions());
+              return super.poll(timeout);
+            }
+          }
+        };
+    restarted.updateBeginningOffsets(ImmutableMap.of(partition, beginning));
+    restarted.updateEndOffsets(ImmutableMap.of(partition, beginning + kept.length));
+    restarted.schedulePollTask(
+        () -> {
+          // after subscribe(), which clears what a MockConsumer has committed
+          restarted.commitSync(committed);
+          restarted.rebalance(ImmutableList.of(partition));
+          for (int i = 0; i < kept.length; i += 1) {
+            restarted.addRecord(
+                new ConsumerRecord<>(
+                    CTL_TOPIC_NAME, partition.partition(), beginning + i, "key", kept[i]));
+          }
+        });
+    when(clientFactory.createConsumer(any())).thenReturn(restarted);
+    return restarted;
   }
 
   @Test
@@ -418,7 +536,9 @@ public class TestCoordinator extends ChannelTestBase {
     assertThat(table.currentSnapshot().summary())
         .containsEntry(COPY_ON_WRITE_CHANGE_SET_ID_PROP, changeSetId.toString());
     assertThat(consumer.committed(ImmutableSet.of(new TopicPartition(CTL_TOPIC_NAME, 0))))
-        .containsEntry(new TopicPartition(CTL_TOPIC_NAME, 0), new OffsetAndMetadata(1L));
+        .containsEntry(
+            new TopicPartition(CTL_TOPIC_NAME, 0),
+            new OffsetAndMetadata(1L, Channel.HELD_OFFSET_METADATA));
     assertThat(producer.history()).hasSize(2);
     assertCommitComplete(1, commitId, null);
 
@@ -464,7 +584,9 @@ public class TestCoordinator extends ChannelTestBase {
     table.refresh();
     assertThat(table.snapshots()).isEmpty();
     assertThat(consumer.committed(ImmutableSet.of(new TopicPartition(CTL_TOPIC_NAME, 0))))
-        .containsEntry(new TopicPartition(CTL_TOPIC_NAME, 0), new OffsetAndMetadata(1L));
+        .containsEntry(
+            new TopicPartition(CTL_TOPIC_NAME, 0),
+            new OffsetAndMetadata(1L, Channel.HELD_OFFSET_METADATA));
     assertCommitComplete(1, commitId, null);
 
     assertThatCode(
@@ -493,7 +615,9 @@ public class TestCoordinator extends ChannelTestBase {
     table.refresh();
     assertThat(table.snapshots()).isEmpty();
     assertThat(consumer.committed(ImmutableSet.of(new TopicPartition(CTL_TOPIC_NAME, 0))))
-        .containsEntry(new TopicPartition(CTL_TOPIC_NAME, 0), new OffsetAndMetadata(1L));
+        .containsEntry(
+            new TopicPartition(CTL_TOPIC_NAME, 0),
+            new OffsetAndMetadata(1L, Channel.HELD_OFFSET_METADATA));
     assertCommitComplete(1, commitId, null);
 
     assertThatThrownBy(
@@ -597,7 +721,8 @@ public class TestCoordinator extends ChannelTestBase {
     assertCommitComplete(1, firstCommitId, null);
     assertThat(committedControlTopicOffsets())
         .as("held back to the envelope the draining table has not spent")
-        .containsEntry(controlTopicPartition(0), new OffsetAndMetadata(2L));
+        .containsEntry(
+            controlTopicPartition(0), new OffsetAndMetadata(2L, Channel.HELD_OFFSET_METADATA));
     TableCommitRequest drain = committer.lastRequest(TABLE_NAME);
     assertThat(positions(drain.envelopes())).containsExactly("0:1", "0:2");
     assertThat(drain.commitId()).isEqualTo(firstCommitId);
@@ -630,7 +755,8 @@ public class TestCoordinator extends ChannelTestBase {
     assertThat(committedControlTopicOffsets())
         .as("partition 0 moves past the cycle, partition 1 stays at the older of the two left")
         .containsEntry(controlTopicPartition(0), new OffsetAndMetadata(6L))
-        .containsEntry(controlTopicPartition(1), new OffsetAndMetadata(6L));
+        .containsEntry(
+            controlTopicPartition(1), new OffsetAndMetadata(6L, Channel.HELD_OFFSET_METADATA));
 
     // every table of the next cycle commits: the timestamp is claimed, and nothing holds offsets
     coordinator.process();
@@ -667,6 +793,51 @@ public class TestCoordinator extends ChannelTestBase {
     assertThat(committer.lastRequest(TABLE_NAME).envelopes()).isEmpty();
     // a table of the cycle like any other: it has not applied everything up to the timestamp
     assertCommitComplete(1, commitId, null);
+  }
+
+  @Test
+  public void testAReplayAnchorHoldsBackOnlyItsOwnPartition() {
+    // a table routed dynamically, its change set half applied: the committer has spent the
+    // envelopes, yet a restarted coordinator finds the table only by reading one of them again.
+    // Only the partition of that envelope is held; the others move on as before
+    copyOnWrite();
+    ScriptedTableCommitter committer = new ScriptedTableCommitter();
+    Coordinator coordinator = startCoordinator(committer);
+    UUID commitId = startCommitId(0);
+    addRowChangesWritten(commitId, TABLE_NAME, 0, 1);
+    addRowChangesWritten(commitId, TABLE_NAME, 0, 2);
+    coordinator.process();
+    // read on a tick of their own: the order of two partitions within one poll is not defined
+    addRowChangesWritten(commitId, "tbl2", 1, 1);
+    coordinator.process();
+    addDataComplete(commitId, "task-0", 1, EventTestUtil.now(), 3);
+    committer.answer(
+        TABLE_NAME,
+        envelopes -> {
+          committer.replayAnchors.add(envelopes.get(1));
+          return CommitResult.pending(envelopes);
+        });
+    committer.answer("tbl2", CommitResult::committed);
+
+    coordinator.process();
+
+    assertThat(committedControlTopicOffsets())
+        .as("partition 0 held at the anchor though its envelopes are spent, partition 1 read on")
+        .containsEntry(
+            controlTopicPartition(0), new OffsetAndMetadata(2L, Channel.HELD_OFFSET_METADATA))
+        .containsEntry(controlTopicPartition(1), new OffsetAndMetadata(2L));
+
+    // the change set drained: the anchor is gone, and nothing holds the offsets
+    committer.replayAnchors.clear();
+    coordinator.process();
+    UUID nextCommitId = startCommitId(2);
+    addDataComplete(nextCommitId, "task-0", 1, EventTestUtil.now(), 4);
+
+    coordinator.process();
+
+    assertThat(committedControlTopicOffsets())
+        .containsEntry(controlTopicPartition(0), new OffsetAndMetadata(5L))
+        .containsEntry(controlTopicPartition(1), new OffsetAndMetadata(2L));
   }
 
   @Test
@@ -1248,6 +1419,7 @@ public class TestCoordinator extends ChannelTestBase {
     private final List<TableCommitRequest> requests =
         Collections.synchronizedList(Lists.newArrayList());
     private final Set<TableReference> pendingTables = Sets.newConcurrentHashSet();
+    private final List<Envelope> replayAnchors = Collections.synchronizedList(Lists.newArrayList());
     // the coordinator thread only
     private final List<Envelope> received = Lists.newArrayList();
     private final List<Integer> bufferSeenOnEachTick = Lists.newArrayList();
@@ -1312,6 +1484,13 @@ public class TestCoordinator extends ChannelTestBase {
     @Override
     public Set<TableReference> pendingTables() {
       return ImmutableSet.copyOf(pendingTables);
+    }
+
+    @Override
+    public Collection<Envelope> replayAnchors() {
+      synchronized (replayAnchors) {
+        return ImmutableList.copyOf(replayAnchors);
+      }
     }
 
     @Override

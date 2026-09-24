@@ -76,6 +76,7 @@ import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.connect.IcebergSinkConfig;
 import org.apache.iceberg.connect.MetadataEvents;
 import org.apache.iceberg.connect.TableSinkConfig;
+import org.apache.iceberg.connect.data.RecordRoutingStrategy;
 import org.apache.iceberg.connect.data.copyonwrite.ChangeSetManifest;
 import org.apache.iceberg.connect.data.copyonwrite.PermanentCopyOnWriteException;
 import org.apache.iceberg.connect.data.copyonwrite.StagedChangeFileWriter;
@@ -310,6 +311,27 @@ public class TestCopyOnWriteTableCommitter {
     // with a newer sequence number that no older equality delete reaches any more
     appendFile(row(1L, "a"), row(3L, "c"));
     table.newRowDelta().addDeletes(equalityDelete(3L)).commit();
+    assertThat(readAll(table)).containsExactly(tuple(1L, "a"));
+
+    TableCommitter.Outcome outcome =
+        committer.commit(requestOf(stagedFiles(update(1L, "a2")), 0, 5L, 6L));
+    table.refresh();
+
+    assertThat(outcome).isEqualTo(TableCommitter.Outcome.COMMITTED);
+    assertThat(readAll(table)).containsExactly(tuple(1L, "a2"));
+  }
+
+  @Test
+  public void testARowAGlobalEqualityDeleteOfAnOlderSpecRemovedStaysDeleted() {
+    // the table was partitioned after its merge-on-read period, which left an equality delete under
+    // the unpartitioned spec. Such a delete applies to data files of every spec, and the planned
+    // file is under the current one: the check on plan files passes, the delete has to reach the
+    // worker as it is
+    PartitionSpec unpartitioned = table.spec();
+    table.updateSpec().addField("data").commit();
+    table.refresh();
+    appendFile(row(1L, "a"), row(3L, "a"));
+    table.newRowDelta().addDeletes(equalityDelete(unpartitioned, 3L)).commit();
     assertThat(readAll(table)).containsExactly(tuple(1L, "a"));
 
     TableCommitter.Outcome outcome =
@@ -2323,6 +2345,138 @@ public class TestCopyOnWriteTableCommitter {
     assertThat(committer.pendingTables()).isEmpty();
   }
 
+  @Test
+  public void testADrainCutShortByARestartResumesUnderDynamicRoutingThoughNothingIsWrittenAgain() {
+    appendRows(table, row(1L, "a"), row(2L, "b"), row(3L, "c"));
+    when(config.copyOnWriteMaxSliceKeys()).thenReturn(1L);
+    // the record names the table: the configuration does not, so no probe finds it after a restart
+    when(config.routingStrategy()).thenReturn(RecordRoutingStrategy.DYNAMIC_FIELD);
+    when(config.tables()).thenReturn(null);
+    committer =
+        new CopyOnWriteRewriteDriver(catalog, config, metadataEvents, sentEvents::add, taskCount());
+    TableReference written = TableReference.of(catalog.name(), TABLE_IDENTIFIER, table.uuid());
+    Envelope older = rowChangesAt(written, 0, 10L, stagedFiles(update(1L, "a1"), update(2L, "b2")));
+    Envelope latest = rowChangesAt(written, 0, 12L, stagedFiles(update(3L, "c3")));
+    TableCommitRequest cycle =
+        new TableCommitRequest(
+            written,
+            List.of(latest, older),
+            ImmutableMap.of(0, 13L),
+            UUID.randomUUID(),
+            OffsetDateTime.now());
+
+    // one slice lands, then the coordinator dies: the envelopes of the change set are spent, and
+    // the stream of the table goes quiet for good
+    committer.commitOneSlice(cycle);
+    assertThat(committer.replayAnchors())
+        .as("the control topic is held at the latest envelope of a change set left to drain")
+        .extracting(Envelope::partition, Envelope::offset)
+        .containsExactly(tuple(0, 12L));
+
+    // a new coordinator reads the control topic again from the anchor: only that envelope, which
+    // brings the table into its first cycle and resumes the drain from the snapshot's pointer.
+    // It dies too, one slice further
+    TableCommitRequest replayed =
+        new TableCommitRequest(
+            written, List.of(latest), ImmutableMap.of(0, 13L), UUID.randomUUID(), null);
+    committer =
+        new CopyOnWriteRewriteDriver(catalog, config, metadataEvents, sentEvents::add, taskCount());
+    assertThat(committer.pendingTables()).as("nothing in the configuration names it").isEmpty();
+    committer.commitOneSlice(replayed);
+    table.refresh();
+    assertThat(readAll(table))
+        .containsExactlyInAnyOrder(tuple(1L, "a1"), tuple(2L, "b2"), tuple(3L, "c"));
+    assertThat(committer.replayAnchors())
+        .as("a drain resumed by a replay anchors again, or a second restart loses the table")
+        .extracting(Envelope::partition, Envelope::offset)
+        .containsExactly(tuple(0, 12L));
+
+    // the third coordinator drains the rest; the replayed envelope is found applied and spent
+    committer =
+        new CopyOnWriteRewriteDriver(catalog, config, metadataEvents, sentEvents::add, taskCount());
+    assertThat(committer.commit(replayed)).isEqualTo(TableCommitter.Outcome.COMMITTED);
+    table.refresh();
+    assertThat(readAll(table))
+        .containsExactlyInAnyOrder(tuple(1L, "a1"), tuple(2L, "b2"), tuple(3L, "c3"));
+    assertThat(committer.replayAnchors()).as("drained: nothing holds the offsets").isEmpty();
+    assertThat(committer.pendingTables()).isEmpty();
+  }
+
+  @Test
+  public void testAChangeSetAdoptingTheFilesOfADroppedOneKeepsItsReplayAnchor() {
+    // staged while the identifier fields were (id, data); narrowed to (id) mid-drain, the change
+    // set is dropped and its files join the next one. That one freezes from an empty buffer and
+    // has no envelope of its own to anchor at
+    table
+        .updateSchema()
+        .allowIncompatibleChanges()
+        .requireColumn("data")
+        .setIdentifierFields("id", "data")
+        .commit();
+    appendRows(table, row(1L, "a"), row(2L, "b"), row(3L, "c"));
+    when(config.copyOnWriteMaxSliceKeys()).thenReturn(1L);
+    when(config.routingStrategy()).thenReturn(RecordRoutingStrategy.DYNAMIC_FIELD);
+    when(config.tables()).thenReturn(null);
+    AtomicInteger sliceCommits = new AtomicInteger();
+    committer =
+        new CopyOnWriteRewriteDriver(
+            catalog,
+            config,
+            metadataEvents,
+            event -> {
+              sentEvents.add(event);
+              if (event.payload() instanceof CommitToTable && sliceCommits.incrementAndGet() == 1) {
+                catalog
+                    .loadTable(TABLE_IDENTIFIER)
+                    .updateSchema()
+                    .setIdentifierFields("id")
+                    .commit();
+              }
+            },
+            taskCount());
+    TableReference written = TableReference.of(catalog.name(), TABLE_IDENTIFIER, table.uuid());
+    StagedChangeFileWriter wideWriter =
+        new StagedChangeFileWriter(table, written, Set.of(1, 2), null, GROUP_ID, "task-0");
+    for (long id = 1; id <= 3; id++) {
+      GenericRecord deleted = GenericRecord.create(SCHEMA);
+      deleted.setField("id", id);
+      deleted.setField("data", String.valueOf((char) ('a' + id - 1)));
+      wideWriter.write(
+          wideWriter.stagedRow(deleted, StagedChangeSchema.OP_DELETE, "src-topic", 0, id));
+    }
+    Envelope envelope = rowChangesAt(written, 0, 5L, wideWriter.complete());
+
+    // the first slice lands, the second finds the fields changed and takes the drain off
+    committer.commitOneSlice(
+        new TableCommitRequest(
+            written, List.of(envelope), ImmutableMap.of(0, 6L), UUID.randomUUID(), null));
+    table.refresh();
+    assertThat(readAll(table)).containsExactlyInAnyOrder(tuple(2L, "b"), tuple(3L, "c"));
+    assertThat(committer.pendingTables()).extracting(TableReference::identifier).hasSize(1);
+
+    // the next cycle, nothing buffered: dropped, adopted, and the first slice of the adopting
+    // change set committed (key 1, already deleted). Its drain is as unfinished as the dropped
+    // one's was
+    for (TableReference visited : committer.pendingTables()) {
+      committer.commitOneSlice(emptyRequest(visited));
+    }
+    table.refresh();
+    assertThat(readAll(table)).containsExactlyInAnyOrder(tuple(2L, "b"), tuple(3L, "c"));
+    assertThat(sliceCommits).hasValue(2);
+    assertThat(committer.replayAnchors())
+        .as("the adopting change set holds the anchor of the dropped one")
+        .extracting(Envelope::partition, Envelope::offset)
+        .containsExactly(tuple(0, 5L));
+
+    for (TableReference visited : committer.pendingTables()) {
+      assertThat(committer.commit(emptyRequest(visited)))
+          .isEqualTo(TableCommitter.Outcome.COMMITTED);
+    }
+    table.refresh();
+    assertThat(readAll(table)).isEmpty();
+    assertThat(committer.replayAnchors()).isEmpty();
+  }
+
   private static TableCommitRequest emptyRequest(TableReference tableReference) {
     return new TableCommitRequest(
         tableReference,
@@ -2868,9 +3022,14 @@ public class TestCopyOnWriteTableCommitter {
   }
 
   private Envelope rowChangesAt(int partition, long offset, List<StagedChangeFile> files) {
+    return rowChangesAt(TABLE_REFERENCE, partition, offset, files);
+  }
+
+  private Envelope rowChangesAt(
+      TableReference tableReference, int partition, long offset, List<StagedChangeFile> files) {
     RowChangesWritten payload =
         new RowChangesWritten(
-            UUID.randomUUID(), TABLE_REFERENCE, "task-0", List.of("src-topic"), files);
+            UUID.randomUUID(), tableReference, "task-0", List.of("src-topic"), files);
     return new Envelope(new Event(GROUP_ID, payload), partition, offset);
   }
 
@@ -3005,6 +3164,11 @@ public class TestCopyOnWriteTableCommitter {
 
   /** An equality delete file on {@code id}, not committed. */
   private DeleteFile equalityDelete(long... ids) {
+    return equalityDelete(table.spec(), ids);
+  }
+
+  /** An equality delete file on {@code id} written under {@code spec}, not committed. */
+  private DeleteFile equalityDelete(PartitionSpec spec, long... ids) {
     Schema idSchema = table.schema().select("id");
     EqualityDeleteWriter<Record> writer =
         new GenericFileWriterFactory.Builder(table)
@@ -3012,9 +3176,7 @@ public class TestCopyOnWriteTableCommitter {
             .equalityFieldIds(new int[] {1})
             .build()
             .newEqualityDeleteWriter(
-                OutputFileFactory.builderFor(table, 1, 1).build().newOutputFile(),
-                table.spec(),
-                null);
+                OutputFileFactory.builderFor(table, 1, 1).build().newOutputFile(), spec, null);
     try (EqualityDeleteWriter<Record> open = writer) {
       for (long id : ids) {
         GenericRecord key = GenericRecord.create(idSchema);

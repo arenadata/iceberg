@@ -1401,6 +1401,55 @@ public class TestCopyOnWriteSliceProtocol {
   }
 
   @Test
+  public void testIdentifierFieldsChangedWhileASliceIsRewrittenLeaveTheSliceUncommitted() {
+    // frozen under the key (id, data), narrowed to (id) while the slice is rewritten. Iceberg's
+    // commit validation knows nothing of identifier fields: committed, the slice would add (1, new)
+    // beside (1, old), two rows of one key under the fields the table has now
+    table
+        .updateSchema()
+        .allowIncompatibleChanges()
+        .requireColumn("data")
+        .setIdentifierFields("id", "data")
+        .commit();
+    appendRows(row(1L, "old"));
+    StagedChangeFileWriter writer =
+        new StagedChangeFileWriter(table, TABLE_REFERENCE, Set.of(1, 2), null, GROUP_ID, "task-0");
+    writer.write(
+        writer.stagedRow(row(1L, "new"), StagedChangeSchema.OP_UPDATE, "src-topic", 0, 0L));
+    List<StagedChangeFile> staged = writer.complete();
+    TableCommitRequest request = request(staged);
+    committer.commit(request);
+    RewriteAssigned first = takeSlice();
+    assertThat(first.identifierFieldIds()).containsExactlyInAnyOrder(1, 2);
+    List<List<DataFile>> written = Lists.newArrayList();
+    first.assignments().forEach(assignment -> written.add(rewriteFor(first, assignment)));
+    List<DataFile> attemptFiles = Lists.newArrayList(Iterables.concat(written));
+    assertThat(attemptFiles).as("the attempt wrote replacement files").isNotEmpty();
+
+    table.updateSchema().setIdentifierFields("id").commit();
+    for (int i = 0; i < written.size(); i++) {
+      committer.receive(
+          envelope(answer(first, first.assignments().get(i).taskId(), written.get(i))));
+    }
+
+    assertThat(readAll())
+        .as("a slice keyed by fields the table no longer has is not committed")
+        .containsExactly("1=old");
+    InMemoryFileIO io = (InMemoryFileIO) table.io();
+    assertThat(attemptFiles)
+        .as("replacement files of the slice that was not committed")
+        .allSatisfy(file -> assertThat(io.fileExists(file.location())).isFalse());
+    assertThat(assigned).as("the drain came off").isEmpty();
+    assertThat(staged).allSatisfy(file -> assertThat(io.fileExists(file.location())).isTrue());
+
+    // the next cycle drops the change set and freezes its staged files again, under the key the
+    // table has now: a subset of the one they were written with
+    committer.commit(request);
+    answerAll(takeSlice());
+    assertThat(readAll()).containsExactly("1=new");
+  }
+
+  @Test
   public void testACommittedSliceTakesItsNormalizedFileAndTheLastSliceTheChangeSet() {
     // a slice's normalized file is done with once the slice commits. The staged files and the
     // manifest are what the next slice, or a restarted coordinator, drains the rest from

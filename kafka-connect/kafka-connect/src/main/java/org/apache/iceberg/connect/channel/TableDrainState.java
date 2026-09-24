@@ -177,6 +177,15 @@ final class TableDrainState {
   boolean spent;
   boolean unfinishedDrain;
 
+  /**
+   * Under dynamic routing, the envelope the committed control topic offsets stay at while this
+   * table has a change set left to drain (ADR-0042): the latest one frozen into it, or the one a
+   * restart replayed to resume it. A change set adopting the files of a dropped one keeps it.
+   * Cleared once the change set drains or is abandoned; {@link #reset()} leaves it, since a failed
+   * drain is resumed from the pointer. Read without the lock, by the coordinator thread.
+   */
+  volatile Envelope replayAnchor;
+
   TableDrainState(TableReference tableReference) {
     this.tableReference = tableReference;
   }

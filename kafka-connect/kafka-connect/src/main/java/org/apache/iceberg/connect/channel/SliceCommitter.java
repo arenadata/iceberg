@@ -69,9 +69,11 @@ class SliceCommitter {
 
   private static final Logger LOG = LoggerFactory.getLogger(SliceCommitter.class);
 
+  private final IcebergSinkConfig config;
   private final String offsetsProp;
 
   SliceCommitter(IcebergSinkConfig config) {
+    this.config = config;
     this.offsetsProp = ChangeSetStore.offsetsProp(config);
   }
 
@@ -84,7 +86,8 @@ class SliceCommitter {
    * attempt's; see {@link #reportedSnapshotId}.
    */
   void commitSlice(TableDrainState state) {
-    Table table = committingOnlyTo(state.table, state.manifest.tableUuid());
+    Table table =
+        committingOnlyTo(state.table, state.manifest.tableUuid(), identifierFieldsToHold(state));
     OffsetDateTime validThroughTs = state.drained ? state.validThroughTs : null;
 
     if (state.baseSnapshotId == null) {
@@ -130,6 +133,22 @@ class SliceCommitter {
       state.attempt.collected().forEach(overwriteOp::addFile);
       overwriteOp.commit();
     }
+  }
+
+  /**
+   * The identifier fields a commit of this slice must find in the metadata it goes on top of, or
+   * null when the table's schema does not decide them.
+   *
+   * <p>Only a table keyed by its own identifier fields can have them changed under a running slice.
+   * {@code id-columns} in the connector configuration changes with a restart of the tasks, and that
+   * takes the coordinator down with it.
+   */
+  private Set<Integer> identifierFieldsToHold(TableDrainState state) {
+    String name = state.tableReference.identifier().toString();
+    if (!config.tableConfig(name).idColumns().isEmpty()) {
+      return null;
+    }
+    return state.manifest.identifierFieldIds();
   }
 
   static Snapshot baseSnapshot(Table table, String branch) {
@@ -221,16 +240,25 @@ class SliceCommitter {
    * checks the metadata it goes on top of, and the catalog holds it to that metadata: a REST commit
    * requires its UUID, a metastore its location.
    *
-   * <p>A manifest without a table UUID is not checked, as on recovery, and neither is a table that
-   * is not a {@code BaseTable}: without its operations there is nothing to hold the commit to.
+   * <p>The same metadata holds the commit to {@code identifierFieldIds}. Iceberg validates a commit
+   * against the data that landed since its base, never against the schema's identifier fields, so a
+   * slice keyed by fields changed while it was rewritten would commit and leave rows that share a
+   * key under the fields the table has now. Checked on every attempt, the retries {@code commit()}
+   * makes on top of refreshed metadata included; what is left is the window between this check and
+   * the catalog's swap of the metadata, which no Iceberg API makes atomic.
+   *
+   * <p>A manifest without a table UUID is not checked for it, as on recovery, and null identifier
+   * fields are not checked at all. A table that is not a {@code BaseTable} is checked for neither:
+   * without its operations there is nothing to hold the commit to.
    */
-  private static Table committingOnlyTo(Table table, UUID tableUuid) {
-    if (tableUuid == null || !(table instanceof BaseTable)) {
+  private static Table committingOnlyTo(
+      Table table, UUID tableUuid, Set<Integer> identifierFieldIds) {
+    if ((tableUuid == null && identifierFieldIds == null) || !(table instanceof BaseTable)) {
       return table;
     }
     BaseTable loaded = (BaseTable) table;
     return new BaseTable(
-        new SameTableOperations(loaded.operations(), loaded.name(), tableUuid),
+        new SameTableOperations(loaded.operations(), loaded.name(), tableUuid, identifierFieldIds),
         loaded.name(),
         loaded.reporter());
   }
@@ -241,15 +269,33 @@ class SliceCommitter {
     }
   }
 
+  static class IdentifierFieldsChangedException extends RuntimeException
+      implements CleanableFailure {
+    IdentifierFieldsChangedException(
+        String name, Set<Integer> committedUnder, Set<Integer> committingOnto) {
+      super(
+          String.format(
+              Locale.ROOT,
+              "Table %s identifier fields changed: the commit is keyed by %s, the table is now "
+                  + "keyed by %s",
+              name,
+              committedUnder,
+              committingOnto));
+    }
+  }
+
   private static final class SameTableOperations implements TableOperations {
     private final TableOperations delegate;
     private final String name;
     private final UUID tableUuid;
+    private final Set<Integer> identifierFieldIds;
 
-    private SameTableOperations(TableOperations delegate, String name, UUID tableUuid) {
+    private SameTableOperations(
+        TableOperations delegate, String name, UUID tableUuid, Set<Integer> identifierFieldIds) {
       this.delegate = delegate;
       this.name = name;
       this.tableUuid = tableUuid;
+      this.identifierFieldIds = identifierFieldIds;
     }
 
     @Override
@@ -267,7 +313,7 @@ class SliceCommitter {
       // base is what this attempt's refresh read by name
       UUID committingOnto =
           base == null || base.uuid() == null ? null : UUID.fromString(base.uuid());
-      if (!tableUuid.equals(committingOnto)) {
+      if (tableUuid != null && !tableUuid.equals(committingOnto)) {
         throw new TableReplacedException(
             String.format(
                 Locale.ROOT,
@@ -275,6 +321,12 @@ class SliceCommitter {
                 name,
                 tableUuid,
                 committingOnto));
+      }
+      if (identifierFieldIds != null && base != null) {
+        Set<Integer> keyedBy = base.schema().identifierFieldIds();
+        if (!identifierFieldIds.equals(keyedBy)) {
+          throw new IdentifierFieldsChangedException(name, identifierFieldIds, keyedBy);
+        }
       }
       delegate.commit(base, metadata);
     }

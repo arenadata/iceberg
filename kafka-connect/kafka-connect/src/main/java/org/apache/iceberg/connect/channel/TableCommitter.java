@@ -22,6 +22,7 @@ import java.util.Collection;
 import java.util.Set;
 import java.util.function.Supplier;
 import org.apache.iceberg.connect.events.TableReference;
+import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableSet;
 
 /**
@@ -85,6 +86,19 @@ interface TableCommitter {
    */
   default Set<TableReference> pendingTables() {
     return ImmutableSet.of();
+  }
+
+  /**
+   * Envelopes the committed control topic offsets must not move past, though they are spent.
+   *
+   * <p>Merge-on-read has none. In copy-on-write, a table routed dynamically is named by its records
+   * alone: once the responses of a change set are spent, nothing a restarted coordinator reads
+   * names a table whose change set is half applied. One envelope of it, read again, brings the
+   * table into the first cycle, and its drain resumes from the snapshot's pointer. Called on the
+   * coordinator thread after every cycle's commits; the committer's transitions may be running.
+   */
+  default Collection<Envelope> replayAnchors() {
+    return ImmutableList.of();
   }
 
   /**

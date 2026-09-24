@@ -35,6 +35,9 @@ import org.apache.iceberg.types.Types.StructType;
  *
  * <p>This is the part of a {@code FileScanTask} a worker actually needs: the file is read whole, so
  * neither the residual nor the scan expression travels with it.
+ *
+ * <p>A delete file of another spec than the data file's travels without a partition tuple, see
+ * {@link WirePartitions#checkDeleteFileFits}.
  */
 public class FileScanTaskDescriptor implements IndexedRecord {
 
@@ -75,7 +78,7 @@ public class FileScanTaskDescriptor implements IndexedRecord {
     WirePartitions.checkPartitionTypeFits(wirePartitionType, dataFile, "data file");
     if (deleteFiles != null) {
       deleteFiles.forEach(
-          file -> WirePartitions.checkPartitionTypeFits(wirePartitionType, file, "delete file"));
+          file -> WirePartitions.checkDeleteFileFits(wirePartitionType, file, specId));
     }
     this.dataFile = dataFile;
     this.deleteFiles = deleteFiles;

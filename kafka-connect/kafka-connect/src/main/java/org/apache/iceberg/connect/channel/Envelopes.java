@@ -95,6 +95,23 @@ final class Envelopes {
     return ImmutableList.copyOf(all);
   }
 
+  /**
+   * The envelope read last: the last one listed, or a later one on its partition. {@code null} for
+   * none.
+   */
+  static Envelope latest(List<Envelope> envelopes) {
+    if (envelopes.isEmpty()) {
+      return null;
+    }
+    Envelope latest = envelopes.get(envelopes.size() - 1);
+    for (Envelope envelope : envelopes) {
+      if (envelope.partition() == latest.partition() && envelope.offset() > latest.offset()) {
+        latest = envelope;
+      }
+    }
+    return latest;
+  }
+
   static boolean isDataWritten(Envelope envelope) {
     return envelope.event().payload().type() == PayloadType.DATA_WRITTEN;
   }

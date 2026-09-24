@@ -191,6 +191,39 @@ public class TestWireContentFiles {
     assertThat(decoded.referencedDataFile()).isNull();
   }
 
+  @Test
+  public void testAssignedGlobalEqualityDeleteOfAnotherSpecSurvivesTheWire() {
+    // an unpartitioned spec's equality delete applies to the data files of every spec, the planned
+    // file's included. The reader needs the delete's content and field ids, not a partition tuple
+    table.updateSpec().removeField("region").removeField("day").commit();
+    PartitionSpec unpartitioned = table.spec();
+    assertThat(unpartitioned.isUnpartitioned()).isTrue();
+    table
+        .newRowDelta()
+        .addDeletes(
+            FileMetadata.deleteFileBuilder(unpartitioned)
+                .ofEqualityDeletes(1)
+                .withPath(table.location() + "/data/global-eq-deletes.parquet")
+                .withFormat(FileFormat.PARQUET)
+                .withFileSizeInBytes(50L)
+                .withRecordCount(2L)
+                .build())
+        .commit();
+    FileScanTask task = scannedTask("us");
+    DeleteFile expected = Iterables.getOnlyElement(task.deletes());
+    assertThat(expected.specId()).isNotEqualTo(task.spec().specId());
+
+    FileScanTaskDescriptor decoded = Iterables.getOnlyElement(roundTrip(assign(task)).files());
+
+    assertSameFile(decoded, task);
+    DeleteFile actual = Iterables.getOnlyElement(decoded.deleteFiles());
+    assertThat(actual.specId()).isEqualTo(unpartitioned.specId());
+    assertThat(actual.content()).isEqualTo(FileContent.EQUALITY_DELETES);
+    assertThat(actual.location()).isEqualTo(expected.location());
+    assertThat(actual.recordCount()).isEqualTo(2L);
+    assertThat(actual.equalityFieldIds()).containsExactly(1);
+  }
+
   private static void assertSameFile(FileScanTaskDescriptor decoded, FileScanTask task) {
     DataFile expected = task.file();
     DataFile actual = decoded.dataFile();

@@ -47,6 +47,7 @@ import org.apache.iceberg.connect.events.TopicPartitionRef;
 import org.apache.iceberg.relocated.com.google.common.annotations.VisibleForTesting;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
+import org.apache.iceberg.relocated.com.google.common.collect.Iterables;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.relocated.com.google.common.collect.Sets;
@@ -276,9 +277,11 @@ class Coordinator extends Channel {
     // responses of the tables that failed stay buffered for the next cycle, and the control topic
     // offsets are held back to the oldest of them: committing past an event that has not reached
     // its table would lose it outright, since the source offsets are already committed by the
-    // worker that sent it
+    // worker that sent it. And to the replay anchors, spent envelopes a restarted coordinator
+    // must read again to find a table with a change set left to drain
     List<Envelope> pendingResponses = commitState.clearResponses(consumedResponses);
-    commitConsumerOffsets(offsetsHeldBackBy(pendingResponses));
+    commitConsumerOffsets(
+        offsetsHeldBackBy(Iterables.concat(pendingResponses, tableCommitter.replayAnchors())));
 
     // valid-through is a claim about every table, so it holds only if every table committed. A
     // copy-on-write table answers PENDING while its drain, spanning many cycles, is in flight, so
@@ -306,13 +309,12 @@ class Coordinator extends Channel {
   }
 
   /**
-   * Returns the consumed control topic offsets, each capped at the oldest response that has not yet
-   * reached its table.
+   * Returns the consumed control topic offsets, each capped at the oldest envelope that holds its
+   * partition back.
    */
-  private Map<Integer, Long> offsetsHeldBackBy(List<Envelope> pendingResponses) {
+  private Map<Integer, Long> offsetsHeldBackBy(Iterable<Envelope> holding) {
     Map<Integer, Long> offsets = Maps.newHashMap(controlTopicOffsets());
-    pendingResponses.forEach(
-        envelope -> offsets.merge(envelope.partition(), envelope.offset(), Math::min));
+    holding.forEach(envelope -> offsets.merge(envelope.partition(), envelope.offset(), Math::min));
     return offsets;
   }
 

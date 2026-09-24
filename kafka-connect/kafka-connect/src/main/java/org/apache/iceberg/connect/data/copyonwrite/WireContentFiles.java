@@ -40,6 +40,11 @@ import org.apache.iceberg.util.ContentFileUtil;
  * <p>The builders below produce a fully populated file, so the copy encodes and decodes cleanly.
  * The delete-file builder's own {@code copy()} drops the three deletion-vector fields, so they are
  * carried over explicitly: losing them would leave a worker reading a DV it cannot locate.
+ *
+ * <p>A delete file need not be of its data file's spec: an unpartitioned spec's delete applies to
+ * the data files of every spec, and a file-scoped one is matched by path. Such a delete keeps its
+ * own spec id and travels without a partition tuple, which the event would encode under the data
+ * file's partition type. The reader applies a delete by its content, not by its partition.
  */
 public final class WireContentFiles {
 
@@ -49,7 +54,11 @@ public final class WireContentFiles {
     return DataFiles.builder(spec).copy(file).build();
   }
 
-  public static DeleteFile forWire(PartitionSpec spec, DeleteFile file) {
+  public static DeleteFile forWire(PartitionSpec dataFileSpec, DeleteFile file) {
+    PartitionSpec spec =
+        file.specId() == dataFileSpec.specId()
+            ? dataFileSpec
+            : PartitionSpec.builderFor(dataFileSpec.schema()).withSpecId(file.specId()).build();
     FileMetadata.Builder builder = FileMetadata.deleteFileBuilder(spec).copy(file);
 
     if (file.content() == FileContent.EQUALITY_DELETES) {
