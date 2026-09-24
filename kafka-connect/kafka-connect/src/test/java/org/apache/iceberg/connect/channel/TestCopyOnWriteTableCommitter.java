@@ -198,7 +198,7 @@ public class TestCopyOnWriteTableCommitter {
     when(config.connectGroupId()).thenReturn(GROUP_ID);
     when(config.tableConfig(any())).thenReturn(mock(TableSinkConfig.class));
     when(config.copyOnWriteStagingLocation()).thenReturn(null);
-    when(config.copyOnWriteMaxChangeSetRecords()).thenReturn(1_000_000L);
+    when(config.copyOnWriteMaxSliceKeys()).thenReturn(1_000_000L);
     when(config.copyOnWriteMaxRewriteBytes()).thenReturn(Long.MAX_VALUE);
     when(config.copyOnWritePruningMaxInCardinality()).thenReturn(1000);
     when(config.copyOnWriteCommitRetries()).thenReturn(2);
@@ -207,7 +207,7 @@ public class TestCopyOnWriteTableCommitter {
     when(config.copyOnWriteRewriteResponseChunkFiles()).thenReturn(200);
     when(config.controlMessageMaxBytes()).thenReturn(1024 * 1024);
     // sweeping is exercised by TestStagingSweeper; here it would only race the drain it observes
-    when(config.copyOnWriteStagingSweepIntervalMs()).thenReturn(Long.MAX_VALUE);
+    when(config.copyOnWriteStagingOrphanCleanupIntervalMs()).thenReturn(Long.MAX_VALUE);
     when(config.copyOnWriteStagingOrphanTtlMs()).thenReturn(86_400_000L);
 
     sentEvents = Lists.newArrayList();
@@ -346,7 +346,7 @@ public class TestCopyOnWriteTableCommitter {
     Table emptyTable = catalog.createTable(TableIdentifier.of(NAMESPACE, "emptytbl"), SCHEMA);
     TableReference emptyRef =
         TableReference.of("catalog", TableIdentifier.of(NAMESPACE, "emptytbl"));
-    when(config.copyOnWriteMaxChangeSetRecords()).thenReturn(1L); // one key per slice
+    when(config.copyOnWriteMaxSliceKeys()).thenReturn(1L); // one key per slice
 
     List<StagedChangeFile> files =
         stagedFiles(emptyTable, emptyRef, insert(1L, "a"), insert(2L, "b"));
@@ -429,7 +429,7 @@ public class TestCopyOnWriteTableCommitter {
   @Test
   public void testLineageIsReportedOnceAtTheStartAndOnceAtTheEndOfADrain() {
     appendRows(table, row(1L, "a"), row(2L, "b"), row(3L, "c"));
-    when(config.copyOnWriteMaxChangeSetRecords()).thenReturn(1L); // one key per slice
+    when(config.copyOnWriteMaxSliceKeys()).thenReturn(1L); // one key per slice
 
     List<StagedChangeFile> files =
         stagedFiles(update(1L, "a2"), update(2L, "b2"), update(3L, "c2"));
@@ -444,7 +444,7 @@ public class TestCopyOnWriteTableCommitter {
   @Test
   public void testMultiSliceDrainsWithinOneCallAndCleansUp() {
     appendRows(table, row(1L, "a"), row(2L, "b"), row(3L, "c"));
-    when(config.copyOnWriteMaxChangeSetRecords()).thenReturn(1L); // force one key per slice
+    when(config.copyOnWriteMaxSliceKeys()).thenReturn(1L); // force one key per slice
 
     List<StagedChangeFile> files =
         stagedFiles(update(1L, "a2"), update(2L, "b2"), update(3L, "c2"));
@@ -476,7 +476,7 @@ public class TestCopyOnWriteTableCommitter {
   @Test
   public void testTheExhaustingCommitCleansUpBeforeReportingEvenWhenReportingFails() {
     appendRows(table, row(1L, "a"), row(2L, "b"));
-    when(config.copyOnWriteMaxChangeSetRecords()).thenReturn(1L); // one key per slice
+    when(config.copyOnWriteMaxSliceKeys()).thenReturn(1L); // one key per slice
 
     List<StagedChangeFile> files = stagedFiles(update(1L, "a2"), update(2L, "b2"));
 
@@ -522,7 +522,7 @@ public class TestCopyOnWriteTableCommitter {
   @Test
   public void testEverySliceNamesItsCommitAndSequenceAndOnlyTheLastOneAValidThroughTs() {
     appendRows(table, row(1L, "a"), row(2L, "b"), row(3L, "c"));
-    when(config.copyOnWriteMaxChangeSetRecords()).thenReturn(1L); // one key per slice
+    when(config.copyOnWriteMaxSliceKeys()).thenReturn(1L); // one key per slice
     UUID commitId = UUID.randomUUID();
     OffsetDateTime validThroughTs = OffsetDateTime.parse("2026-09-15T01:02:03.456Z");
 
@@ -594,7 +594,7 @@ public class TestCopyOnWriteTableCommitter {
   @Test
   public void testTheExhaustingCommitOfAResumedDrainIsValidThroughTheCycleOfItsFreeze() {
     appendRows(table, row(1L, "a"), row(2L, "b"), row(3L, "c"));
-    when(config.copyOnWriteMaxChangeSetRecords()).thenReturn(1L); // one key per slice
+    when(config.copyOnWriteMaxSliceKeys()).thenReturn(1L); // one key per slice
     OffsetDateTime frozenAt = OffsetDateTime.parse("2026-09-15T01:02:03.456Z");
     OffsetDateTime resumedAt = OffsetDateTime.parse("2026-09-15T02:04:05.789Z");
 
@@ -652,7 +652,7 @@ public class TestCopyOnWriteTableCommitter {
   @Test
   public void testAFailureAfterTheCommitLeavesTheSnapshotReadable() {
     appendRows(table, row(1L, "a"), row(2L, "b"), row(3L, "c"));
-    when(config.copyOnWriteMaxChangeSetRecords()).thenReturn(1L); // one key per slice
+    when(config.copyOnWriteMaxSliceKeys()).thenReturn(1L); // one key per slice
 
     AtomicInteger sends = new AtomicInteger();
     CopyOnWriteRewriteDriver failing =
@@ -697,7 +697,7 @@ public class TestCopyOnWriteTableCommitter {
   @Test
   public void testAFailureStartingTheNextSliceLeavesTheSnapshotReadable() {
     appendRows(table, row(1L, "a"), row(2L, "b"), row(3L, "c"));
-    when(config.copyOnWriteMaxChangeSetRecords()).thenReturn(1L);
+    when(config.copyOnWriteMaxSliceKeys()).thenReturn(1L);
     // blows up when the second slice asks for it, i.e. after the first slice has committed
     AtomicInteger cardinalityReads = new AtomicInteger();
     when(config.copyOnWritePruningMaxInCardinality())
@@ -731,7 +731,7 @@ public class TestCopyOnWriteTableCommitter {
   @Test
   public void testACommitWithAnUnknownOutcomeThatLandedCarriesOnFromItsSnapshot() {
     appendRows(table, row(1L, "a"), row(2L, "b"), row(3L, "c"));
-    when(config.copyOnWriteMaxChangeSetRecords()).thenReturn(1L); // one key per slice
+    when(config.copyOnWriteMaxSliceKeys()).thenReturn(1L); // one key per slice
 
     CopyOnWriteRewriteDriver driver =
         new CopyOnWriteRewriteDriver(
@@ -773,7 +773,7 @@ public class TestCopyOnWriteTableCommitter {
   @Test
   public void testACommitWithAnUnknownOutcomeThatCannotBeEstablishedKeepsItsFilesAndManifest() {
     appendRows(table, row(1L, "a"), row(2L, "b"), row(3L, "c"));
-    when(config.copyOnWriteMaxChangeSetRecords()).thenReturn(1L);
+    when(config.copyOnWriteMaxSliceKeys()).thenReturn(1L);
 
     AtomicBoolean catalogDown = new AtomicBoolean();
     CopyOnWriteRewriteDriver driver =
@@ -837,7 +837,7 @@ public class TestCopyOnWriteTableCommitter {
   @Test
   public void testAResumedDrainThatFailsBeforeItsFirstCommitKeepsTheManifestTheSnapshotPointsAt() {
     appendRows(table, row(1L, "a"), row(2L, "b"), row(3L, "c"));
-    when(config.copyOnWriteMaxChangeSetRecords()).thenReturn(1L);
+    when(config.copyOnWriteMaxSliceKeys()).thenReturn(1L);
 
     // one slice lands, then the coordinator dies with the change set half applied
     committer.commitOneSlice(
@@ -890,7 +890,7 @@ public class TestCopyOnWriteTableCommitter {
   @Test
   public void testAnAnswerToTheSliceOfAPreviousCoordinatorDoesNotCommitTheResumedOne() {
     appendRows(table, row(1L, "a"), row(2L, "b"), row(3L, "c"));
-    when(config.copyOnWriteMaxChangeSetRecords()).thenReturn(1L);
+    when(config.copyOnWriteMaxSliceKeys()).thenReturn(1L);
 
     // one slice lands, then the coordinator dies with the change set half applied
     committer.commitOneSlice(
@@ -989,7 +989,7 @@ public class TestCopyOnWriteTableCommitter {
   @Test
   public void testAStopDuringASliceCommitLetsItLandAndStartsNothingAfterIt() {
     appendRows(table, row(1L, "a"), row(2L, "b"), row(3L, "c"));
-    when(config.copyOnWriteMaxChangeSetRecords()).thenReturn(1L);
+    when(config.copyOnWriteMaxSliceKeys()).thenReturn(1L);
     AtomicReference<CopyOnWriteRewriteDriver> stopping = new AtomicReference<>();
     CopyOnWriteRewriteDriver driver =
         new CopyOnWriteRewriteDriver(
@@ -1099,7 +1099,7 @@ public class TestCopyOnWriteTableCommitter {
   @Test
   public void testASnapshotLookupThatFailsAfterTheCommitLeavesTheSnapshotReadable() {
     appendRows(table, row(1L, "a"), row(2L, "b"), row(3L, "c"));
-    when(config.copyOnWriteMaxChangeSetRecords()).thenReturn(1L);
+    when(config.copyOnWriteMaxSliceKeys()).thenReturn(1L);
 
     AtomicBoolean lookupFails = new AtomicBoolean();
     CopyOnWriteRewriteDriver driver =
@@ -1488,7 +1488,7 @@ public class TestCopyOnWriteTableCommitter {
   @Test
   public void testIdentifierFieldsWidenedBetweenSlicesStopTheDrainBeforeTheNextSlice() {
     appendRows(table, row(1L, "a"), row(7L, "x"));
-    when(config.copyOnWriteMaxChangeSetRecords()).thenReturn(1L); // one key per slice
+    when(config.copyOnWriteMaxSliceKeys()).thenReturn(1L); // one key per slice
 
     // right after the first slice commits, and before the second starts: another writer widens
     // the set to (id, data) and adds a row that shares id 7 with the one the change set deletes
@@ -1555,7 +1555,7 @@ public class TestCopyOnWriteTableCommitter {
   @Test
   public void testATableDroppedMidDrainIsLetGoOfByTheNextCommit() {
     appendRows(table, row(1L, "a"), row(7L, "x"));
-    when(config.copyOnWriteMaxChangeSetRecords()).thenReturn(1L); // one key per slice
+    when(config.copyOnWriteMaxSliceKeys()).thenReturn(1L); // one key per slice
 
     // right after the first slice commits, the table is dropped: the next slice's refresh finds it
     // gone
@@ -1585,7 +1585,7 @@ public class TestCopyOnWriteTableCommitter {
   @Test
   public void testATableRecreatedMidDrainTakesNothingOfTheChangeSetFrozenForTheOldOne() {
     appendRows(table, row(1L, "a"), row(7L, "x"));
-    when(config.copyOnWriteMaxChangeSetRecords()).thenReturn(1L); // one key per slice
+    when(config.copyOnWriteMaxSliceKeys()).thenReturn(1L); // one key per slice
 
     // right after the first slice commits, the table is dropped and created again under its name,
     // with a row of its own under a key the change set deletes
@@ -1630,7 +1630,7 @@ public class TestCopyOnWriteTableCommitter {
   public void testATableRecreatedWhileASliceIsCommittedTakesNoneOfTheChangeSetFrozenForTheOldOne() {
     // an empty table: the slice has no base, so its commit looks for conflicts in the whole history
     // of the branch, and a table created again under the name, empty, has none
-    when(config.copyOnWriteMaxChangeSetRecords()).thenReturn(1L); // one key per slice
+    when(config.copyOnWriteMaxSliceKeys()).thenReturn(1L); // one key per slice
 
     // after the check at the start of the first slice, on its commit: the table is dropped and
     // created again, empty. The attempt against the old one fails, and the retry refreshes by name
@@ -1744,7 +1744,7 @@ public class TestCopyOnWriteTableCommitter {
     // and publish a valid-through the table has not reached, the tail of an acknowledged change
     // set still outside it. Visited, it answers FAILED, as a failing merge-on-read table does
     appendRows(table, row(1L, "a"), row(2L, "b"), row(3L, "c"));
-    when(config.copyOnWriteMaxChangeSetRecords()).thenReturn(1L);
+    when(config.copyOnWriteMaxSliceKeys()).thenReturn(1L);
     TableReference written = TableReference.of(catalog.name(), TABLE_IDENTIFIER, table.uuid());
     List<StagedChangeFile> staged =
         stagedFiles(table, written, update(1L, "a2"), update(2L, "b2"), update(3L, "c2"));
@@ -1979,7 +1979,7 @@ public class TestCopyOnWriteTableCommitter {
   @Test
   public void testAResumedDrainKeepsResponsesThatWereNeverPartOfIt() {
     appendRows(table, row(1L, "a"), row(2L, "b"), row(3L, "c"));
-    when(config.copyOnWriteMaxChangeSetRecords()).thenReturn(1L);
+    when(config.copyOnWriteMaxSliceKeys()).thenReturn(1L);
 
     // one slice lands, then the coordinator dies with the change set half applied
     List<StagedChangeFile> frozen = stagedFiles(update(1L, "a1"), update(2L, "b2"));
@@ -2035,7 +2035,7 @@ public class TestCopyOnWriteTableCommitter {
   @Test
   public void testADrainIsResumedEvenWhenAnotherWriterCommittedInBetween() {
     appendRows(table, row(1L, "a"), row(2L, "b"));
-    when(config.copyOnWriteMaxChangeSetRecords()).thenReturn(1L);
+    when(config.copyOnWriteMaxSliceKeys()).thenReturn(1L);
 
     List<StagedChangeFile> frozen = stagedFiles(update(1L, "a1"), update(2L, "b2"));
     committer.commitOneSlice(requestOf(frozen, 0, 10L, 11L));
@@ -2056,7 +2056,7 @@ public class TestCopyOnWriteTableCommitter {
   @Test
   public void testADrainIsResumedEvenWhenAnotherConnectorCommittedInBetween() {
     appendRows(table, row(1L, "a"), row(2L, "b"));
-    when(config.copyOnWriteMaxChangeSetRecords()).thenReturn(1L);
+    when(config.copyOnWriteMaxSliceKeys()).thenReturn(1L);
 
     List<StagedChangeFile> frozen = stagedFiles(update(1L, "a1"), update(2L, "b2"));
     committer.commitOneSlice(requestOf(frozen, 0, 10L, 11L));
@@ -2079,7 +2079,7 @@ public class TestCopyOnWriteTableCommitter {
   @Test
   public void testTheTailOfMergeOnReadWaitsForADrainAnotherConnectorCommittedOver() {
     appendRows(table, row(1L, "a"), row(2L, "b"));
-    when(config.copyOnWriteMaxChangeSetRecords()).thenReturn(1L);
+    when(config.copyOnWriteMaxSliceKeys()).thenReturn(1L);
 
     // one slice lands and another connector commits on top of it; this one goes to merge-on-read,
     // which buffers its DataWritten, and back to copy-on-write
@@ -2228,7 +2228,7 @@ public class TestCopyOnWriteTableCommitter {
             ID_FIELDS);
     Table keyed = catalog.createTable(keyedIdentifier, keyedSchema, PartitionSpec.unpartitioned());
     appendRows(keyed, keyedRow(keyedSchema, first, "a"), keyedRow(keyedSchema, second, "b"));
-    when(config.copyOnWriteMaxChangeSetRecords()).thenReturn(1L);
+    when(config.copyOnWriteMaxSliceKeys()).thenReturn(1L);
 
     StagedChangeFileWriter writer =
         new StagedChangeFileWriter(keyed, keyedReference, ID_FIELDS, null, GROUP_ID, "task-0");
@@ -2265,7 +2265,7 @@ public class TestCopyOnWriteTableCommitter {
   @Test
   public void testATableWithADrainInFlightIsOfferedACommitEvenWithAnEmptyBuffer() {
     appendRows(table, row(1L, "a"), row(2L, "b"));
-    when(config.copyOnWriteMaxChangeSetRecords()).thenReturn(1L);
+    when(config.copyOnWriteMaxSliceKeys()).thenReturn(1L);
 
     committer.commitOneSlice(requestOf(stagedFiles(update(1L, "a1"), update(2L, "b2")), 0, 1L, 2L));
 
@@ -2280,7 +2280,7 @@ public class TestCopyOnWriteTableCommitter {
   @Test
   public void testADrainCutShortByARestartResumesThoughNothingIsWrittenToTheTableAgain() {
     appendRows(table, row(1L, "a"), row(2L, "b"), row(3L, "c"));
-    when(config.copyOnWriteMaxChangeSetRecords()).thenReturn(1L);
+    when(config.copyOnWriteMaxSliceKeys()).thenReturn(1L);
     TableIdentifier neverCreated = TableIdentifier.of(NAMESPACE, "never_created");
     when(config.tables()).thenReturn(List.of(TABLE_IDENTIFIER.toString(), neverCreated.toString()));
     // as a worker names it
@@ -2362,7 +2362,7 @@ public class TestCopyOnWriteTableCommitter {
   @Test
   public void testTheTailOfMergeOnReadWaitsForTheDrainInProgressToFinish() {
     appendRows(table, row(1L, "a"), row(2L, "b"));
-    when(config.copyOnWriteMaxChangeSetRecords()).thenReturn(1L);
+    when(config.copyOnWriteMaxSliceKeys()).thenReturn(1L);
 
     // one slice lands, then the connector goes to merge-on-read (which refuses the table over the
     // unfinished change set and buffers its DataWritten) and back to copy-on-write
@@ -2454,7 +2454,7 @@ public class TestCopyOnWriteTableCommitter {
     // two appends, so the two keys sit in two files and the plan can be shrunk to one of them
     appendRows(table, row(1L, "a"));
     appendRows(table, row(2L, "b"));
-    when(config.copyOnWriteMaxChangeSetRecords()).thenReturn(1_000_000L);
+    when(config.copyOnWriteMaxSliceKeys()).thenReturn(1_000_000L);
     when(config.copyOnWriteMaxRewriteBytes()).thenReturn(1L);
 
     assertThat(

@@ -75,10 +75,10 @@ final class SlicePlanner {
    */
   ChangeSetSlice normalize(
       Table table, ChangeSetManifest manifest, StructLike cursor, TableReference tableReference) {
-    long maxRecords = config.copyOnWriteMaxChangeSetRecords();
+    long maxSliceKeys = config.copyOnWriteMaxSliceKeys();
     try {
       return ChangeSetNormalizer.normalize(
-          table, manifest.identifierFieldIds(), manifest.stagedFiles(), cursor, maxRecords);
+          table, manifest.identifierFieldIds(), manifest.stagedFiles(), cursor, maxSliceKeys);
     } catch (NotFoundException e) {
       throw new PermanentCopyOnWriteException(
           String.format(

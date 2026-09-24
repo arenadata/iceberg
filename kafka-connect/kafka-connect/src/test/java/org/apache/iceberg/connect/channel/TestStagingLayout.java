@@ -644,7 +644,7 @@ public class TestStagingLayout {
     IcebergSinkConfig config = mock(IcebergSinkConfig.class);
     when(config.controlTopic()).thenReturn(CTL_TOPIC);
     when(config.connectGroupId()).thenReturn("connect-a");
-    when(config.copyOnWriteStagingSweepIntervalMs()).thenReturn(0L);
+    when(config.copyOnWriteStagingOrphanCleanupIntervalMs()).thenReturn(0L);
     when(config.copyOnWriteStagingOrphanTtlMs()).thenReturn(ORPHAN_TTL_MS);
     StagingCleanupScheduler scheduler =
         new StagingCleanupScheduler(
@@ -747,7 +747,7 @@ public class TestStagingLayout {
     IcebergSinkConfig config = mock(IcebergSinkConfig.class);
     when(config.controlTopic()).thenReturn(CTL_TOPIC);
     when(config.connectGroupId()).thenReturn("connect-a");
-    when(config.copyOnWriteStagingSweepIntervalMs()).thenReturn(0L);
+    when(config.copyOnWriteStagingOrphanCleanupIntervalMs()).thenReturn(0L);
     when(config.copyOnWriteStagingOrphanTtlMs()).thenReturn(ORPHAN_TTL_MS);
     AtomicInteger summaryReads = new AtomicInteger();
     ChangeSetStore store =
@@ -882,7 +882,7 @@ public class TestStagingLayout {
     IcebergSinkConfig config = mock(IcebergSinkConfig.class);
     when(config.controlTopic()).thenReturn(CTL_TOPIC);
     when(config.connectGroupId()).thenReturn(groupId);
-    when(config.copyOnWriteStagingSweepIntervalMs()).thenReturn(sweepIntervalMs);
+    when(config.copyOnWriteStagingOrphanCleanupIntervalMs()).thenReturn(sweepIntervalMs);
     when(config.copyOnWriteStagingOrphanTtlMs()).thenReturn(ORPHAN_TTL_MS);
     return new StagingCleanupScheduler(
         config,

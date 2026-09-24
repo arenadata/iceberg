@@ -115,9 +115,9 @@ public class IcebergSinkConfig extends AbstractConfig {
 
   private static final String COPY_ON_WRITE_STAGING_LOCATION_PROP =
       "iceberg.tables.copy-on-write.staging-location";
-  private static final String COPY_ON_WRITE_MAX_CHANGE_SET_RECORDS_PROP =
-      "iceberg.tables.copy-on-write.max-change-set-records";
-  private static final long COPY_ON_WRITE_MAX_CHANGE_SET_RECORDS_DEFAULT = 200_000L;
+  private static final String COPY_ON_WRITE_MAX_SLICE_KEYS_PROP =
+      "iceberg.tables.copy-on-write.max-slice-keys";
+  private static final long COPY_ON_WRITE_MAX_SLICE_KEYS_DEFAULT = 200_000L;
   private static final String COPY_ON_WRITE_MAX_REWRITE_BYTES_PROP =
       "iceberg.tables.copy-on-write.max-rewrite-bytes";
   private static final long COPY_ON_WRITE_MAX_REWRITE_BYTES_DEFAULT = 10L * 1024 * 1024 * 1024;
@@ -148,9 +148,9 @@ public class IcebergSinkConfig extends AbstractConfig {
   private static final double CONTROL_MESSAGE_HEADROOM = 0.8;
   // ProducerConfig's default for max.request.size; the constant itself is not public
   private static final int DEFAULT_MAX_REQUEST_SIZE = 1024 * 1024;
-  private static final String COPY_ON_WRITE_STAGING_SWEEP_INTERVAL_MS_PROP =
-      "iceberg.tables.copy-on-write.staging-sweep-interval-ms";
-  private static final long COPY_ON_WRITE_STAGING_SWEEP_INTERVAL_MS_DEFAULT = 3_600_000L;
+  private static final String COPY_ON_WRITE_STAGING_ORPHAN_CLEANUP_INTERVAL_MS_PROP =
+      "iceberg.tables.copy-on-write.staging-orphan-cleanup-interval-ms";
+  private static final long COPY_ON_WRITE_STAGING_ORPHAN_CLEANUP_INTERVAL_MS_DEFAULT = 3_600_000L;
   private static final String COPY_ON_WRITE_STAGING_ORPHAN_TTL_MS_PROP =
       "iceberg.tables.copy-on-write.staging-orphan-ttl-ms";
   private static final long COPY_ON_WRITE_STAGING_ORPHAN_TTL_MS_DEFAULT = 86_400_000L;
@@ -504,13 +504,13 @@ public class IcebergSinkConfig extends AbstractConfig {
         "Location for copy-on-write staged change files, defaults to "
             + "<table location>/kc-copy-on-write-staging");
     configDef.define(
-        COPY_ON_WRITE_MAX_CHANGE_SET_RECORDS_PROP,
+        COPY_ON_WRITE_MAX_SLICE_KEYS_PROP,
         ConfigDef.Type.LONG,
-        COPY_ON_WRITE_MAX_CHANGE_SET_RECORDS_DEFAULT,
+        COPY_ON_WRITE_MAX_SLICE_KEYS_DEFAULT,
         ConfigDef.Range.atLeast(1L),
         Importance.MEDIUM,
-        "Maximum number of normalized records applied by one copy-on-write commit; a larger "
-            + "change set is applied over several commits");
+        "Maximum number of distinct identifier keys, after normalization, in one copy-on-write "
+            + "slice; a change set with more keys is cut into slices applied over several commits");
     configDef.define(
         COPY_ON_WRITE_MAX_REWRITE_BYTES_PROP,
         ConfigDef.Type.LONG,
@@ -567,12 +567,14 @@ public class IcebergSinkConfig extends AbstractConfig {
             + "chunk that still encodes larger than the producer allows is split further, so this "
             + "caps the message rather than guaranteeing its size");
     configDef.define(
-        COPY_ON_WRITE_STAGING_SWEEP_INTERVAL_MS_PROP,
+        COPY_ON_WRITE_STAGING_ORPHAN_CLEANUP_INTERVAL_MS_PROP,
         ConfigDef.Type.LONG,
-        COPY_ON_WRITE_STAGING_SWEEP_INTERVAL_MS_DEFAULT,
+        COPY_ON_WRITE_STAGING_ORPHAN_CLEANUP_INTERVAL_MS_DEFAULT,
         ConfigDef.Range.atLeast(1L),
         Importance.LOW,
-        "How often the staging location is swept for orphaned change files");
+        "How often the staging location of a table is scanned for orphaned files, those older "
+            + "than iceberg.tables.copy-on-write.staging-orphan-ttl-ms. Files of a committed, "
+            + "failed or cancelled slice are removed right away and do not wait for it");
     configDef.define(
         COPY_ON_WRITE_STAGING_ORPHAN_TTL_MS_PROP,
         ConfigDef.Type.LONG,
@@ -1183,8 +1185,8 @@ public class IcebergSinkConfig extends AbstractConfig {
     return getString(COPY_ON_WRITE_STAGING_LOCATION_PROP);
   }
 
-  public long copyOnWriteMaxChangeSetRecords() {
-    return getLong(COPY_ON_WRITE_MAX_CHANGE_SET_RECORDS_PROP);
+  public long copyOnWriteMaxSliceKeys() {
+    return getLong(COPY_ON_WRITE_MAX_SLICE_KEYS_PROP);
   }
 
   public long copyOnWriteMaxRewriteBytes() {
@@ -1239,8 +1241,8 @@ public class IcebergSinkConfig extends AbstractConfig {
     return (int) (maxRequestSize * CONTROL_MESSAGE_HEADROOM);
   }
 
-  public long copyOnWriteStagingSweepIntervalMs() {
-    return getLong(COPY_ON_WRITE_STAGING_SWEEP_INTERVAL_MS_PROP);
+  public long copyOnWriteStagingOrphanCleanupIntervalMs() {
+    return getLong(COPY_ON_WRITE_STAGING_ORPHAN_CLEANUP_INTERVAL_MS_PROP);
   }
 
   public long copyOnWriteStagingOrphanTtlMs() {

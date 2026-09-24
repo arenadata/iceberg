@@ -163,13 +163,13 @@ public class TestCopyOnWriteSliceProtocol {
     when(config.connectGroupId()).thenReturn(GROUP_ID);
     when(config.tableConfig(any())).thenReturn(mock(TableSinkConfig.class));
     when(config.copyOnWriteStagingLocation()).thenReturn(null);
-    when(config.copyOnWriteMaxChangeSetRecords()).thenReturn(1_000_000L);
+    when(config.copyOnWriteMaxSliceKeys()).thenReturn(1_000_000L);
     when(config.copyOnWriteMaxRewriteBytes()).thenReturn(Long.MAX_VALUE);
     when(config.copyOnWritePruningMaxInCardinality()).thenReturn(1000);
     when(config.copyOnWriteCommitRetries()).thenReturn(2);
     when(config.copyOnWriteRewriteThreads()).thenReturn(1);
     when(config.copyOnWriteRewriteTimeoutMs()).thenReturn(TIMEOUT_MS);
-    when(config.copyOnWriteStagingSweepIntervalMs()).thenReturn(Long.MAX_VALUE);
+    when(config.copyOnWriteStagingOrphanCleanupIntervalMs()).thenReturn(Long.MAX_VALUE);
     when(config.copyOnWriteStagingOrphanTtlMs()).thenReturn(86_400_000L);
     when(config.controlMessageMaxBytes()).thenReturn(MESSAGE_LIMIT);
 
@@ -527,7 +527,7 @@ public class TestCopyOnWriteSliceProtocol {
     // that file again for one row's worth of change. The operator sees "400 GB for 12 MB" only if
     // the summary logged before each RewriteAssigned carries the bytes that change, the ratio of
     // the rewrite to them, and what the change set's committed slices have rewritten so far
-    when(config.copyOnWriteMaxChangeSetRecords()).thenReturn(1L);
+    when(config.copyOnWriteMaxSliceKeys()).thenReturn(1L);
     appendRows(row(1L, "a"), row(2L, "b"), row(3L, "c"));
     StagedChangeFileWriter writer =
         new StagedChangeFileWriter(table, TABLE_REFERENCE, ID_FIELDS, null, GROUP_ID, "task-0");
@@ -590,7 +590,7 @@ public class TestCopyOnWriteSliceProtocol {
     // every slice that does not exhaust the change set is itself evidence of write
     // amplification; an operator filtering on WARN must see it as it happens, with the three
     // levers that cut the slicing rather than work around it, not infer it from an INFO line
-    when(config.copyOnWriteMaxChangeSetRecords()).thenReturn(1L);
+    when(config.copyOnWriteMaxSliceKeys()).thenReturn(1L);
     appendRows(row(1L, "a"), row(2L, "b"), row(3L, "c"));
     committer.commit(request(updates(1L, 2L, 3L)));
 
@@ -670,7 +670,7 @@ public class TestCopyOnWriteSliceProtocol {
     // tasks the slice went out on still include it: handed out again at once, the slice would
     // only wait out the timeout again. The drain is kept, and the next cycle's active tasks get
     // the slice
-    when(config.copyOnWriteMaxChangeSetRecords()).thenReturn(1L);
+    when(config.copyOnWriteMaxSliceKeys()).thenReturn(1L);
     appendRows(row(1L, "a"), row(2L, "b"));
     TableCommitRequest request = request(updates(1L, 2L));
     committer.commit(request);
@@ -1334,7 +1334,7 @@ public class TestCopyOnWriteSliceProtocol {
   public void testEverySliceOfADrainGetsItsOwnRetries() {
     // commit-retries is a quota per slice. Counted across the drain, a drain of fifty slices would
     // fail its cycle on the third conflict, however far apart the three were
-    when(config.copyOnWriteMaxChangeSetRecords()).thenReturn(1L);
+    when(config.copyOnWriteMaxSliceKeys()).thenReturn(1L);
     appendRows(row(1L, "a"), row(2L, "b"), row(3L, "c"));
     TableCommitRequest request = request(updates(1L, 2L, 3L));
     committer.commit(request);
@@ -1404,7 +1404,7 @@ public class TestCopyOnWriteSliceProtocol {
   public void testACommittedSliceTakesItsNormalizedFileAndTheLastSliceTheChangeSet() {
     // a slice's normalized file is done with once the slice commits. The staged files and the
     // manifest are what the next slice, or a restarted coordinator, drains the rest from
-    when(config.copyOnWriteMaxChangeSetRecords()).thenReturn(1L);
+    when(config.copyOnWriteMaxSliceKeys()).thenReturn(1L);
     appendRows(row(1L, "a"), row(2L, "b"));
     List<StagedChangeFile> staged = updates(1L, 2L);
     committer.commit(request(staged));
@@ -1590,7 +1590,7 @@ public class TestCopyOnWriteSliceProtocol {
     // a partial cycle in the middle of a rebalance can close before any task reports in. The drain
     // is already out with the active tasks of the last cycle; forgetting them would leave the next
     // slice nobody to go to
-    when(config.copyOnWriteMaxChangeSetRecords()).thenReturn(1L);
+    when(config.copyOnWriteMaxSliceKeys()).thenReturn(1L);
     appendRows(row(1L, "a"), row(2L, "b"));
     TableCommitRequest request = request(updates(1L, 2L));
     committer.commit(request);
@@ -1619,7 +1619,7 @@ public class TestCopyOnWriteSliceProtocol {
   public void testActiveTasksThatShrankMidDrainGetTheNextSlice() {
     // the active tasks are refreshed on every cycle of a drain, not pinned when it starts: a task
     // gone in a rebalance would otherwise be handed every slice left and time each of them out
-    when(config.copyOnWriteMaxChangeSetRecords()).thenReturn(1L);
+    when(config.copyOnWriteMaxSliceKeys()).thenReturn(1L);
     appendRows(row(1L, "a"), row(2L, "b"));
     TableCommitRequest request = request(updates(1L, 2L));
     committer.commit(request);
@@ -1794,8 +1794,8 @@ public class TestCopyOnWriteSliceProtocol {
 
   /** Has the next slice fail to start, once: a transient failure inside a transition. */
   private void failNextSliceStart() {
-    long maxRecords = config.copyOnWriteMaxChangeSetRecords();
-    when(config.copyOnWriteMaxChangeSetRecords())
+    long maxRecords = config.copyOnWriteMaxSliceKeys();
+    when(config.copyOnWriteMaxSliceKeys())
         .thenThrow(new UncheckedIOException(new IOException("storage unavailable")))
         .thenReturn(maxRecords);
   }

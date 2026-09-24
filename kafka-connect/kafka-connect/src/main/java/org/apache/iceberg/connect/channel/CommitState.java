@@ -101,7 +101,7 @@ class CommitState {
             + "input, or a table whose commit keeps failing. The control topic offsets are held "
             + "back with them, so this bounds both heap and restart time. Check for a table that "
             + "is not committing; if it is a drain, raise iceberg.control.commit.interval-ms or "
-            + "lower iceberg.tables.copy-on-write.max-change-set-records",
+            + "lower iceberg.tables.copy-on-write.max-slice-keys",
         commitBuffer.size());
   }
 

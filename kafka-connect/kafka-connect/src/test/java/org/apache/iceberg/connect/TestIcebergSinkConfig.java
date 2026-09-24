@@ -19,6 +19,7 @@
 package org.apache.iceberg.connect;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -41,6 +42,7 @@ import org.apache.kafka.common.config.ConfigException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.slf4j.Logger;
 
@@ -641,9 +643,9 @@ public class TestIcebergSinkConfig {
     assertThatThrownBy(
             () ->
                 new IcebergSinkConfig(
-                    copyOnWriteProps("iceberg.tables.copy-on-write.max-change-set-records", "0")))
+                    copyOnWriteProps("iceberg.tables.copy-on-write.max-slice-keys", "0")))
         .isInstanceOf(ConfigException.class)
-        .hasMessageContaining("iceberg.tables.copy-on-write.max-change-set-records");
+        .hasMessageContaining("iceberg.tables.copy-on-write.max-slice-keys");
 
     assertThatThrownBy(
             () ->
@@ -680,7 +682,7 @@ public class TestIcebergSinkConfig {
         "iceberg.tables.copy-on-write.pruning.max-in-cardinality",
         "iceberg.tables.copy-on-write.rewrite-threads",
         "iceberg.tables.copy-on-write.rewrite-timeout-ms",
-        "iceberg.tables.copy-on-write.staging-sweep-interval-ms",
+        "iceberg.tables.copy-on-write.staging-orphan-cleanup-interval-ms",
         "iceberg.tables.copy-on-write.staging-orphan-ttl-ms"
       })
   public void testCopyOnWriteTuningSettingsMustBePositive(String property) {
@@ -696,6 +698,25 @@ public class TestIcebergSinkConfig {
     assertThatThrownBy(() -> new IcebergSinkConfig(baseProps(property, "0")))
         .isInstanceOf(ConfigException.class)
         .hasMessageContaining(property);
+  }
+
+  @ParameterizedTest
+  @CsvSource({
+    "iceberg.tables.copy-on-write.max-slice-keys, "
+        + "iceberg.tables.copy-on-write.max-change-set-records",
+    "iceberg.tables.copy-on-write.staging-orphan-cleanup-interval-ms, "
+        + "iceberg.tables.copy-on-write.staging-sweep-interval-ms"
+  })
+  public void testCopyOnWriteRenamedPropertiesAreReadOnlyUnderTheirNewNames(
+      String property, String formerName) {
+    // the feature was never released, so the former name is not an alias: it is an unknown
+    // property ConfigDef ignores, and its value, however invalid, takes no effect
+    assertThatThrownBy(() -> new IcebergSinkConfig(copyOnWriteProps(property, "0")))
+        .isInstanceOf(ConfigException.class)
+        .hasMessageContaining(property);
+
+    assertThatCode(() -> new IcebergSinkConfig(copyOnWriteProps(formerName, "0")))
+        .doesNotThrowAnyException();
   }
 
   @Test
@@ -810,14 +831,14 @@ public class TestIcebergSinkConfig {
   @Test
   public void testCopyOnWriteDefaults() {
     IcebergSinkConfig config = new IcebergSinkConfig(copyOnWriteProps());
-    assertThat(config.copyOnWriteMaxChangeSetRecords()).isEqualTo(200_000L);
+    assertThat(config.copyOnWriteMaxSliceKeys()).isEqualTo(200_000L);
     assertThat(config.copyOnWriteMaxRewriteBytes()).isEqualTo(10L * 1024 * 1024 * 1024);
     assertThat(config.copyOnWritePruningMaxInCardinality()).isEqualTo(200);
     assertThat(config.copyOnWriteCommitRetries()).isEqualTo(2);
     assertThat(config.copyOnWriteRewriteTimeoutMs()).isEqualTo(120_000L);
     assertThat(config.copyOnWriteRewriteResponseChunkFiles()).isEqualTo(500);
     assertThat(config.controlMessageMaxBytes()).isEqualTo((int) (1024 * 1024 * 0.8));
-    assertThat(config.copyOnWriteStagingSweepIntervalMs()).isEqualTo(3_600_000L);
+    assertThat(config.copyOnWriteStagingOrphanCleanupIntervalMs()).isEqualTo(3_600_000L);
     assertThat(config.copyOnWriteStagingOrphanTtlMs()).isEqualTo(86_400_000L);
     assertThat(config.copyOnWriteRewriteThreads())
         .isEqualTo(Math.min(2, Runtime.getRuntime().availableProcessors()));

@@ -107,7 +107,7 @@ class StagingCleanupScheduler {
 
   /**
    * Cleans each loaded table's staging prefix of files no change set can reach, once per table per
-   * {@code iceberg.tables.copy-on-write.staging-sweep-interval-ms}.
+   * {@code iceberg.tables.copy-on-write.staging-orphan-cleanup-interval-ms}.
    *
    * <p>Only files older than {@code iceberg.tables.copy-on-write.staging-orphan-ttl-ms} and named
    * by no live change set are removed, so a change set being frozen right now (manifest not yet
@@ -260,7 +260,7 @@ class StagingCleanupScheduler {
     for (TableDrainState state : states) {
       known.add(state.tableReference);
       Long last = lastCleanupMs.get(state.tableReference);
-      if (last != null && nowMs - last < config.copyOnWriteStagingSweepIntervalMs()) {
+      if (last != null && nowMs - last < config.copyOnWriteStagingOrphanCleanupIntervalMs()) {
         continue;
       }
       if (!state.lock.tryLock()) {
