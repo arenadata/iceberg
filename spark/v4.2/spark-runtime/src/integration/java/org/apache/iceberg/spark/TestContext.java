@@ -38,7 +38,7 @@ public class TestContext {
         new ComposeContainer(new File("./docker/docker-compose.yml"))
             .withStartupTimeout(Duration.ofMinutes(2))
             .withTailChildContainers(true)
-            .waitingFor("minio", Wait.forHealthcheck())
+            .waitingFor("object-store", Wait.forHealthcheck())
             .waitingFor("iceberg", Wait.forHealthcheck())
             .waitingFor("hive-metastore", Wait.forHealthcheck())
             .waitingFor("metastore-db", Wait.forHealthcheck());

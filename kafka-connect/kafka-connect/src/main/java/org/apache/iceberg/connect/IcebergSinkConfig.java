@@ -581,7 +581,10 @@ public class IcebergSinkConfig extends AbstractConfig {
         COPY_ON_WRITE_STAGING_ORPHAN_TTL_MS_DEFAULT,
         ConfigDef.Range.atLeast(1L),
         Importance.LOW,
-        "Age after which an unreachable staging directory is considered orphaned and removed");
+        "Age, from its creation time, after which a staging file (staged change file, change set "
+            + "manifest or normalized slice) that nothing in use references any more is considered "
+            + "orphaned and removed by the staging cleanup. Must be greater than "
+            + "iceberg.control.commit.interval-ms plus iceberg.control.commit.timeout-ms");
   }
 
   private static void defineCdcProps(ConfigDef configDef) {

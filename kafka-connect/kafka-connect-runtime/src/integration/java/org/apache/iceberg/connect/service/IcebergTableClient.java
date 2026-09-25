@@ -21,7 +21,7 @@ package org.apache.iceberg.connect.service;
 import static java.lang.String.format;
 import static org.apache.iceberg.connect.service.ConnectorService.AWS_ACCESS_KEY;
 import static org.apache.iceberg.connect.service.ConnectorService.AWS_SECRET_KEY;
-import static org.apache.iceberg.connect.service.ConnectorService.MINIO_PORT;
+import static org.apache.iceberg.connect.service.ConnectorService.S3_PORT;
 
 import java.net.URI;
 import java.util.List;
@@ -48,7 +48,7 @@ public class IcebergTableClient {
 
   public static final S3Client S3_CLIENT =
       S3Client.builder()
-          .endpointOverride(URI.create("http://localhost:" + MINIO_PORT))
+          .endpointOverride(URI.create("http://localhost:" + S3_PORT))
           .credentialsProvider(
               StaticCredentialsProvider.create(
                   AwsBasicCredentials.create(AWS_ACCESS_KEY, AWS_SECRET_KEY)))

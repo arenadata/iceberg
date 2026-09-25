@@ -33,9 +33,9 @@ public class IcebergCatalogService {
   public static final String WAREHOUSE_LOCATION = "s3a://warehouse";
   public static final String TEST_DB = "test";
   public static final String TEST_CATALOG = "test_catalog";
-  public static final int MINIO_PORT = 9000;
-  public static final String AWS_ACCESS_KEY = "minioadmin";
-  public static final String AWS_SECRET_KEY = "minioadmin";
+  public static final int S3_PORT = 9000;
+  public static final String AWS_ACCESS_KEY = "admin";
+  public static final String AWS_SECRET_KEY = "password";
   public static final String AWS_REGION = "us-east-1";
   public static final String TEST_TABLE = "test_table";
   public static final String TEST_TABLE_NEW = "test_table_new";
@@ -64,7 +64,7 @@ public class IcebergCatalogService {
           entry("spark.hadoop.fs.s3a.impl.disable.cache", "true"),
           entry(CatalogProperties.WAREHOUSE_LOCATION, WAREHOUSE_LOCATION),
           entry("hive.metastore.warehouse.dir", WAREHOUSE_LOCATION),
-          entry("s3.endpoint", "http://localhost:" + MINIO_PORT),
+          entry("s3.endpoint", "http://localhost:" + S3_PORT),
           entry("s3.access-key-id", AWS_ACCESS_KEY),
           entry("s3.secret-access-key", AWS_SECRET_KEY),
           entry("s3.path-style-access", "true"),

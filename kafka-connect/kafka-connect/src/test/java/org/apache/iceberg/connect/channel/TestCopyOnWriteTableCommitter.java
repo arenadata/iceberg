@@ -1684,6 +1684,44 @@ public class TestCopyOnWriteTableCommitter {
     assertThat(driver.pendingTables()).isEmpty();
   }
 
+  /**
+   * Responses buffered for a table that was then dropped and created again under its name. Keyed by
+   * a reference with the old UUID, they get a state of their own beside the new table's, and loaded
+   * by name that state would drain into the new table: a second drain, and changes older than the
+   * new table's laid over its newer values. They are dropped instead, their staged files with them.
+   */
+  @Test
+  public void testResponsesBufferedForADroppedTableAreDroppedRatherThanAppliedToItsSuccessor() {
+    appendRows(table, row(1L, "a"));
+    TableReference old = TableReference.of(catalog.name(), TABLE_IDENTIFIER, table.uuid());
+    List<StagedChangeFile> oldStaged = stagedFiles(table, old, update(1L, "old"));
+
+    catalog.dropTable(TABLE_IDENTIFIER, false);
+    Table recreated = catalog.createTable(TABLE_IDENTIFIER, SCHEMA);
+    appendRows(recreated, row(1L, "b"));
+    TableReference current = TableReference.of(catalog.name(), TABLE_IDENTIFIER, recreated.uuid());
+
+    // the new table's responses drain first, as they can when both are buffered in one cycle
+    assertThat(
+            committer.commit(
+                requestOf(current, stagedFiles(recreated, current, update(1L, "new")), 0, 7L, 8L)))
+        .isEqualTo(TableCommitter.Outcome.COMMITTED);
+    assertThat(committer.commit(requestOf(old, oldStaged, 1, 5L, 6L)))
+        .as("spent: the table they were written for is gone")
+        .isEqualTo(TableCommitter.Outcome.COMMITTED);
+
+    recreated.refresh();
+    assertThat(readAll(recreated))
+        .as("the old table's change, older than the new one's, must not reach the new table")
+        .containsExactly(tuple(1L, "new"));
+    assertThat(connectorSnapshots(recreated)).as("one drain, one slice, one snapshot").hasSize(1);
+    InMemoryFileIO io = (InMemoryFileIO) recreated.io();
+    assertThat(oldStaged)
+        .as("staged for the dropped table: nothing else will delete them")
+        .allSatisfy(file -> assertThat(io.fileExists(file.location())).isFalse());
+    assertThat(committer.pendingTables()).isEmpty();
+  }
+
   @Test
   public void testAPointerToAMissingManifestStopsTheTableInsteadOfFailingEveryCycle() {
     // the summary names a change set whose manifest is gone: remove_orphan_files with a window
@@ -2477,6 +2515,43 @@ public class TestCopyOnWriteTableCommitter {
     assertThat(committer.replayAnchors()).isEmpty();
   }
 
+  @Test
+  public void testADrainedChangeSetReleasesItsReplayAnchorThoughCommitToTableFails() {
+    appendRows(table, row(1L, "a"));
+    when(config.routingStrategy()).thenReturn(RecordRoutingStrategy.DYNAMIC_FIELD);
+    when(config.tables()).thenReturn(null);
+    // the control topic fails the CommitToTable of the slice that drains the change set
+    AtomicInteger sliceCommits = new AtomicInteger();
+    committer =
+        new CopyOnWriteRewriteDriver(
+            catalog,
+            config,
+            metadataEvents,
+            event -> {
+              if (event.payload() instanceof CommitToTable) {
+                sliceCommits.incrementAndGet();
+                throw new IllegalStateException("control topic unavailable");
+              }
+              sentEvents.add(event);
+            },
+            taskCount());
+    TableReference written = TableReference.of(catalog.name(), TABLE_IDENTIFIER, table.uuid());
+    Envelope envelope = rowChangesAt(written, 0, 5L, stagedFiles(update(1L, "a1")));
+
+    // one coordinator cycle, as the table's stream then goes quiet: no later cycle starts a drain
+    // that would find no pointer and clear the anchor on its way
+    committer.commitOneSlice(
+        new TableCommitRequest(
+            written, List.of(envelope), ImmutableMap.of(0, 6L), UUID.randomUUID(), null));
+    table.refresh();
+    assertThat(readAll(table)).containsExactly(tuple(1L, "a1"));
+    assertThat(sliceCommits).hasValue(1);
+    assertThat(committer.pendingTables()).as("the change set is applied").isEmpty();
+    assertThat(committer.replayAnchors())
+        .as("drained: nothing is left to replay, so nothing may hold the offsets")
+        .isEmpty();
+  }
+
   private static TableCommitRequest emptyRequest(TableReference tableReference) {
     return new TableCommitRequest(
         tableReference,
@@ -2749,8 +2824,12 @@ public class TestCopyOnWriteTableCommitter {
 
   /** Snapshots this connector produced, i.e. the ones a drain's slices are counted in. */
   private List<Snapshot> connectorSnapshots() {
+    return connectorSnapshots(table);
+  }
+
+  private static List<Snapshot> connectorSnapshots(Table target) {
     List<Snapshot> snapshots = Lists.newArrayList();
-    table
+    target
         .snapshots()
         .forEach(
             snapshot -> {

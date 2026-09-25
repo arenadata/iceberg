@@ -28,6 +28,7 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.apache.iceberg.connect.events.PayloadType;
 import org.apache.iceberg.connect.events.RowChangesWritten;
+import org.apache.iceberg.connect.events.StagedChangeFile;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
@@ -114,6 +115,15 @@ final class Envelopes {
 
   static boolean isDataWritten(Envelope envelope) {
     return envelope.event().payload().type() == PayloadType.DATA_WRITTEN;
+  }
+
+  static List<String> stagedFileLocations(Collection<Envelope> envelopes) {
+    return envelopes.stream()
+        .map(envelope -> envelope.event().payload())
+        .filter(payload -> payload.type() == PayloadType.ROW_CHANGES_WRITTEN)
+        .flatMap(payload -> ((RowChangesWritten) payload).stagedFiles().stream())
+        .map(StagedChangeFile::location)
+        .collect(Collectors.toList());
   }
 
   static long countStagedFiles(Collection<Envelope> envelopes) {

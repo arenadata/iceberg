@@ -607,6 +607,11 @@ class CopyOnWriteTableCommitter implements TableCommitter {
       return DrainStartOutcome.NOTHING_TO_DO;
     }
 
+    if (writtenForDroppedTable(state, request, table)) {
+      spent.addAll(request.envelopes());
+      return DrainStartOutcome.NOTHING_TO_DO;
+    }
+
     // the coordinator never reads or writes table data, so a cycle where no task reported in
     // defers rather than freezing a change set nobody can apply: checked before the freeze, so
     // the envelopes stay as they were
@@ -714,6 +719,41 @@ class CopyOnWriteTableCommitter implements TableCommitter {
     // freeze checks identifier fields from the staged files' descriptors without opening them
     submit(state, () -> startSlice(state));
     return DrainStartOutcome.STARTED;
+  }
+
+  /**
+   * Whether the responses were written for a table since dropped and created again under its name:
+   * the UUID they carry is not the one of the table the name loads. Their reference keys a state of
+   * its own beside the new table's, so drained, they would be a second drain into the new table,
+   * laying changes older than its own over its newer values, from staged files written against
+   * another schema. They are dropped instead, as the change set frozen for the old table is (6.13),
+   * their staged files deleted by name: nothing else would, the staging cleanup of the new table
+   * keeps what its buffer names. The state goes, and its replay anchor with it. A reference without
+   * a UUID is not checked.
+   */
+  private boolean writtenForDroppedTable(
+      TableDrainState state, TableCommitRequest request, Table table) {
+    TableReference tableReference = request.tableReference();
+    UUID writtenFor = tableReference.uuid();
+    if (writtenFor == null || writtenFor.equals(table.uuid())) {
+      return false;
+    }
+
+    List<String> staged = Envelopes.stagedFileLocations(request.envelopes());
+    LOG.warn(
+        "Table {} was dropped and created again: dropping {} buffered response(s) written for the "
+            + "dropped one (UUID {}; the table is now {}) and deleting the {} staged change file(s) "
+            + "they name. Their changes are not applied. Recreate a table while the connector is "
+            + "stopped, or once its responses are drained",
+        tableReference.identifier(),
+        request.envelopes().size(),
+        writtenFor,
+        table.uuid(),
+        staged.size());
+    CopyOnWriteFiles.deleteQuietly(table.io(), staged);
+    states.remove(tableReference, state);
+    drainingUnder.remove(writtenFor, tableReference);
+    return true;
   }
 
   private void startSlice(TableDrainState state) {
@@ -980,6 +1020,11 @@ class CopyOnWriteTableCommitter implements TableCommitter {
       // ... and from here on the coordinator must keep offering this table a commit even with an
       // empty buffer, or a drain that fails later is never picked up again
       state.unfinishedDrain = !state.drained;
+      if (state.drained) {
+        // nothing is left to replay: released here, not after CommitToTable, which can fail and
+        // leave a quiet table's offsets held for good
+        state.replayAnchor = null;
+      }
 
       state.resetSliceRetryQuotas(config.copyOnWriteCommitRetries());
       state.cancelledInARow = 0;
@@ -1028,7 +1073,6 @@ class CopyOnWriteTableCommitter implements TableCommitter {
 
       if (state.drained) {
         state.unfinishedDrain = false;
-        state.replayAnchor = null;
         state.reset();
       } else {
         state.cursor = state.slice.lastKey().orElse(state.cursor);
