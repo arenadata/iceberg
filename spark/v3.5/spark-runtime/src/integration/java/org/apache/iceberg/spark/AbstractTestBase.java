@@ -23,7 +23,7 @@ import static org.apache.iceberg.spark.IcebergCatalogService.AWS_ACCESS_KEY;
 import static org.apache.iceberg.spark.IcebergCatalogService.AWS_REGION;
 import static org.apache.iceberg.spark.IcebergCatalogService.AWS_SECRET_KEY;
 import static org.apache.iceberg.spark.IcebergCatalogService.BASE_CATALOG_CONFIGS;
-import static org.apache.iceberg.spark.IcebergCatalogService.MINIO_PORT;
+import static org.apache.iceberg.spark.IcebergCatalogService.S3_PORT;
 import static org.apache.iceberg.spark.IcebergCatalogService.TEST_CATALOG;
 import static org.apache.iceberg.spark.IcebergCatalogService.TEST_DB;
 import static org.apache.iceberg.spark.IcebergCatalogService.TEST_TABLE;
@@ -117,7 +117,7 @@ public class AbstractTestBase {
                 "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider")
             .config("spark.hadoop.fs.s3a.access.key", AWS_ACCESS_KEY)
             .config("spark.hadoop.fs.s3a.secret.key", AWS_SECRET_KEY)
-            .config("spark.hadoop.fs.s3a.endpoint", "http://localhost:" + MINIO_PORT)
+            .config("spark.hadoop.fs.s3a.endpoint", "http://localhost:" + S3_PORT)
             .config("spark.hadoop.fs.s3a.endpoint.region", AWS_REGION)
             .config("spark.hadoop.fs.s3a.path.style.access", "true");
     Stream.concat(

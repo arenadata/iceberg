@@ -101,6 +101,7 @@ jobs:
     - uses: actions/upload-artifact@v4
       if: failure()
       with:
-        name: test logs
+        name: test logs (jdk ${{ matrix.jvm }})
         path: |
           **/build/testlogs
+          kafka-connect/kafka-connect-runtime/build/test-results/integrationTest/*.xml

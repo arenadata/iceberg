@@ -49,7 +49,7 @@ public class SinkWriter {
   }
 
   public SinkWriterResult completeWrite() {
-    List<IcebergWriterResult> writerResults =
+    List<RecordWriteResult> writerResults =
         writers.values().stream()
             .flatMap(writer -> writer.complete().stream())
             .collect(Collectors.toList());

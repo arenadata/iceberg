@@ -21,6 +21,7 @@ package org.apache.iceberg.connect.channel;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Function;
 import org.apache.iceberg.catalog.Catalog;
 import org.apache.iceberg.connect.Committer;
 import org.apache.iceberg.connect.IcebergSinkConfig;
@@ -42,6 +43,9 @@ public class CommitterImpl implements Committer {
 
   private static final Logger LOG = LoggerFactory.getLogger(CommitterImpl.class);
 
+  // copy-on-write: how long a task's poll thread may go without reading the control topic
+  private static final long CONTROL_TOPIC_READ_INTERVAL_MS = 1_000L;
+
   private CoordinatorThread coordinatorThread;
   private Worker worker;
   private Catalog catalog;
@@ -51,6 +55,16 @@ public class CommitterImpl implements Committer {
   private MetadataEvents metadataEvents;
   private Collection<MemberDescription> membersWhenWorkerIsCoordinator;
   private final AtomicBoolean isInitialized = new AtomicBoolean(false);
+  private final Function<IcebergSinkConfig, KafkaClientFactory> clientFactories;
+
+  public CommitterImpl() {
+    this(icebergSinkConfig -> new KafkaClientFactory(icebergSinkConfig.kafkaProps()));
+  }
+
+  @VisibleForTesting
+  CommitterImpl(Function<IcebergSinkConfig, KafkaClientFactory> clientFactories) {
+    this.clientFactories = clientFactories;
+  }
 
   private void initialize(
       Catalog icebergCatalog,
@@ -60,7 +74,7 @@ public class CommitterImpl implements Committer {
       this.catalog = icebergCatalog;
       this.config = icebergSinkConfig;
       this.context = sinkTaskContext;
-      this.clientFactory = new KafkaClientFactory(config.kafkaProps());
+      this.clientFactory = clientFactories.apply(config);
       this.metadataEvents =
           MetadataEvents.fromContext(
               context,
@@ -170,8 +184,25 @@ public class CommitterImpl implements Committer {
     if (sinkRecords != null && !sinkRecords.isEmpty()) {
       startWorker();
       worker.save(sinkRecords);
+    } else if (ownsPartitionsInCopyOnWrite()) {
+      // in copy-on-write a task with an idle input is still a rewrite executor, and only its
+      // DataComplete counts it among the cycle's active tasks: after a restart or a rebalance
+      // with every record already reported, no active tasks would defer the drain until new
+      // records arrive
+      startWorker();
     }
     processControlEvents();
+
+    if (worker != null && config.isCopyOnWriteMode()) {
+      // on an idle or paused input Connect polls for up to offset.flush.interval.ms before the next
+      // put(), longer than commit.timeout-ms by default; the timeout applies to the next poll only
+      context.timeout(CONTROL_TOPIC_READ_INTERVAL_MS);
+    }
+  }
+
+  private boolean ownsPartitionsInCopyOnWrite() {
+    // Connect calls put() before open() when the task has no partitions
+    return isInitialized.get() && config.isCopyOnWriteMode() && !context.assignment().isEmpty();
   }
 
   private void processControlEvents() {
@@ -187,7 +218,7 @@ public class CommitterImpl implements Committer {
     if (null == this.worker) {
       LOG.info("Starting commit worker");
       SinkWriter sinkWriter = new SinkWriter(catalog, config);
-      worker = new Worker(config, clientFactory, sinkWriter, context);
+      worker = new Worker(catalog, config, clientFactory, sinkWriter, context);
       worker.start();
     }
   }

@@ -28,9 +28,9 @@ public class ConnectorService {
   private ConnectorService() {}
 
   public static final int CATALOG_PORT = 8181;
-  public static final int MINIO_PORT = 9000;
-  public static final String AWS_ACCESS_KEY = "minioadmin";
-  public static final String AWS_SECRET_KEY = "minioadmin";
+  public static final int S3_PORT = 9000;
+  public static final String AWS_ACCESS_KEY = "admin";
+  public static final String AWS_SECRET_KEY = "password";
   public static final String AWS_REGION = "us-east-1";
 
   public static final Map<String, Object> V3_AUTO_CREATE_CONNECTOR_CONFIGS =

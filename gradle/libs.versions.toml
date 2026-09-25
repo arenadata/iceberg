@@ -96,7 +96,7 @@ spark35 = "3.5.6"
 spark40 = "4.0.0"
 spark42 = "4.2.0.1-4.3.0-2"
 sqlite-jdbc = "3.50.3.0"
-testcontainers = "1.21.3"
+testcontainers = "1.21.4"
 tez010 = "0.10.3"
 tez08 = { strictly = "0.8.4"}  # see rich version usage explanation above
 ozone = "2.0.0"
@@ -243,6 +243,5 @@ orc-tools = { module = "org.apache.orc:orc-tools", version.ref = "orc" }
 sqlite-jdbc = { module = "org.xerial:sqlite-jdbc", version.ref = "sqlite-jdbc" }
 testcontainers = { module = "org.testcontainers:testcontainers", version.ref = "testcontainers" }
 testcontainers-junit-jupiter = { module = "org.testcontainers:junit-jupiter", version.ref = "testcontainers" }
-testcontainers-minio = { module = "org.testcontainers:minio", version.ref = "testcontainers" }
 tez08-dag = { module = "org.apache.tez:tez-dag", version.ref = "tez08" }
 tez08-mapreduce = { module = "org.apache.tez:tez-mapreduce", version.ref = "tez08" }

@@ -115,7 +115,7 @@ jobs:
       with:
         distribution: zulu
         java-version: ${{ matrix.jvm }}
-    - run: ./gradlew -DallModules -DknownFlinkVersions=${{ matrix.flinkVersions }} build -x test -x javadoc -x integrationTest
+    - run: ./gradlew -Dorg.gradle.jvmargs=-Xmx4g -DallModules -DknownFlinkVersions=${{ matrix.flinkVersions }} build -x test -x javadoc -x integrationTest
       env:
         GITHUB_USERNAME: ${{ github.actor }}
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
