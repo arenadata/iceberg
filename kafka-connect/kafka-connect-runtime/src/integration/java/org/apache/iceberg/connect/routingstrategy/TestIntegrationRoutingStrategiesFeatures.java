@@ -26,7 +26,6 @@ import static org.apache.iceberg.connect.service.IcebergTableClient.loadCatalogT
 import static org.assertj.core.api.AssertionsForInterfaceTypes.assertThat;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.ArrayNode;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
@@ -132,24 +131,21 @@ public class TestIntegrationRoutingStrategiesFeatures
     HttpClient httpClient = HttpClients.createDefault();
     Awaitility.await()
         .atMost(60, TimeUnit.SECONDS)
-        .until(
+        .untilAsserted(
             () ->
                 httpClient.execute(
                     request,
                     response -> {
-                      if (response.getCode() == HttpStatus.SC_OK) {
-                        JsonNode root =
-                            TestContext.MAPPER.readTree(response.getEntity().getContent());
-                        ArrayNode taskNodes = (ArrayNode) root.get("tasks");
-                        JsonNode firstTaskNode = taskNodes.get(0);
-                        assertThat(firstTaskNode.get("state").asText()).isEqualTo("FAILED");
-                        String trace = firstTaskNode.get("trace").asText();
-                        assertThat(trace)
-                            .containsIgnoringCase(
-                                "org.apache.kafka.common.config.ConfigException: "
-                                    + "Cannot specify both iceberg.tables.topic-to-table-mapping and iceberg.tables.topic-to-table-mapping-file");
-                      }
-                      return true;
+                      assertThat(response.getCode()).isEqualTo(HttpStatus.SC_OK);
+                      JsonNode root =
+                          TestContext.MAPPER.readTree(response.getEntity().getContent());
+                      JsonNode firstTaskNode = root.path("tasks").path(0);
+                      assertThat(firstTaskNode.path("state").asText()).isEqualTo("FAILED");
+                      assertThat(firstTaskNode.path("trace").asText())
+                          .containsIgnoringCase(
+                              "org.apache.kafka.common.config.ConfigException: "
+                                  + "Cannot specify both iceberg.tables.topic-to-table-mapping and iceberg.tables.topic-to-table-mapping-file");
+                      return null;
                     }));
     flush();
   }

@@ -39,6 +39,7 @@ The Apache Iceberg Sink Connector for Kafka Connect is a sink connector for writ
 * Exactly-once delivery semantics
 * Multi-table fan-out
 * Change data capture
+* Copy-on-write or merge-on-read for updates and deletes
 * Automatic table creation and schema evolution
 * Field name mapping via Iceberg’s column mapping functionality
 
@@ -59,45 +60,56 @@ for exactly-once semantics. This requires Kafka 2.5 or later.
 
 ## Configuration
 
-| Property                                   | Description                                                                                                      |
-|--------------------------------------------|------------------------------------------------------------------------------------------------------------------|
-| routing.strategy                           | Record routing strategy: `all-tables`, `regex`, `dynamic-field`, or `topic-to-table`                             |
-| iceberg.tables                             | Comma-separated list of destination tables                                                                       |
-| iceberg.tables.dynamic-enabled             | Set to `true` to route to a table specified in `routeField` instead of using `routeRegex`, default is `false`    |
-| iceberg.tables.route-field                 | For multi-table fan-out, the name of the field used to route records to tables                                   |
-| iceberg.tables.topic-to-table-mapping      | Comma-separated static mapping from Kafka topic names to Iceberg tables, for example `topic1:db.table1`          |
-| iceberg.tables.topic-to-table-mapping-file | Absolute path to a JSON file with static mapping from Kafka topic names to Iceberg tables                        |
-| iceberg.tables.default-commit-branch       | Default branch for commits, main is used if not specified                                                        |
-| iceberg.tables.default-id-columns          | Default comma-separated list of columns that identify a row in tables (primary key)                              |
-| iceberg.tables.default-partition-by        | Default comma-separated list of partition field names to use when creating tables                                |
-| iceberg.tables.auto-create-enabled         | Set to `true` to automatically create destination tables, default is `false`                                     |
-| iceberg.tables.evolve-schema-enabled       | Set to `true` to add any missing record fields to the table schema, default is `false`                           |
-| iceberg.tables.schema-force-optional       | Set to `true` to set columns as optional during table create and evolution, default is `false` to respect schema |
-| iceberg.tables.schema-case-insensitive     | Set to `true` to look up table columns by case-insensitive name, default is `false` for case-sensitive           |
-| iceberg.tables.schema-timestamp-ns-fields  | Comma-separated field names or exact field paths for Debezium `NanoTimestamp` fields to map to Iceberg `timestamp_ns` |
-| iceberg.tables.cdc-field                   | Source record field that identifies the type of operation (insert, update, or delete)                            |
-| iceberg.tables.cdc.ops.insert              | The comma-separated values of the cdc operation field corresponding to INSERT                                    |
-| iceberg.tables.cdc.ops.update              | The comma-separated values of the cdc operation field corresponding to UPDATE                                    |
-| iceberg.tables.cdc.ops.delete              | The comma-separated values of the cdc operation field corresponding to DELETE                                    |
-| iceberg.tables.cdc.ops.ignored             | The comma-separated values of the cdc operation field that should be ignored by connector                        |
-| iceberg.tables.upsert-mode-enabled         | Set to true to treat all appends as upserts, false otherwise                                                     |
-| iceberg.tables.auto-create-props.*         | Properties set on new tables during auto-create                                                                  |
-| iceberg.tables.write-props.*               | Properties passed through to Iceberg writer initialization, these take precedence                                |
-| iceberg.table.\<table name\>.commit-branch | Table-specific branch for commits, use `iceberg.tables.default-commit-branch` if not specified                   |
-| iceberg.table.\<table name\>.id-columns    | Comma-separated list of columns that identify a row in the table (primary key)                                   |
-| iceberg.table.\<table name\>.partition-by  | Comma-separated list of partition fields to use when creating the table                                          |
-| iceberg.table.\<table name\>.route-regex   | The regex used to match a record's `routeField` to a table                                                       |
-| iceberg.control.topic                      | Name of the control topic, default is `control-iceberg`                                                          |
-| iceberg.control.group-id-prefix            | Prefix for the control consumer group, default is `cg-control`                                                   |
-| iceberg.control.commit.interval-ms         | Commit interval in msec, default is 300,000 (5 min)                                                              |
-| iceberg.control.commit.timeout-ms          | Commit timeout interval in msec, default is 30,000 (30 sec)                                                      |
-| iceberg.control.commit.threads             | Number of threads to use for commits, default is (cores * 2)                                                     |
-| iceberg.coordinator.transactional.prefix   | Prefix for the transactional id to use for the coordinator producer, default is to use no/empty prefix           |
-| iceberg.catalog                            | Name of the catalog, default is `iceberg`                                                                        |
-| iceberg.catalog.*                          | Properties passed through to Iceberg catalog initialization                                                      |
-| iceberg.hadoop-conf-dir                    | If specified, Hadoop config files in this directory will be loaded                                               |
-| iceberg.hadoop.*                           | Properties passed through to the Hadoop configuration                                                            |
-| iceberg.kafka.*                            | Properties passed through to control topic Kafka client initialization                                           |
+| Property                                                        | Description                                                                                                           |
+|-----------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------|
+| routing.strategy                                                | Record routing strategy: `all-tables`, `regex`, `dynamic-field`, or `topic-to-table`                                  |
+| iceberg.tables                                                  | Comma-separated list of destination tables                                                                            |
+| iceberg.tables.dynamic-enabled                                  | Set to `true` to route to a table specified in `routeField` instead of using `routeRegex`, default is `false`         |
+| iceberg.tables.route-field                                      | For multi-table fan-out, the name of the field used to route records to tables                                        |
+| iceberg.tables.topic-to-table-mapping                           | Comma-separated static mapping from Kafka topic names to Iceberg tables, for example `topic1:db.table1`               |
+| iceberg.tables.topic-to-table-mapping-file                      | Absolute path to a JSON file with static mapping from Kafka topic names to Iceberg tables                             |
+| iceberg.tables.default-commit-branch                            | Default branch for commits, main is used if not specified                                                             |
+| iceberg.tables.default-id-columns                               | Default comma-separated list of columns that identify a row in tables (primary key)                                   |
+| iceberg.tables.default-partition-by                             | Default comma-separated list of partition field names to use when creating tables                                     |
+| iceberg.tables.auto-create-enabled                              | Set to `true` to automatically create destination tables, default is `false`                                          |
+| iceberg.tables.evolve-schema-enabled                            | Set to `true` to add any missing record fields to the table schema, default is `false`                                |
+| iceberg.tables.schema-force-optional                            | Set to `true` to set columns as optional during table create and evolution, default is `false` to respect schema      |
+| iceberg.tables.schema-case-insensitive                          | Set to `true` to look up table columns by case-insensitive name, default is `false` for case-sensitive                |
+| iceberg.tables.schema-timestamp-ns-fields                       | Comma-separated field names or exact field paths for Debezium `NanoTimestamp` fields to map to Iceberg `timestamp_ns` |
+| iceberg.tables.cdc-field                                        | Source record field that identifies the type of operation (insert, update, or delete)                                 |
+| iceberg.tables.cdc.ops.insert                                   | The comma-separated values of the cdc operation field corresponding to INSERT                                         |
+| iceberg.tables.cdc.ops.update                                   | The comma-separated values of the cdc operation field corresponding to UPDATE                                         |
+| iceberg.tables.cdc.ops.delete                                   | The comma-separated values of the cdc operation field corresponding to DELETE                                         |
+| iceberg.tables.cdc.ops.ignored                                  | The comma-separated values of the cdc operation field that should be ignored by connector                             |
+| iceberg.tables.upsert-mode-enabled                              | Set to true to treat all appends as upserts, false otherwise                                                          |
+| iceberg.tables.row-level-mode                                   | How updates and deletes are applied: `merge-on-read` (default) or `copy-on-write`, for all tables of the connector    |
+| iceberg.tables.copy-on-write.staging-location                   | Location of staged change files, default is `<table location>/kc-copy-on-write-staging`                               |
+| iceberg.tables.copy-on-write.max-slice-keys                     | Max distinct keys applied by one commit, default is 200,000; a larger change set is applied over several commits      |
+| iceberg.tables.copy-on-write.max-rewrite-bytes                  | Max total size of data files rewritten by one commit, default is 10 GiB                                               |
+| iceberg.tables.copy-on-write.pruning.max-in-cardinality         | Max distinct values per identifier column in the file pruning predicate, default is 200                               |
+| iceberg.tables.copy-on-write.commit-retries                     | Immediate retries of a failed or conflicting commit, default is 2; after that it is retried in the next cycle         |
+| iceberg.tables.copy-on-write.rewrite-threads                    | Threads rewriting data files, per task, default is min(2, cores)                                                      |
+| iceberg.tables.copy-on-write.rewrite-timeout-ms                 | Rewrite timeout in msec after which the work is retried, default is 120,000 (2 min)                                   |
+| iceberg.tables.copy-on-write.rewrite-response-chunk-files       | Max data files reported in one control message, default is 500                                                        |
+| iceberg.tables.copy-on-write.staging-orphan-cleanup-interval-ms | How often orphaned staged files are removed, default is 3,600,000 (1 hour)                                            |
+| iceberg.tables.copy-on-write.staging-orphan-ttl-ms              | Age after which an unreferenced staged file is orphaned, default is 86,400,000 (1 day)                                |
+| iceberg.tables.auto-create-props.*                              | Properties set on new tables during auto-create                                                                       |
+| iceberg.tables.write-props.*                                    | Properties passed through to Iceberg writer initialization, these take precedence                                     |
+| iceberg.table.\<table name\>.commit-branch                      | Table-specific branch for commits, use `iceberg.tables.default-commit-branch` if not specified                        |
+| iceberg.table.\<table name\>.id-columns                         | Comma-separated list of columns that identify a row in the table (primary key)                                        |
+| iceberg.table.\<table name\>.partition-by                       | Comma-separated list of partition fields to use when creating the table                                               |
+| iceberg.table.\<table name\>.route-regex                        | The regex used to match a record's `routeField` to a table                                                            |
+| iceberg.control.topic                                           | Name of the control topic, default is `control-iceberg`                                                               |
+| iceberg.control.group-id-prefix                                 | Prefix for the control consumer group, default is `cg-control`                                                        |
+| iceberg.control.commit.interval-ms                              | Commit interval in msec, default is 300,000 (5 min)                                                                   |
+| iceberg.control.commit.timeout-ms                               | Commit timeout interval in msec, default is 30,000 (30 sec)                                                           |
+| iceberg.control.commit.threads                                  | Number of threads to use for commits, default is (cores * 2)                                                          |
+| iceberg.coordinator.transactional.prefix                        | Prefix for the transactional id to use for the coordinator producer, default is to use no/empty prefix                |
+| iceberg.catalog                                                 | Name of the catalog, default is `iceberg`                                                                             |
+| iceberg.catalog.*                                               | Properties passed through to Iceberg catalog initialization                                                           |
+| iceberg.hadoop-conf-dir                                         | If specified, Hadoop config files in this directory will be loaded                                                    |
+| iceberg.hadoop.*                                                | Properties passed through to the Hadoop configuration                                                                 |
+| iceberg.kafka.*                                                 | Properties passed through to control topic Kafka client initialization                                                |
 
 If `routing.strategy` is not set, the connector keeps the existing behavior for backward compatibility:
 it uses `dynamic-field` when `iceberg.tables.dynamic-enabled` is `true`, `regex` when
@@ -507,6 +519,39 @@ can be set instead. CDC can be combined with multi-table fan-out.
 
 CDC mode writes equality deletes to handle updates and deletes. During reads, the query engine must
 apply equality deletes by scanning data files that may contain matching rows based on the identifier columns.
+
+#### Row-level mode
+
+By default the connector applies updates and deletes in `merge-on-read` mode, as described above: it writes
+delete files and the query engine merges them on read. This differs from the Iceberg default for
+`write.update.mode`, `write.delete.mode` and `write.merge.mode`, which is `copy-on-write`. These table
+properties do not select the connector's mode: in `merge-on-read` a mismatch is only logged as a warning.
+
+Set `iceberg.tables.row-level-mode` to `copy-on-write` to rewrite the affected data files instead. The table
+then contains only data files, and engines without delete file support read it correctly. The mode applies
+to all tables of the connector; to write some tables in `copy-on-write` and others in `merge-on-read`, use
+separate connector instances. In `copy-on-write`:
+
+* `iceberg.tables.cdc-field` or `iceberg.tables.upsert-mode-enabled` is required, and identifier fields
+  must be top-level columns
+* a table declaring `merge-on-read` in `write.*.mode` fails the task with a `ConfigException`
+* the coordinator plans the affected files on each commit and the tasks rewrite them in parallel, so
+  `tasks.max` and `iceberg.tables.copy-on-write.rewrite-threads` set the rewrite throughput
+* the cost of a commit grows with the size of the affected data files, not with the number of changes;
+  a very small `iceberg.control.commit.interval-ms` increases write amplification
+* a change set larger than `max-slice-keys` or `max-rewrite-bytes` is applied over several commits;
+  every commit is atomic and none of them adds delete files
+* a row is found by its identifier fields in any partition, so a delete carrying only the key and an
+  update moving a row to another partition are applied correctly, and an insert of an existing key
+  replaces the row instead of adding a duplicate; row counts may differ from a `merge-on-read` copy
+
+Switching a table from `merge-on-read` to `copy-on-write` needs no migration: delete files written before
+stay valid until compaction. Before switching back, let the connector apply the pending changes: while a
+`copy-on-write` change set is unfinished, `merge-on-read` commits to that table are rejected.
+
+Run `remove_orphan_files` regularly: files of a failed or cancelled rewrite may stay behind, as after an
+aborted Spark write. Keep its `older_than` window longer than applying a change set takes: staged change
+files are not referenced by the table metadata until the change set is fully applied.
 
 #### Production recommendations
 
