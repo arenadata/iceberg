@@ -33,6 +33,7 @@ import org.apache.kafka.clients.admin.ConsumerGroupDescription;
 import org.apache.kafka.clients.admin.MemberDescription;
 import org.apache.kafka.common.ConsumerGroupState;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.metrics.PluginMetrics;
 import org.apache.kafka.connect.errors.ConnectException;
 import org.apache.kafka.connect.sink.SinkRecord;
 import org.apache.kafka.connect.sink.SinkTaskContext;
@@ -54,8 +55,14 @@ public class CommitterImpl implements Committer {
   private KafkaClientFactory clientFactory;
   private MetadataEvents metadataEvents;
   private Collection<MemberDescription> membersWhenWorkerIsCoordinator;
+  // one for the life of the committer, so that the coordinators the task elects in turn share the
+  // metrics; null without statistics
+  private StatisticsMetrics statisticsMetrics;
+  private boolean metricsUnsupportedLogged = false;
   private final AtomicBoolean isInitialized = new AtomicBoolean(false);
   private final Function<IcebergSinkConfig, KafkaClientFactory> clientFactories;
+  // where the logs about the statistics metrics go: the tests have no log backend to read them from
+  private final Logger metricsLog;
 
   public CommitterImpl() {
     this(icebergSinkConfig -> new KafkaClientFactory(icebergSinkConfig.kafkaProps()));
@@ -63,7 +70,14 @@ public class CommitterImpl implements Committer {
 
   @VisibleForTesting
   CommitterImpl(Function<IcebergSinkConfig, KafkaClientFactory> clientFactories) {
+    this(clientFactories, LOG);
+  }
+
+  @VisibleForTesting
+  CommitterImpl(
+      Function<IcebergSinkConfig, KafkaClientFactory> clientFactories, Logger metricsLog) {
     this.clientFactories = clientFactories;
+    this.metricsLog = metricsLog;
   }
 
   private void initialize(
@@ -75,6 +89,7 @@ public class CommitterImpl implements Committer {
       this.config = icebergSinkConfig;
       this.context = sinkTaskContext;
       this.clientFactory = clientFactories.apply(config);
+      this.statisticsMetrics = config.statisticsInUse() ? new StatisticsMetrics() : null;
       this.metadataEvents =
           MetadataEvents.fromContext(
               context,
@@ -226,17 +241,70 @@ public class CommitterImpl implements Committer {
   private void startCoordinator() {
     if (null == this.coordinatorThread) {
       LOG.info("Task elected leader, starting commit coordinator");
-      Coordinator coordinator =
-          new Coordinator(
-              catalog,
-              config,
-              membersWhenWorkerIsCoordinator,
-              clientFactory,
-              context,
-              metadataEvents);
-      coordinatorThread = new CoordinatorThread(coordinator);
-      coordinatorThread.start();
+      // before the coordinator is built: its constructor attaches the health to the metrics
+      registerStatisticsMetrics();
+      try {
+        coordinatorThread = new CoordinatorThread(newCoordinator(statisticsMetrics));
+        coordinatorThread.start();
+      } catch (RuntimeException e) {
+        // stopCoordinator() would not take the metrics off: there is no thread to stop
+        unregisterStatisticsMetrics();
+        throw e;
+      }
     }
+  }
+
+  // Registered here, not by the coordinator: a new coordinator may be built while the old one is
+  // still in terminate(), and would clash with the names the old one holds. open() and close()
+  // run on the task thread, one after the other
+  private void registerStatisticsMetrics() {
+    if (statisticsMetrics == null) {
+      return;
+    }
+
+    try {
+      PluginMetrics pluginMetrics = context.pluginMetrics();
+      if (pluginMetrics != null) {
+        statisticsMetrics.register(pluginMetrics);
+      }
+    } catch (NoSuchMethodError e) {
+      // Kafka Connect below 4.1 has no PluginMetrics (KIP-877): not supported, the connector runs
+      warnMetricsUnsupportedOnce();
+    } catch (IllegalArgumentException e) {
+      metricsLog.warn("Statistics metrics are not registered, a name is taken", e);
+    }
+  }
+
+  private void warnMetricsUnsupportedOnce() {
+    if (!metricsUnsupportedLogged) {
+      metricsUnsupportedLogged = true;
+      metricsLog.warn("statistics metrics need Kafka Connect 4.1 or later");
+    }
+  }
+
+  private void unregisterStatisticsMetrics() {
+    if (statisticsMetrics == null) {
+      return;
+    }
+
+    try {
+      statisticsMetrics.unregister();
+    } catch (IllegalStateException | IllegalArgumentException e) {
+      // the runtime closed the PluginMetrics of a task that is stopping, or dropped the metric
+      metricsLog.debug("Statistics metrics were not unregistered", e);
+    }
+  }
+
+  @VisibleForTesting
+  Coordinator newCoordinator(StatisticsMetrics metrics) {
+    return new Coordinator(
+        catalog,
+        config,
+        membersWhenWorkerIsCoordinator,
+        clientFactory,
+        context,
+        metadataEvents,
+        metrics);
   }
 
   private void stopWorker() {
@@ -250,6 +318,7 @@ public class CommitterImpl implements Committer {
     if (coordinatorThread != null) {
       coordinatorThread.terminate();
       coordinatorThread = null;
+      unregisterStatisticsMetrics();
     }
   }
 }

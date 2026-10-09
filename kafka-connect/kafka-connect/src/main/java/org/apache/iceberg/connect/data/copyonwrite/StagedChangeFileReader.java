@@ -36,11 +36,12 @@ import org.apache.iceberg.io.InputFile;
  * the current staged schema is safe across schema evolution between commit cycles: added columns
  * come back null, renamed columns still resolve.
  */
-final class StagedChangeFileReader {
+public final class StagedChangeFileReader {
 
   private StagedChangeFileReader() {}
 
-  static CloseableIterable<Record> open(FileIO io, StagedChangeFile file, Schema projection) {
+  public static CloseableIterable<Record> open(
+      FileIO io, StagedChangeFile file, Schema projection) {
     InputFile input = io.newInputFile(file.location());
     return Avro.read(input)
         .project(projection)

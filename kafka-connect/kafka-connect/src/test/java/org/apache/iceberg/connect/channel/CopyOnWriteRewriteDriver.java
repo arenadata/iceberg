@@ -22,6 +22,10 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.Executor;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.function.Consumer;
 import org.apache.iceberg.DataFile;
 import org.apache.iceberg.FileScanTask;
@@ -29,6 +33,8 @@ import org.apache.iceberg.Table;
 import org.apache.iceberg.catalog.Catalog;
 import org.apache.iceberg.connect.IcebergSinkConfig;
 import org.apache.iceberg.connect.MetadataEvents;
+import org.apache.iceberg.connect.data.StatisticsHealth;
+import org.apache.iceberg.connect.data.StatisticsStep;
 import org.apache.iceberg.connect.data.copyonwrite.AssignedFileScanTask;
 import org.apache.iceberg.connect.data.copyonwrite.ChangeSetNormalizer;
 import org.apache.iceberg.connect.data.copyonwrite.ChangeSetSlice;
@@ -45,6 +51,7 @@ import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.relocated.com.google.common.collect.Sets;
+import org.slf4j.Logger;
 
 /**
  * Plays the coordinator and every worker around a real {@link CopyOnWriteTableCommitter}, so a test
@@ -69,9 +76,13 @@ class CopyOnWriteRewriteDriver {
   private final CopyOnWriteTableCommitter committer;
   private final Catalog catalog;
   private final IcebergSinkConfig config;
-  private final List<RewriteAssigned> inbox = Lists.newArrayList();
-  private final List<RewriteAssigned> handedOut = Lists.newArrayList();
+  // written by the thread that hands a slice out, the committer's transition pool included, and
+  // read by the test; the inbox is taken whole or one at a time, so an assignment added meanwhile
+  // stays for the next take instead of being cleared unanswered
+  private final BlockingQueue<RewriteAssigned> inbox = new LinkedBlockingQueue<>();
+  private final List<RewriteAssigned> handedOut = new CopyOnWriteArrayList<>();
   private final Map<String, List<TopicPartitionRef>> activeTasks;
+  private Runnable afterEachTick = () -> {};
 
   CopyOnWriteRewriteDriver(
       Catalog catalog,
@@ -79,32 +90,102 @@ class CopyOnWriteRewriteDriver {
       MetadataEvents metadataEvents,
       Consumer<Event> eventSink,
       int taskCount) {
+    this(
+        catalog,
+        config,
+        metadataEvents,
+        eventSink,
+        taskCount,
+        StatisticsHealth.NOOP,
+        new StatisticsStep());
+  }
+
+  CopyOnWriteRewriteDriver(
+      Catalog catalog,
+      IcebergSinkConfig config,
+      MetadataEvents metadataEvents,
+      Consumer<Event> eventSink,
+      int taskCount,
+      StatisticsHealth health,
+      StatisticsStep step) {
+    // inline: the driver is single threaded, and a transition submitted from receive() has to have
+    // run by the time receive() returns for the loop in commit() to see its effect
+    this(catalog, config, metadataEvents, eventSink, taskCount, health, step, Runnable::run);
+  }
+
+  /**
+   * A driver whose committer runs its transitions and the steps of its merge-on-read tail on {@code
+   * transitions}; anything but inline is the test's own business.
+   */
+  CopyOnWriteRewriteDriver(
+      Catalog catalog,
+      IcebergSinkConfig config,
+      MetadataEvents metadataEvents,
+      Consumer<Event> eventSink,
+      int taskCount,
+      StatisticsHealth health,
+      StatisticsStep step,
+      Executor transitions) {
+    this(catalog, config, metadataEvents, eventSink, taskCount, health, step, transitions, null);
+  }
+
+  /**
+   * A driver whose committer logs the statistics of the final snapshot to {@code
+   * finalStatisticsLog}; {@code null} keeps the default logger.
+   */
+  CopyOnWriteRewriteDriver(
+      Catalog catalog,
+      IcebergSinkConfig config,
+      MetadataEvents metadataEvents,
+      Consumer<Event> eventSink,
+      int taskCount,
+      StatisticsHealth health,
+      StatisticsStep step,
+      Executor transitions,
+      Logger finalStatisticsLog) {
     this.catalog = catalog;
     this.config = config;
     this.activeTasks = Maps.newLinkedHashMap();
     for (int i = 0; i < taskCount; i++) {
       activeTasks.put("task-" + i, ImmutableList.of());
     }
+    Consumer<List<Event>> eventSender =
+        events -> {
+          for (Event event : events) {
+            if (event.payload().type() == PayloadType.REWRITE_ASSIGNED) {
+              RewriteAssigned assigned = (RewriteAssigned) roundTrip(event).payload();
+              handedOut.add(assigned);
+              inbox.add(assigned);
+            } else {
+              eventSink.accept(event);
+            }
+          }
+        };
     this.committer =
-        new CopyOnWriteTableCommitter(
-            catalog,
-            config,
-            metadataEvents,
-            events -> {
-              for (Event event : events) {
-                if (event.payload().type() == PayloadType.REWRITE_ASSIGNED) {
-                  RewriteAssigned assigned = (RewriteAssigned) roundTrip(event).payload();
-                  handedOut.add(assigned);
-                  inbox.add(assigned);
-                } else {
-                  eventSink.accept(event);
-                }
-              }
-            },
-            // inline: the driver is single threaded, and a transition submitted from receive() has
-            // to have run by the time receive() returns for the loop below to see its effect
-            Runnable::run,
-            () -> true);
+        finalStatisticsLog == null
+            ? new CopyOnWriteTableCommitter(
+                catalog, config, metadataEvents, eventSender, transitions, health, step)
+            : new CopyOnWriteTableCommitter(
+                catalog,
+                config,
+                metadataEvents,
+                eventSender,
+                transitions,
+                health,
+                step,
+                finalStatisticsLog);
+  }
+
+  /**
+   * Runs {@code tick} right after each {@code process()} of the committer, between the answers of
+   * the slices of a drain, where the coordinator runs its staging cleanup.
+   */
+  void afterEachTick(Runnable tick) {
+    this.afterEachTick = tick;
+  }
+
+  CopyOnWriteTableCommitter committer() {
+    return committer;
   }
 
   /**
@@ -114,15 +195,9 @@ class CopyOnWriteRewriteDriver {
    */
   void commitOneSlice(TableCommitRequest request) {
     committer.commit(withActiveTasks(request));
-    if (inbox.isEmpty()) {
-      return;
-    }
-
     // a slice arrives as one message per task; answering the last of them may hand out the next
     // slice, which this method deliberately leaves unanswered
-    List<RewriteAssigned> slice = Lists.newArrayList(inbox);
-    inbox.clear();
-    slice.forEach(this::answer);
+    takeInbox().forEach(this::answer);
   }
 
   /**
@@ -133,9 +208,7 @@ class CopyOnWriteRewriteDriver {
    */
   List<RewriteAssigned> handOutOneSlice(TableCommitRequest request) {
     committer.commit(withActiveTasks(request));
-    List<RewriteAssigned> slice = ImmutableList.copyOf(inbox);
-    inbox.clear();
-    return slice;
+    return ImmutableList.copyOf(takeInbox());
   }
 
   /** Answers assignments to this committer, whichever coordinator handed them out. */
@@ -174,11 +247,7 @@ class CopyOnWriteRewriteDriver {
    */
   TableCommitter.Outcome commitOnce(TableCommitRequest request) {
     TableCommitter.Outcome outcome = committer.commit(withActiveTasks(request)).outcome();
-    if (!inbox.isEmpty()) {
-      List<RewriteAssigned> slice = Lists.newArrayList(inbox);
-      inbox.clear();
-      slice.forEach(this::answer);
-    }
+    takeInbox().forEach(this::answer);
     return outcome;
   }
 
@@ -190,6 +259,16 @@ class CopyOnWriteRewriteDriver {
         request.commitId(),
         request.validThroughTs(),
         activeTasks);
+  }
+
+  /**
+   * Commits once and answers every slice that commit starts; the commit of the cycle after the
+   * drain is left to the test. Returns the outcome of this commit.
+   */
+  TableCommitter.Outcome commitDrain(TableCommitRequest request) {
+    TableCommitter.Outcome outcome = committer.commit(withActiveTasks(request)).outcome();
+    runAssignments();
+    return outcome;
   }
 
   /** Commits and drives the protocol to a terminal outcome, as several coordinator cycles would. */
@@ -208,10 +287,22 @@ class CopyOnWriteRewriteDriver {
 
   /** Runs everything the committer handed out, and everything that handing it back produces. */
   private void runAssignments() {
-    for (int message = 0; message < MAX_SLICES && !inbox.isEmpty(); message++) {
-      answer(inbox.remove(0));
+    for (int message = 0; message < MAX_SLICES; message++) {
+      RewriteAssigned next = inbox.poll();
+      if (next == null) {
+        return;
+      }
+
+      answer(next);
       committer.process(System.currentTimeMillis(), ImmutableList::of);
+      afterEachTick.run();
     }
+  }
+
+  private List<RewriteAssigned> takeInbox() {
+    List<RewriteAssigned> taken = Lists.newArrayList();
+    inbox.drainTo(taken);
+    return taken;
   }
 
   /** One worker's share of one slice: rewrite it for real, answer over the wire. */

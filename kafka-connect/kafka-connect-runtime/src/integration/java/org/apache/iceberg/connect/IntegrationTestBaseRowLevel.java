@@ -128,8 +128,8 @@ public abstract class IntegrationTestBaseRowLevel extends AbstractTestBase {
   }
 
   /**
-   * Asserts that no snapshot descending from the given one added delete files (AC-02). {@link
-   * #deleteFiles} looks at the latest snapshot only.
+   * Asserts that no snapshot descending from the given one added delete files. {@link #deleteFiles}
+   * looks at the latest snapshot only.
    */
   protected void assertNoConnectorDeleteFiles(Table table, long fromSnapshotId) {
     table.refresh();

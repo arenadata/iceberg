@@ -294,9 +294,9 @@ abstract class Channel {
    *
    * <p>{@link #consumeAvailable} stops at the first empty poll or at its read budget, which says
    * nothing about how much of the topic is behind it: right after a start or a rebalance the events
-   * of a cycle already in flight are still ahead of the consumer. The copy-on-write staging cleanup
-   * waits for this: the commit buffer is one of its sources of reachability, and a sweep on a
-   * half-read topic would delete the staged files of responses still on their way.
+   * of a cycle already in flight are still ahead of the consumer. The staging cleanup waits for
+   * this: the commit buffer is one of its sources of reachability, and a cleanup on a half-read
+   * topic would delete the staged files of responses still on their way.
    *
    * <p>Latches once true: the end offsets are a start-up mark, not a watermark to keep chasing. A
    * coordinator recreated by a rebalance does not inherit it: it gets a channel of its own.
@@ -334,7 +334,7 @@ abstract class Channel {
         LOG.warn(
             "Cannot tell whether the control topic has been read to the end offsets its "
                 + "partitions had when they were assigned. Whatever waits for that -- the "
-                + "copy-on-write staging cleanup does -- waits until this succeeds",
+                + "staging cleanup does -- waits until this succeeds",
             e);
       }
       return false;
@@ -442,7 +442,7 @@ abstract class Channel {
                   + "past them: this fails on every start until the offsets of the group are reset. "
                   + "Before resetting, recover what can be recovered from the staged files of the "
                   + "tables that stood (they carry _topic, _partition and _offset of every change), "
-                  + "since the staging sweep deletes them once the connector runs again; else "
+                  + "since the staging cleanup deletes them once the connector runs again; else "
                   + "re-read the source from before the loss. Keep retention.ms of the control "
                   + "topic well above the time it takes to fix a table that stopped",
               controlTopic, consumerGroupId, String.join(", ", deleted));

@@ -61,6 +61,7 @@ public class TestEventFieldIds {
           .put(TopicPartitionRef.class, 10_900)
           .put(FileScanTaskDescriptor.class, 10_900)
           .put(RewriteComplete.class, 11_000)
+          .put(SketchFile.class, 10_900)
           .build();
 
   @Test
@@ -114,6 +115,21 @@ public class TestEventFieldIds {
     }
 
     assertThat(unchecked).as("classes of AvroUtil.FIELD_ID_TO_CLASS not checked here").isEmpty();
+  }
+
+  @Test
+  public void testSketchFileFieldIdsAreOnesOfProtocol() {
+    // fixed by the format: DataWritten of a worker with a sketch file is decoded by field id
+    assertThat(DataWritten.SKETCH_FILE).isEqualTo(10_308);
+    assertThat(RowChangesWritten.SKETCH_FILE).isEqualTo(10_807);
+    assertThat(fieldIds(SketchFile.class))
+        .containsExactly(
+            Map.entry("FILE_SIZE_BYTES", 10_961),
+            Map.entry("FOOTER_SIZE_BYTES", 10_962),
+            Map.entry("LOCATION", 10_960));
+    assertThat(AvroUtil.FIELD_ID_TO_CLASS)
+        .containsEntry(DataWritten.SKETCH_FILE, SketchFile.class.getName())
+        .containsEntry(RowChangesWritten.SKETCH_FILE, SketchFile.class.getName());
   }
 
   @Test

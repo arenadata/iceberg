@@ -49,6 +49,7 @@ project(':iceberg-kafka-connect:iceberg-kafka-connect') {
     implementation libs.jackson.core
     implementation libs.jackson.databind
     implementation libs.avro.avro
+    implementation libs.datasketches
     implementation("com.github.ben-manes.caffeine:caffeine:3.2.3")
 
     compileOnly libs.kafka.clients

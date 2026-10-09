@@ -45,6 +45,7 @@ public class RowChangesWritten implements Payload {
   private String taskId;
   private List<String> sourceTopics;
   private List<StagedChangeFile> stagedFiles;
+  private SketchFile sketchFile;
   private final Schema avroSchema;
 
   static final int COMMIT_ID = 10_800;
@@ -54,6 +55,7 @@ public class RowChangesWritten implements Payload {
   static final int SOURCE_TOPICS_ELEMENT = 10_804;
   static final int STAGED_FILES = 10_805;
   static final int STAGED_FILES_ELEMENT = 10_806;
+  static final int SKETCH_FILE = 10_807;
 
   private static final StructType ICEBERG_SCHEMA =
       StructType.of(
@@ -67,7 +69,8 @@ public class RowChangesWritten implements Payload {
           NestedField.optional(
               STAGED_FILES,
               "staged_files",
-              ListType.ofRequired(STAGED_FILES_ELEMENT, StagedChangeFile.ICEBERG_SCHEMA)));
+              ListType.ofRequired(STAGED_FILES_ELEMENT, StagedChangeFile.ICEBERG_SCHEMA)),
+          NestedField.optional(SKETCH_FILE, "sketch_file", SketchFile.ICEBERG_SCHEMA));
   private static final Schema AVRO_SCHEMA =
       AvroUtil.convert(ICEBERG_SCHEMA, RowChangesWritten.class);
 
@@ -82,6 +85,16 @@ public class RowChangesWritten implements Payload {
       String taskId,
       List<String> sourceTopics,
       List<StagedChangeFile> stagedFiles) {
+    this(commitId, tableReference, taskId, sourceTopics, stagedFiles, null);
+  }
+
+  public RowChangesWritten(
+      UUID commitId,
+      TableReference tableReference,
+      String taskId,
+      List<String> sourceTopics,
+      List<StagedChangeFile> stagedFiles,
+      SketchFile sketchFile) {
     Preconditions.checkNotNull(commitId, "Commit ID cannot be null");
     Preconditions.checkNotNull(tableReference, "Table reference cannot be null");
     Preconditions.checkNotNull(taskId, "Task ID cannot be null");
@@ -90,6 +103,7 @@ public class RowChangesWritten implements Payload {
     this.taskId = taskId;
     this.sourceTopics = sourceTopics;
     this.stagedFiles = stagedFiles;
+    this.sketchFile = sketchFile;
     this.avroSchema = AVRO_SCHEMA;
   }
 
@@ -116,6 +130,10 @@ public class RowChangesWritten implements Payload {
 
   public List<StagedChangeFile> stagedFiles() {
     return stagedFiles == null ? ImmutableList.of() : stagedFiles;
+  }
+
+  public SketchFile sketchFile() {
+    return sketchFile;
   }
 
   @Override
@@ -150,6 +168,9 @@ public class RowChangesWritten implements Payload {
       case STAGED_FILES:
         this.stagedFiles = (List<StagedChangeFile>) v;
         return;
+      case SKETCH_FILE:
+        this.sketchFile = (SketchFile) v;
+        return;
       default:
         // ignore the object, it must be from a newer version of the format
     }
@@ -168,6 +189,8 @@ public class RowChangesWritten implements Payload {
         return sourceTopics;
       case STAGED_FILES:
         return stagedFiles;
+      case SKETCH_FILE:
+        return sketchFile;
       default:
         // a newer version's field: the reader gets it for reuse before put() ignores it
         return null;

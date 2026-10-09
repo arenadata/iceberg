@@ -41,6 +41,7 @@ import org.apache.iceberg.Table;
 import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.TableOperations;
 import org.apache.iceberg.connect.IcebergSinkConfig;
+import org.apache.iceberg.connect.data.NdvChain;
 import org.apache.iceberg.connect.data.copyonwrite.ChangeSetManifest;
 import org.apache.iceberg.encryption.EncryptionManager;
 import org.apache.iceberg.exceptions.CleanableFailure;
@@ -380,9 +381,22 @@ class SliceCommitter {
     // it resumed) belong to no change set yet, and moving the watermark past them would have
     // the next freeze filter them out as already applied and drop them silently
     op.set(offsetsProp, ChangeSetStore.offsetsToJson(manifest.controlOffsets()));
+    // the statistics marker, read for every slice, so slices after a restart that turned the
+    // statistics off go without it. Nothing of the commit protocol reads either property
+    boolean statisticsEnabled =
+        config.tableConfig(state.tableReference.identifier().toString()).statisticsEnabled();
+    if (statisticsEnabled) {
+      op.set(NdvChain.STATISTICS_ENABLED_PROP, "true");
+    }
+
     if (state.drained) {
       if (validThroughTs != null) {
         op.set(ChangeSetStore.VALID_THROUGH_TS_PROP, validThroughTs.toString());
+      }
+
+      // the step of the final snapshot that does not finish is recounted from this change set
+      if (statisticsEnabled) {
+        op.set(ChangeSetStore.FINAL_CHANGE_SET_ID_PROP, manifest.changeSetId().toString());
       }
     } else {
       StructLike newCursor = state.slice.lastKey().orElse(state.cursor);

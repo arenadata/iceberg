@@ -31,6 +31,8 @@ import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.SupportsNamespaces;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.connect.IcebergSinkConfig;
+import org.apache.iceberg.connect.TableSinkConfig;
+import org.apache.iceberg.connect.data.copyonwrite.StagedChangeFileWriter;
 import org.apache.iceberg.connect.data.copyonwrite.StagedChangeSchema;
 import org.apache.iceberg.connect.events.TableReference;
 import org.apache.iceberg.exceptions.AlreadyExistsException;
@@ -106,10 +108,50 @@ class IcebergWriterFactory {
               + "iceberg.tables.upsert-mode-enabled=true; the connector config should have "
               + "refused it",
           identifier);
-      return new CopyOnWriteStagingWriter(table, tableReference, config, identifierFieldIds);
+      return new CopyOnWriteStagingWriter(
+          table,
+          tableReference,
+          config,
+          identifierFieldIds,
+          createSketches(tableName, identifier, tableReference, table));
     }
 
-    return new IcebergWriter(table, tableReference, config);
+    return new IcebergWriter(
+        table,
+        tableReference,
+        config,
+        createSketches(tableName, identifier, tableReference, table));
+  }
+
+  private ColumnSketchCollector createSketches(
+      String tableName, TableIdentifier identifier, TableReference tableReference, Table table) {
+    TableSinkConfig tableConfig = config.tableConfig(tableName);
+    if (!tableConfig.statisticsEnabled()) {
+      return null;
+    }
+
+    try {
+      String stagingDirectory =
+          StagedChangeFileWriter.stagingDirectory(
+              StagedChangeFileWriter.stagingLocation(table, config.stagingLocation()),
+              tableReference,
+              config.connectGroupId());
+      return new ColumnSketchCollector(
+          identifier,
+          table,
+          stagingDirectory,
+          config.taskId(),
+          config.statisticsLgNominalEntries(),
+          tableConfig.statisticsColumns(),
+          config.schemaCaseInsensitive(),
+          table.schema());
+    } catch (RuntimeException e) {
+      LOG.warn(
+          "Statistics of table {} are off for this commit: cannot set up the collection of sketches",
+          identifier,
+          e);
+      return null;
+    }
   }
 
   /**

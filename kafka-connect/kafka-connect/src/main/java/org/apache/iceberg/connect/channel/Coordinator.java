@@ -24,6 +24,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.Executor;
@@ -31,13 +32,15 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
-import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import org.apache.iceberg.catalog.Catalog;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.connect.IcebergSinkConfig;
 import org.apache.iceberg.connect.MetadataEvents;
+import org.apache.iceberg.connect.data.StatisticsHealth;
+import org.apache.iceberg.connect.data.StatisticsStep;
 import org.apache.iceberg.connect.events.CommitComplete;
 import org.apache.iceberg.connect.events.Event;
 import org.apache.iceberg.connect.events.PayloadType;
@@ -70,16 +73,21 @@ class Coordinator extends Channel {
   private final ExecutorService transitionExec;
   private final CommitState commitState;
   private final TableCommitter tableCommitter;
+  private final StatisticsHealth statisticsHealth;
+  private final StatisticsMetrics statisticsMetrics;
+  private final StagingCleanupScheduler stagingCleanup;
+  private volatile boolean terminating = false;
   private Duration terminationTimeout = Duration.ofMinutes(1);
 
-  /** Builds the table committer from what only the coordinator has: its senders and its pools. */
+  /** Builds the table committer from what only the coordinator has: senders, pools, statistics. */
   @FunctionalInterface
   interface TableCommitterFactory {
     TableCommitter create(
         Consumer<Event> send,
         Consumer<List<Event>> sendInOneTransaction,
         Executor transitionPool,
-        BooleanSupplier controlTopicCaughtUp);
+        StatisticsHealth health,
+        StatisticsStep step);
   }
 
   Coordinator(
@@ -89,12 +97,56 @@ class Coordinator extends Channel {
       KafkaClientFactory clientFactory,
       SinkTaskContext context,
       MetadataEvents metadataEvents) {
+    this(catalog, config, members, clientFactory, context, metadataEvents, new StatisticsStep());
+  }
+
+  Coordinator(
+      Catalog catalog,
+      IcebergSinkConfig config,
+      Collection<MemberDescription> members,
+      KafkaClientFactory clientFactory,
+      SinkTaskContext context,
+      MetadataEvents metadataEvents,
+      StatisticsMetrics statisticsMetrics) {
+    this(
+        catalog,
+        config,
+        members,
+        clientFactory,
+        context,
+        metadataEvents,
+        new StatisticsStep(),
+        statisticsMetrics);
+  }
+
+  @VisibleForTesting
+  Coordinator(
+      Catalog catalog,
+      IcebergSinkConfig config,
+      Collection<MemberDescription> members,
+      KafkaClientFactory clientFactory,
+      SinkTaskContext context,
+      MetadataEvents metadataEvents,
+      StatisticsStep statisticsStep) {
+    this(catalog, config, members, clientFactory, context, metadataEvents, statisticsStep, null);
+  }
+
+  private Coordinator(
+      Catalog catalog,
+      IcebergSinkConfig config,
+      Collection<MemberDescription> members,
+      KafkaClientFactory clientFactory,
+      SinkTaskContext context,
+      MetadataEvents metadataEvents,
+      StatisticsStep statisticsStep,
+      StatisticsMetrics statisticsMetrics) {
     this(
         config,
         members,
         clientFactory,
         context,
-        (send, sendInOneTransaction, transitionPool, controlTopicCaughtUp) ->
+        statisticsStep,
+        (send, sendInOneTransaction, transitionPool, health, step) ->
             config.isCopyOnWriteMode()
                 ? new CopyOnWriteTableCommitter(
                     catalog,
@@ -102,8 +154,19 @@ class Coordinator extends Channel {
                     metadataEvents,
                     sendInOneTransaction,
                     transitionPool,
-                    controlTopicCaughtUp)
-                : new MergeOnReadTableCommitter(catalog, config, metadataEvents, send));
+                    health,
+                    step)
+                : new MergeOnReadTableCommitter(
+                    catalog,
+                    config,
+                    metadataEvents,
+                    send,
+                    transitionPool,
+                    health,
+                    step,
+                    new StatisticsLag(),
+                    MergeOnReadTableCommitter.Mode.STANDALONE),
+        statisticsMetrics);
   }
 
   @VisibleForTesting
@@ -112,7 +175,20 @@ class Coordinator extends Channel {
       Collection<MemberDescription> members,
       KafkaClientFactory clientFactory,
       SinkTaskContext context,
+      StatisticsStep statisticsStep,
       TableCommitterFactory tableCommitterFactory) {
+    this(config, members, clientFactory, context, statisticsStep, tableCommitterFactory, null);
+  }
+
+  @VisibleForTesting
+  Coordinator(
+      IcebergSinkConfig config,
+      Collection<MemberDescription> members,
+      KafkaClientFactory clientFactory,
+      SinkTaskContext context,
+      StatisticsStep statisticsStep,
+      TableCommitterFactory tableCommitterFactory,
+      StatisticsMetrics statisticsMetrics) {
     // pass consumer group ID to which we commit low watermark offsets
     super("coordinator", config.connectGroupId() + "-coord", config, clientFactory, context);
 
@@ -130,9 +206,9 @@ class Coordinator extends Channel {
                 .setDaemon(true)
                 .setNameFormat("iceberg-committer" + "-%d")
                 .build());
-    // copy-on-write slice transitions get a pool of their own: doCommit() joins the commit pool
-    // from the coordinator thread, so a planning or committing transition queued in front of its
-    // tasks would become the coordinator's latency
+    // table transitions (copy-on-write slices, statistics steps) get a pool of their own:
+    // doCommit() joins the commit pool from the coordinator thread, so a planning or committing
+    // transition queued in front of its tasks would become the coordinator's latency
     this.transitionExec =
         new ThreadPoolExecutor(
             config.commitThreads(),
@@ -142,15 +218,37 @@ class Coordinator extends Channel {
             new LinkedBlockingQueue<>(),
             new ThreadFactoryBuilder()
                 .setDaemon(true)
-                .setNameFormat("iceberg-copy-on-write-transition" + "-%d")
+                .setNameFormat("iceberg-table-transition" + "-%d")
                 .build());
     this.commitState = new CommitState(config);
+    this.statisticsMetrics = statisticsMetrics;
+    this.statisticsHealth =
+        config.statisticsInUse()
+            ? new StatisticsHealth(config.statisticsHealthRecheckIntervalMs())
+            : StatisticsHealth.NOOP;
     this.tableCommitter =
         tableCommitterFactory.create(
             this::send,
             events -> send(events, ImmutableMap.of()),
             transitionExec,
-            this::isControlTopicCaughtUp);
+            statisticsHealth,
+            statisticsStep);
+    // one cleanup for the life of the coordinator, whichever committer supplies what it reaches:
+    // two cleaners on one prefix, each with its own idea of what is live, would delete each other's
+    StagingCleanupSource stagingCleanupSource = tableCommitter.stagingCleanupSource();
+    this.stagingCleanup =
+        stagingCleanupSource == null
+            ? null
+            : new StagingCleanupScheduler(
+                config,
+                transitionExec,
+                stagingCleanupSource,
+                this::isControlTopicCaughtUp,
+                () -> terminating);
+    // last, so that a constructor that fails leaves no health behind in the metrics of the task
+    if (statisticsMetrics != null) {
+      statisticsMetrics.attach(statisticsHealth);
+    }
   }
 
   void process() {
@@ -175,11 +273,23 @@ class Coordinator extends Channel {
     // copy-on-write drives its slices from here, not from the commit cycle: a rewrite answer can
     // arrive at any tick, and tying slice progress to commit() would stretch a K-slice drain over
     // K commit intervals. Must not block: anything slow it triggers goes to the commit pool
-    tableCommitter.process(System.currentTimeMillis(), commitState::bufferedResponses);
+    long nowMs = System.currentTimeMillis();
+    tableCommitter.process(nowMs, commitState::bufferedResponses);
+    // outside doCommit, and so never between a commit taking the files of a response into its
+    // queue or manifest and the buffer letting the response go: every live file is in one of the
+    // two when the cleanup reads them
+    if (stagingCleanup != null) {
+      stagingCleanup.maybeClean(nowMs, commitState::bufferedResponses);
+    }
 
     if (commitState.isCommitTimedOut()) {
       commit(true);
     }
+  }
+
+  @VisibleForTesting
+  boolean hasStagingCleanup() {
+    return stagingCleanup != null;
   }
 
   /**
@@ -237,8 +347,7 @@ class Coordinator extends Channel {
     // a table with a half-applied change set is visited even with an empty buffer: its responses
     // were reported spent when the first slice committed, so it would otherwise fall out of the
     // cycle entirely and wait for the next record written to it before anyone resumed the drain
-    Set<TableReference> tables = Sets.newLinkedHashSet(commitMap.keySet());
-    tables.addAll(tableCommitter.pendingTables());
+    Set<TableReference> tables = cycleTables(commitMap.keySet(), tableCommitter.pendingTables());
 
     // one table must not take the cycle down with it, or a single broken table stalls commits for
     // every other table and the response buffer grows without bound. A PENDING outcome
@@ -286,9 +395,8 @@ class Coordinator extends Channel {
     // valid-through is a claim about every table, so it holds only if every table committed. A
     // copy-on-write table answers PENDING while its drain, spanning many cycles, is in flight, so
     // a busy one suppresses valid-through in most cycles, and rightly: it has not applied
-    // everything
-    // up to that timestamp yet. Its kafka.connect.valid-through-ts is likewise written only on the
-    // exhausting commit of a drain
+    // everything up to that timestamp yet. Its kafka.connect.valid-through-ts is likewise written
+    // only on the exhausting commit of a drain
     boolean allCommitted = committedTables.size() == tables.size();
     OffsetDateTime sentValidThroughTs = allCommitted ? validThroughTs : null;
     Event event =
@@ -306,6 +414,32 @@ class Coordinator extends Channel {
         tables.size(),
         sentValidThroughTs,
         allCommitted ? "" : " (partial)");
+  }
+
+  /**
+   * The buffered and pending tables, minus a pending reference without a UUID when the cycle has a
+   * reference of the same table with one, so that table gets one {@code commit()}. Buffered
+   * references of one name with different UUIDs (a re-created table) are all kept.
+   */
+  private static Set<TableReference> cycleTables(
+      Set<TableReference> buffered, Set<TableReference> pending) {
+    Set<TableReference> tables = Sets.newLinkedHashSet(buffered);
+    for (TableReference reference : pending) {
+      boolean namedWithUuid =
+          reference.uuid() == null
+              && Stream.concat(buffered.stream(), pending.stream())
+                  .anyMatch(other -> other.uuid() != null && sameTable(other, reference));
+      if (!namedWithUuid) {
+        tables.add(reference);
+      }
+    }
+
+    return tables;
+  }
+
+  private static boolean sameTable(TableReference one, TableReference other) {
+    return Objects.equals(one.catalog(), other.catalog())
+        && one.identifier().equals(other.identifier());
   }
 
   /**
@@ -378,20 +512,31 @@ class Coordinator extends Channel {
   }
 
   void terminate() {
-    // first, while the pools are still up: a transition that ignores shutdownNow()'s interrupt
-    // must still start no Iceberg commit, delete or send once another coordinator may be elected
-    tableCommitter.stop();
-    transitionExec.shutdownNow();
-    exec.shutdownNow();
-    // wait for coordinator termination, else cause the sink task to fail
     try {
-      if (!exec.awaitTermination(terminationTimeout.toMillis(), TimeUnit.MILLISECONDS)
-          || !transitionExec.awaitTermination(
-              terminationTimeout.toMillis(), TimeUnit.MILLISECONDS)) {
-        throw new ConnectException("Timed out waiting for coordinator shutdown");
+      // first, while the pools are still up: a transition or a pass of the staging cleanup that
+      // ignores shutdownNow()'s interrupt must still start no Iceberg commit, delete or send once
+      // another coordinator may be elected
+      terminating = true;
+      tableCommitter.stop();
+      transitionExec.shutdownNow();
+      exec.shutdownNow();
+      // wait for coordinator termination, else cause the sink task to fail
+      try {
+        if (!exec.awaitTermination(terminationTimeout.toMillis(), TimeUnit.MILLISECONDS)
+            || !transitionExec.awaitTermination(
+                terminationTimeout.toMillis(), TimeUnit.MILLISECONDS)) {
+          throw new ConnectException("Timed out waiting for coordinator shutdown");
+        }
+      } catch (InterruptedException e) {
+        throw new ConnectException("Interrupted while waiting for coordinator shutdown", e);
       }
-    } catch (InterruptedException e) {
-      throw new ConnectException("Interrupted while waiting for coordinator shutdown", e);
+    } finally {
+      // only once the steps of this coordinator are done with the health: the metrics of the task
+      // read it until then. Another coordinator may have attached its own since (the task got the
+      // leader partition back while this one was still in here): its health stays
+      if (statisticsMetrics != null) {
+        statisticsMetrics.detach(statisticsHealth);
+      }
     }
   }
 

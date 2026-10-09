@@ -30,18 +30,18 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Removes copy-on-write staging files that no change set can reach any more.
+ * Removes staging files that nothing can reach any more: the staged files, manifests and normalized
+ * files of copy-on-write, and the intermediate Puffin files of the statistics.
  *
- * <p>The immediate half of cleanup belongs to the commit path, which deletes a change set's staged
- * files and manifest the moment it is drained. This is the other half: whatever an aborted Kafka
- * transaction, a lost coordinator or a cancelled slice left behind, and which therefore no manifest
- * will ever name.
+ * <p>Owners delete their files once done with them; this pass removes what an aborted Kafka
+ * transaction, a lost coordinator, a cancelled slice or an unfinished statistics step left behind.
  *
  * <p><b>Reachability, not age, decides what may be deleted</b>, which is why this is an orphan
  * cleaner and not a staging cleaner: age only decides <i>when</i> an already unreachable file goes.
  * A file the caller lists as live is never touched no matter how old, and a file younger than the
  * TTL is never touched even though nothing references it: it may belong to a change set being
- * frozen right now, whose manifest is not yet written.
+ * frozen right now, whose manifest is not yet written. A file whose age the {@code FileIO} cannot
+ * tell (a creation time of 0 or less) is kept, with one warning per pass.
  *
  * <p>Needs {@link SupportsPrefixOperations} to enumerate the staging prefix. A {@code FileIO}
  * without it (some Hadoop setups) cannot be cleaned: the pass is skipped with a WARN, and the
@@ -91,15 +91,15 @@ public final class StagingOrphanCleaner {
   }
 
   /**
-   * The live locations a listing of this prefix is supposed to return.
+   * The anchors a listing of this prefix is supposed to return.
    *
-   * <p>The caller's set covers every table its connector drains (the commit buffer names the staged
-   * files of all of them) and only the ones under this prefix say anything about whether this
-   * listing agrees with what the connector holds.
+   * <p>The caller's set covers every table its connector writes to (the commit buffer names the
+   * staged files of all of them) and only the ones under this prefix say anything about whether
+   * this listing agrees with what the connector holds.
    */
-  private static Set<String> liveUnder(String directoryPrefix, Set<String> liveLocations) {
+  private static Set<String> anchorsUnder(String directoryPrefix, Set<String> anchorLocations) {
     Set<String> under = Sets.newHashSet();
-    for (String location : liveLocations) {
+    for (String location : anchorLocations) {
       if (location.startsWith(directoryPrefix)) {
         under.add(location);
       }
@@ -114,8 +114,10 @@ public final class StagingOrphanCleaner {
    *     <staging>/<tableDir>/<groupDir>} as {@code StagedChangeFileWriter.stagingDirectory} spells
    *     it; a trailing separator is added if missing, because prefix listing matches a plain string
    *     and a table named {@code orders} would otherwise reach the files of {@code orders_archive}
-   * @param liveLocations files an active change set still reaches: its staged files, its manifest
-   *     and the normalized slices written for it
+   * @param liveLocations files kept however old: the anchors plus the intermediate Puffin files
+   *     still named by a response, a statistics step or a change set
+   * @param anchorLocations the live files the listing is checked against (staged files, manifests,
+   *     normalized files); not the Puffin files, which their step may delete at any moment
    * @param stopped the coordinator's stop flag, checked before every delete so that a shutdown mid
    *     pass starts no new delete; orphans not yet reached are left for the next coordinator's pass
    */
@@ -123,12 +125,13 @@ public final class StagingOrphanCleaner {
       FileIO io,
       String stagingPrefix,
       Set<String> liveLocations,
+      Set<String> anchorLocations,
       long orphanTtlMs,
       long nowMs,
       BooleanSupplier stopped) {
     if (!(io instanceof SupportsPrefixOperations)) {
       LOG.warn(
-          "FileIO {} does not support prefix listing, skipping copy-on-write orphan cleanup of {}; "
+          "FileIO {} does not support prefix listing, skipping staging orphan cleanup of {}; "
               + "configure a storage lifecycle rule on that location instead",
           io.getClass().getName(),
           stagingPrefix);
@@ -136,18 +139,24 @@ public final class StagingOrphanCleaner {
     }
 
     String directoryPrefix = stagingPrefix.endsWith("/") ? stagingPrefix : stagingPrefix + "/";
-    Set<String> expected = liveUnder(directoryPrefix, liveLocations);
+    Set<String> expected = anchorsUnder(directoryPrefix, anchorLocations);
 
     // nothing is deleted while the listing is still being read: a listing that names none of the
-    // live files is a listing spelled differently from what the connector holds, and every file
-    // under the prefix then looks like an orphan
+    // anchors is a listing spelled differently from what the connector holds, and every file under
+    // the prefix then looks like an orphan
     boolean listingAgrees = expected.isEmpty();
     List<String> orphans = Lists.newArrayList();
     int kept = 0;
+    int unknownAge = 0;
     for (FileInfo file : ((SupportsPrefixOperations) io).listPrefix(directoryPrefix)) {
       listingAgrees = listingAgrees || expected.contains(file.location());
-      if (liveLocations.contains(file.location())
-          || nowMs - file.createdAtMillis() <= orphanTtlMs) {
+      if (liveLocations.contains(file.location())) {
+        kept += 1;
+      } else if (file.createdAtMillis() <= 0) {
+        // a FileIO that cannot tell the creation time reports 0, which would make the file look old
+        kept += 1;
+        unknownAge += 1;
+      } else if (nowMs - file.createdAtMillis() <= orphanTtlMs) {
         kept += 1;
       } else {
         orphans.add(file.location());
@@ -156,10 +165,10 @@ public final class StagingOrphanCleaner {
 
     if (!listingAgrees) {
       LOG.warn(
-          "Copy-on-write staging cleanup of {} cancelled: the listing returned {} file(s) and none "
-              + "of the {} file(s) still in use, such as {}. The storage spells listed locations "
-              + "differently from the ones this connector wrote, and deleting by them would delete "
-              + "live data",
+          "Staging cleanup of {} cancelled: the listing returned {} file(s) and none "
+              + "of the {} file(s) still in use as anchors, such as {}. The storage spells listed "
+              + "locations differently from the ones this connector wrote, and deleting by them "
+              + "would delete live data",
           stagingPrefix,
           kept + orphans.size(),
           expected.size(),
@@ -167,32 +176,56 @@ public final class StagingOrphanCleaner {
       return new CleanupResult(0, kept + orphans.size(), true, true);
     }
 
+    if (unknownAge > 0) {
+      LOG.warn(
+          "Staging cleanup of {} kept {} unreachable file(s) whose age is unknown: the FileIO {} "
+              + "reports no creation time. They are never deleted by the connector; configure a "
+              + "storage lifecycle rule on that location instead",
+          stagingPrefix,
+          unknownAge,
+          io.getClass().getName());
+    }
+
+    int deleted = deleteOrphans(io, stagingPrefix, orphans, stopped);
+    // what is not deleted, whether a delete failed or none started, is left for the next pass
+    kept += orphans.size() - deleted;
+
+    if (deleted > 0) {
+      LOG.info(
+          "Deleted {} orphaned staging file(s) under {}, kept {}", deleted, stagingPrefix, kept);
+    }
+    return new CleanupResult(deleted, kept, true, false);
+  }
+
+  /**
+   * @return how many of the orphans were deleted; none is started once stopped
+   */
+  private static int deleteOrphans(
+      FileIO io, String stagingPrefix, List<String> orphans, BooleanSupplier stopped) {
     int deleted = 0;
-    for (int i = 0; i < orphans.size(); i++) {
+    for (String location : orphans) {
       if (stopped.getAsBoolean()) {
         // the coordinator is stopping: another may already be handing out slices of the same
         // tables, so no delete starts from here on. What is left is an orphan for the next pass
-        kept += orphans.size() - i;
         break;
       }
-      String location = orphans.get(i);
+
       try {
         io.deleteFile(location);
         deleted += 1;
       } catch (RuntimeException e) {
+        if (stopped.getAsBoolean() || Thread.currentThread().isInterrupted()) {
+          // the delete was cut short by the shutdown: not a failure, and nothing more is started
+          LOG.debug(
+              "Staging cleanup of {} stopped by the shutdown at {}", stagingPrefix, location, e);
+          break;
+        }
+
         // a concurrent cleanup or a retried delete: not worth failing the coordinator's cycle over
-        LOG.warn("Failed to delete orphaned copy-on-write staging file: {}", location, e);
-        kept += 1;
+        LOG.warn("Failed to delete orphaned staging file: {}", location, e);
       }
     }
 
-    if (deleted > 0) {
-      LOG.info(
-          "Deleted {} orphaned copy-on-write staging file(s) under {}, kept {}",
-          deleted,
-          stagingPrefix,
-          kept);
-    }
-    return new CleanupResult(deleted, kept, true, false);
+    return deleted;
   }
 }

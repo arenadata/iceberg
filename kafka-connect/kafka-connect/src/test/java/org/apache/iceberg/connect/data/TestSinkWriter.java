@@ -31,6 +31,7 @@ import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.regex.Pattern;
 import org.apache.iceberg.DataFile;
 import org.apache.iceberg.RowLevelOperationMode;
@@ -42,6 +43,7 @@ import org.apache.iceberg.connect.TableSinkConfig;
 import org.apache.iceberg.inmemory.InMemoryCatalog;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
+import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.types.Types;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.record.TimestampType;
@@ -54,6 +56,7 @@ public class TestSinkWriter {
 
   private InMemoryCatalog catalog;
 
+  private static final UUID COMMIT_ID = UUID.randomUUID();
   private static final Namespace NAMESPACE = Namespace.of("db");
   private static final String TABLE_NAME = "tbl";
   private static final TableIdentifier TABLE_IDENTIFIER = TableIdentifier.of(NAMESPACE, TABLE_NAME);
@@ -174,6 +177,67 @@ public class TestSinkWriter {
     assertThat(writerResults).hasSize(0);
   }
 
+  @Test
+  public void testCommitIdNamesSketchFileOfTableWithStatistics() {
+    TableIdentifier other = TableIdentifier.of(NAMESPACE, "other");
+    catalog.createTable(other, SCHEMA);
+    TableSinkConfig withStatistics = tableConfig(true);
+    TableSinkConfig withoutStatistics = tableConfig(false);
+
+    IcebergSinkConfig config = mock(IcebergSinkConfig.class);
+    when(config.routingStrategy()).thenReturn(RecordRoutingStrategy.ALL_TABLES);
+    when(config.tables())
+        .thenReturn(ImmutableList.of(TABLE_IDENTIFIER.toString(), other.toString()));
+    when(config.rowLevelMode()).thenReturn(RowLevelOperationMode.MERGE_ON_READ);
+    when(config.tableConfig(TABLE_IDENTIFIER.toString())).thenReturn(withStatistics);
+    when(config.tableConfig(other.toString())).thenReturn(withoutStatistics);
+    when(config.statisticsLgNominalEntries()).thenReturn(12);
+    when(config.connectGroupId()).thenReturn("cg-connect");
+    when(config.taskId()).thenReturn("0");
+
+    SinkWriter sinkWriter = new SinkWriter(catalog, config);
+    sinkWriter.save(
+        ImmutableList.of(
+            new SinkRecord(
+                "topic",
+                1,
+                null,
+                "key",
+                null,
+                ImmutableMap.of("id", 1L, "data", "a", "date", "d"),
+                100L)));
+    SinkWriterResult result = sinkWriter.completeWrite(COMMIT_ID);
+    sinkWriter.close();
+
+    Map<TableIdentifier, IcebergWriterResult> byTable = Maps.newHashMap();
+    result
+        .writerResults()
+        .forEach(
+            writerResult ->
+                byTable.put(
+                    ((IcebergWriterResult) writerResult).tableIdentifier(),
+                    (IcebergWriterResult) writerResult));
+    assertThat(byTable).containsOnlyKeys(TABLE_IDENTIFIER, other);
+    assertThat(byTable.get(TABLE_IDENTIFIER).sketchFile()).isNotNull();
+    assertThat(byTable.get(TABLE_IDENTIFIER).sketchFile().location())
+        .contains("/stats/" + COMMIT_ID + "-0-");
+    assertThat(byTable.get(other).sketchFile())
+        .as("statistics are off for this table only")
+        .isNull();
+    SketchFiles.Content content =
+        SketchFiles.read(
+            catalog.loadTable(TABLE_IDENTIFIER).io(), byTable.get(TABLE_IDENTIFIER).sketchFile());
+    assertThat(content.properties()).containsEntry("row-count", "1");
+  }
+
+  private static TableSinkConfig tableConfig(boolean statisticsEnabled) {
+    TableSinkConfig tableConfig = mock(TableSinkConfig.class);
+    when(tableConfig.statisticsEnabled()).thenReturn(statisticsEnabled);
+    // the mock answers an empty list, which is an explicit list without a column
+    when(tableConfig.statisticsColumns()).thenReturn(null);
+    return tableConfig;
+  }
+
   private List<RecordWriteResult> sinkWriterTest(
       Map<String, Object> value, IcebergSinkConfig config) {
     IcebergWriterResult writeResult =
@@ -183,7 +247,7 @@ public class TestSinkWriter {
             ImmutableList.of(),
             Types.StructType.of());
     IcebergWriter writer = mock(IcebergWriter.class);
-    when(writer.complete()).thenReturn(ImmutableList.<RecordWriteResult>of(writeResult));
+    when(writer.complete(any())).thenReturn(ImmutableList.<RecordWriteResult>of(writeResult));
 
     IcebergWriterFactory writerFactory = mock(IcebergWriterFactory.class);
     when(writerFactory.createWriter(any(), any(), anyBoolean())).thenReturn(writer);
@@ -209,7 +273,7 @@ public class TestSinkWriter {
             TimestampType.LOG_APPEND_TIME);
     sinkWriter.save(ImmutableList.of(rec));
 
-    SinkWriterResult result = sinkWriter.completeWrite();
+    SinkWriterResult result = sinkWriter.completeWrite(COMMIT_ID);
 
     Offset offset = result.sourceOffsets().get(new TopicPartition("topic", 1));
     assertThat(offset).isNotNull();

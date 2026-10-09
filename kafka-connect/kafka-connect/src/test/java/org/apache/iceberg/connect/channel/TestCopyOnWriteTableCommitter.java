@@ -198,7 +198,7 @@ public class TestCopyOnWriteTableCommitter {
     when(config.controlTopic()).thenReturn(CTL_TOPIC);
     when(config.connectGroupId()).thenReturn(GROUP_ID);
     when(config.tableConfig(any())).thenReturn(mock(TableSinkConfig.class));
-    when(config.copyOnWriteStagingLocation()).thenReturn(null);
+    when(config.stagingLocation()).thenReturn(null);
     when(config.copyOnWriteMaxSliceKeys()).thenReturn(1_000_000L);
     when(config.copyOnWriteMaxRewriteBytes()).thenReturn(Long.MAX_VALUE);
     when(config.copyOnWritePruningMaxInCardinality()).thenReturn(1000);
@@ -207,9 +207,6 @@ public class TestCopyOnWriteTableCommitter {
     when(config.copyOnWriteRewriteTimeoutMs()).thenReturn(600_000L);
     when(config.copyOnWriteRewriteResponseChunkFiles()).thenReturn(200);
     when(config.controlMessageMaxBytes()).thenReturn(1024 * 1024);
-    // sweeping is exercised by TestStagingSweeper; here it would only race the drain it observes
-    when(config.copyOnWriteStagingOrphanCleanupIntervalMs()).thenReturn(Long.MAX_VALUE);
-    when(config.copyOnWriteStagingOrphanTtlMs()).thenReturn(86_400_000L);
 
     sentEvents = Lists.newArrayList();
     metadataEvents = new RecordingMetadataEvents();
@@ -484,7 +481,7 @@ public class TestCopyOnWriteTableCommitter {
     assertThat(table.currentSnapshot().summary())
         .doesNotContainKey(COPY_ON_WRITE_CHANGE_SET_ID_PROP);
     assertThat(table.currentSnapshot().summary()).doesNotContainKey(COPY_ON_WRITE_CURSOR_PROP);
-    // and swept the staged files + manifest it used along the way
+    // and cleaned up the staged files + manifest it used along the way
     InMemoryFileIO io = (InMemoryFileIO) table.io();
     files.forEach(f -> assertThat(io.fileExists(f.location())).isFalse());
   }
@@ -493,7 +490,7 @@ public class TestCopyOnWriteTableCommitter {
    * The exhausting slice's cleanup (its staged files and manifest) runs ahead of sending {@code
    * CommitToTable} and reporting lineage, not after: nothing else names them once the change set's
    * pointer has moved off them, so a failure sending the report must not leave them behind as
-   * orphans only {@code remove_orphan_files} or the staging sweep would ever collect.
+   * orphans only {@code remove_orphan_files} or the staging cleanup would ever collect.
    */
   @Test
   public void testTheExhaustingCommitCleansUpBeforeReportingEvenWhenReportingFails() {
@@ -1822,7 +1819,7 @@ public class TestCopyOnWriteTableCommitter {
 
     // the same after a restart, when the pointer names a manifest that is gone: the table is
     // stopped on the visit that reads it, with nothing buffered for it
-    when(config.tables()).thenReturn(List.of(TABLE_IDENTIFIER.toString()));
+    when(config.configuredTables()).thenReturn(Set.of(TABLE_IDENTIFIER));
     committer =
         new CopyOnWriteRewriteDriver(catalog, config, metadataEvents, sentEvents::add, taskCount());
     table.refresh();
@@ -2342,7 +2339,7 @@ public class TestCopyOnWriteTableCommitter {
     appendRows(table, row(1L, "a"), row(2L, "b"), row(3L, "c"));
     when(config.copyOnWriteMaxSliceKeys()).thenReturn(1L);
     TableIdentifier neverCreated = TableIdentifier.of(NAMESPACE, "never_created");
-    when(config.tables()).thenReturn(List.of(TABLE_IDENTIFIER.toString(), neverCreated.toString()));
+    when(config.configuredTables()).thenReturn(ImmutableSet.of(TABLE_IDENTIFIER, neverCreated));
     // as a worker names it
     TableReference written = TableReference.of(catalog.name(), TABLE_IDENTIFIER, table.uuid());
 
@@ -2389,7 +2386,7 @@ public class TestCopyOnWriteTableCommitter {
     when(config.copyOnWriteMaxSliceKeys()).thenReturn(1L);
     // the record names the table: the configuration does not, so no probe finds it after a restart
     when(config.routingStrategy()).thenReturn(RecordRoutingStrategy.DYNAMIC_FIELD);
-    when(config.tables()).thenReturn(null);
+    when(config.configuredTables()).thenReturn(Set.of());
     committer =
         new CopyOnWriteRewriteDriver(catalog, config, metadataEvents, sentEvents::add, taskCount());
     TableReference written = TableReference.of(catalog.name(), TABLE_IDENTIFIER, table.uuid());
@@ -2454,7 +2451,7 @@ public class TestCopyOnWriteTableCommitter {
     appendRows(table, row(1L, "a"), row(2L, "b"), row(3L, "c"));
     when(config.copyOnWriteMaxSliceKeys()).thenReturn(1L);
     when(config.routingStrategy()).thenReturn(RecordRoutingStrategy.DYNAMIC_FIELD);
-    when(config.tables()).thenReturn(null);
+    when(config.configuredTables()).thenReturn(Set.of());
     AtomicInteger sliceCommits = new AtomicInteger();
     committer =
         new CopyOnWriteRewriteDriver(
@@ -2519,7 +2516,7 @@ public class TestCopyOnWriteTableCommitter {
   public void testADrainedChangeSetReleasesItsReplayAnchorThoughCommitToTableFails() {
     appendRows(table, row(1L, "a"));
     when(config.routingStrategy()).thenReturn(RecordRoutingStrategy.DYNAMIC_FIELD);
-    when(config.tables()).thenReturn(null);
+    when(config.configuredTables()).thenReturn(Set.of());
     // the control topic fails the CommitToTable of the slice that drains the change set
     AtomicInteger sliceCommits = new AtomicInteger();
     committer =

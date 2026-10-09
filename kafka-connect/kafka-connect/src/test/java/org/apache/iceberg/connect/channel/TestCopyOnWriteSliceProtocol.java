@@ -162,37 +162,40 @@ public class TestCopyOnWriteSliceProtocol {
     when(config.controlTopic()).thenReturn(CTL_TOPIC);
     when(config.connectGroupId()).thenReturn(GROUP_ID);
     when(config.tableConfig(any())).thenReturn(mock(TableSinkConfig.class));
-    when(config.copyOnWriteStagingLocation()).thenReturn(null);
+    when(config.stagingLocation()).thenReturn(null);
     when(config.copyOnWriteMaxSliceKeys()).thenReturn(1_000_000L);
     when(config.copyOnWriteMaxRewriteBytes()).thenReturn(Long.MAX_VALUE);
     when(config.copyOnWritePruningMaxInCardinality()).thenReturn(1000);
     when(config.copyOnWriteCommitRetries()).thenReturn(2);
     when(config.copyOnWriteRewriteThreads()).thenReturn(1);
     when(config.copyOnWriteRewriteTimeoutMs()).thenReturn(TIMEOUT_MS);
-    when(config.copyOnWriteStagingOrphanCleanupIntervalMs()).thenReturn(Long.MAX_VALUE);
-    when(config.copyOnWriteStagingOrphanTtlMs()).thenReturn(86_400_000L);
+    when(config.stagingOrphanCleanupIntervalMs()).thenReturn(Long.MAX_VALUE);
+    when(config.stagingOrphanTtlMs()).thenReturn(86_400_000L);
     when(config.controlMessageMaxBytes()).thenReturn(MESSAGE_LIMIT);
 
     assigned = Lists.newArrayList();
     otherEvents = Lists.newArrayList();
     rounds = Lists.newArrayList();
-    committer =
-        new CopyOnWriteTableCommitter(
-            catalog,
-            config,
-            MetadataEvents.NOOP,
-            events -> {
-              rounds.add(ImmutableList.copyOf(events));
-              for (Event event : events) {
-                if (event.payload().type() == PayloadType.REWRITE_ASSIGNED) {
-                  assigned.add((RewriteAssigned) roundTrip(event).payload());
-                } else {
-                  otherEvents.add(event);
-                }
-              }
-            },
-            Runnable::run,
-            () -> true);
+    committer = newCommitter();
+  }
+
+  /** A committer that records what it sends and runs its transitions inline. */
+  private CopyOnWriteTableCommitter newCommitter() {
+    return new CopyOnWriteTableCommitter(
+        catalog,
+        config,
+        MetadataEvents.NOOP,
+        events -> {
+          rounds.add(ImmutableList.copyOf(events));
+          for (Event event : events) {
+            if (event.payload().type() == PayloadType.REWRITE_ASSIGNED) {
+              assigned.add((RewriteAssigned) roundTrip(event).payload());
+            } else {
+              otherEvents.add(event);
+            }
+          }
+        },
+        Runnable::run);
   }
 
   /**
@@ -213,8 +216,7 @@ public class TestCopyOnWriteSliceProtocol {
             }
           }
         },
-        transitions::add,
-        () -> true);
+        transitions::add);
   }
 
   @AfterEach
@@ -291,8 +293,7 @@ public class TestCopyOnWriteSliceProtocol {
                 Thread.currentThread().interrupt();
               }
             },
-            pool,
-            () -> true);
+            pool);
     ExecutorService coordinatorThread = Executors.newSingleThreadExecutor();
     long snapshotsBefore = countSnapshots();
 
@@ -1366,7 +1367,7 @@ public class TestCopyOnWriteSliceProtocol {
   public void testAConflictDeletesTheFilesOfItsAttemptAndKeepsTheChangeSet() {
     // the replacement files were written against a base that is gone, so nothing will ever commit
     // them: left behind, they wait in the table's data directory for remove_orphan_files, and the
-    // attempt's normalized file waits in staging for the sweep's TTL
+    // attempt's normalized file waits in staging for the cleanup's TTL
     appendRows(row(1L, "a"));
     List<StagedChangeFile> staged = update(1L, "a2");
     committer.commit(request(staged));
@@ -1586,9 +1587,11 @@ public class TestCopyOnWriteSliceProtocol {
         .commit();
 
     // a cycle with nothing buffered adopts its files into a new change set, whose first slice
-    // then never commits
+    // then never commits; pendingTables() lists such a table only from iceberg.tables
+    when(config.configuredTables()).thenReturn(Set.of(TABLE_IDENTIFIER));
+    committer = newCommitter();
     TableCommitRequest nothingBuffered = withoutEnvelopes(request(List.of()));
-    committer.commit(nothingBuffered);
+    commitPendingTables(nothingBuffered);
     RewriteAssigned first = takeSlice();
     assertThat(first.changeSetId()).isNotEqualTo(dropped.changeSetId());
     failNextSliceStart();
@@ -1597,14 +1600,29 @@ public class TestCopyOnWriteSliceProtocol {
 
     // the pointer still names the dropped change set, and no response in the buffer brings the
     // table back: pendingTables() has to
+    TableReference drainedUnder = TableReference.of(catalog.name(), TABLE_IDENTIFIER, table.uuid());
     assertThat(committer.pendingTables())
         .as("the tail of the dropped change set is still outside the table")
-        .contains(TABLE_REFERENCE);
+        .contains(drainedUnder);
 
-    committer.commit(nothingBuffered);
+    commitPendingTables(nothingBuffered);
     answerAll(takeSlice());
     assertThat(readAll()).containsExactly("1=a2");
-    assertThat(committer.pendingTables()).doesNotContain(TABLE_REFERENCE);
+    assertThat(committer.pendingTables()).doesNotContain(drainedUnder);
+  }
+
+  /** A cycle with nothing buffered: {@code request} without envelopes for each pending table. */
+  private void commitPendingTables(TableCommitRequest request) {
+    for (TableReference visited : committer.pendingTables()) {
+      committer.commit(
+          new TableCommitRequest(
+              visited,
+              ImmutableList.of(),
+              request.controlTopicOffsets(),
+              request.commitId(),
+              request.validThroughTs(),
+              request.activeTasks()));
+    }
   }
 
   @Test

@@ -206,7 +206,7 @@ public class TestWideSchemaRewrite {
       when(task.start()).thenReturn(0L);
       when(task.length()).thenReturn(file.fileSizeInBytes());
       try (CloseableIterable<Record> records =
-          AffectedFileReader.open(table.io(), task, table.schema(), table.schema())) {
+          AffectedFileReader.open(table.io(), task, table.schema(), table.schema(), null)) {
         for (Record record : records) {
           rows.add(describe(record));
         }

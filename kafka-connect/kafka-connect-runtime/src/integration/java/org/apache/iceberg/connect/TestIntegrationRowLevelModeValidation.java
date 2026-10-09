@@ -46,7 +46,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
-/** Fail-fast checks of the row-level mode configuration (6.1). */
+/**
+ * Fail-fast checks of the row-level mode configuration: a misconfigured connector fails its task at
+ * start instead of writing.
+ */
 public class TestIntegrationRowLevelModeValidation extends IntegrationTestBaseRowLevel {
 
   private static final String TEST_TABLE = "foobar";

@@ -33,10 +33,14 @@ import java.util.Base64;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.Table;
+import org.apache.iceberg.connect.data.StatisticsAnswer;
+import org.apache.iceberg.connect.events.SketchFile;
 import org.apache.iceberg.connect.events.StagedChangeFile;
 import org.apache.iceberg.connect.events.TableReference;
 import org.apache.iceberg.io.FileIO;
@@ -59,6 +63,9 @@ import org.apache.iceberg.types.Types.StructType;
  * set that must be abandoned (identifier fields changed mid-drain) is dropped by freezing its
  * staged files into the next change set, not by rewriting this file. The file itself is deleted
  * once that change set first commits, moving the snapshot summary's pointer off it.
+ *
+ * <p>For the statistics step it also names the intermediate Puffin files of the frozen responses,
+ * each with the staged files it covers, and the dropped change sets whose files it adopted.
  *
  * <p>Encoded as JSON rather than Avro: the content is one small record that never crosses the
  * control topic wire, and every field it needs (a UUID, a handful of ints, a bounded list of {@link
@@ -86,6 +93,56 @@ public final class ChangeSetManifest {
   private final Set<String> sourceTopics;
   private final Map<Integer, Long> controlOffsets;
   private final OffsetDateTime validThroughTs;
+  private final List<SketchFileEntry> sketchFiles;
+  private final List<UUID> adoptedChangeSetIds;
+
+  /**
+   * The intermediate Puffin file of one frozen {@code RowChangesWritten} and the locations of the
+   * staged files of that response; its sketches cover exactly their rows.
+   */
+  public static final class SketchFileEntry {
+    private final String location;
+    private final long fileSizeBytes;
+    private final long footerSizeBytes;
+    private final List<String> stagedFiles;
+
+    public SketchFileEntry(SketchFile sketchFile, List<String> stagedFiles) {
+      this(
+          sketchFile.location(),
+          sketchFile.fileSizeBytes(),
+          sketchFile.footerSizeBytes(),
+          stagedFiles);
+    }
+
+    private SketchFileEntry(
+        String location, long fileSizeBytes, long footerSizeBytes, List<String> stagedFiles) {
+      Preconditions.checkArgument(location != null, "Invalid sketch file location: null");
+      this.location = location;
+      this.fileSizeBytes = fileSizeBytes;
+      this.footerSizeBytes = footerSizeBytes;
+      this.stagedFiles = ImmutableList.copyOf(stagedFiles);
+    }
+
+    public String location() {
+      return location;
+    }
+
+    public long fileSizeBytes() {
+      return fileSizeBytes;
+    }
+
+    public long footerSizeBytes() {
+      return footerSizeBytes;
+    }
+
+    public List<String> stagedFiles() {
+      return stagedFiles;
+    }
+
+    public SketchFile sketchFile() {
+      return new SketchFile(location, fileSizeBytes, footerSizeBytes);
+    }
+  }
 
   private ChangeSetManifest(
       int formatVersion,
@@ -97,7 +154,9 @@ public final class ChangeSetManifest {
       List<StagedChangeFile> stagedFiles,
       Set<String> sourceTopics,
       Map<Integer, Long> controlOffsets,
-      OffsetDateTime validThroughTs) {
+      OffsetDateTime validThroughTs,
+      List<SketchFileEntry> sketchFiles,
+      List<UUID> adoptedChangeSetIds) {
     this.formatVersion = formatVersion;
     this.changeSetId = changeSetId;
     this.tableUuid = tableUuid;
@@ -108,6 +167,8 @@ public final class ChangeSetManifest {
     this.sourceTopics = sourceTopics;
     this.controlOffsets = controlOffsets;
     this.validThroughTs = validThroughTs;
+    this.sketchFiles = sketchFiles;
+    this.adoptedChangeSetIds = adoptedChangeSetIds;
   }
 
   /**
@@ -123,6 +184,32 @@ public final class ChangeSetManifest {
       Set<String> sourceTopics,
       Map<Integer, Long> controlOffsets,
       OffsetDateTime validThroughTs) {
+    return freeze(
+        table,
+        identifierFieldIds,
+        stagedFiles,
+        sourceTopics,
+        controlOffsets,
+        validThroughTs,
+        ImmutableList.of(),
+        ImmutableList.of());
+  }
+
+  /**
+   * Freezes a new change set with the inputs of the statistics step.
+   *
+   * @param sketchFiles one entry per frozen {@code RowChangesWritten} with a Puffin file, including
+   *     those of adopted change sets
+   */
+  public static ChangeSetManifest freeze(
+      Table table,
+      Set<Integer> identifierFieldIds,
+      List<StagedChangeFile> stagedFiles,
+      Set<String> sourceTopics,
+      Map<Integer, Long> controlOffsets,
+      OffsetDateTime validThroughTs,
+      List<SketchFileEntry> sketchFiles,
+      List<UUID> adoptedChangeSetIds) {
     return new ChangeSetManifest(
         CURRENT_FORMAT_VERSION,
         UUID.randomUUID(),
@@ -133,7 +220,9 @@ public final class ChangeSetManifest {
         ImmutableList.copyOf(stagedFiles),
         ImmutableSet.copyOf(sourceTopics),
         ImmutableMap.copyOf(controlOffsets),
-        validThroughTs);
+        validThroughTs,
+        ImmutableList.copyOf(sketchFiles),
+        ImmutableList.copyOf(adoptedChangeSetIds));
   }
 
   public int formatVersion() {
@@ -183,6 +272,53 @@ public final class ChangeSetManifest {
   }
 
   /**
+   * One entry per frozen response that had a Puffin file; empty for a manifest written without the
+   * field.
+   */
+  public List<SketchFileEntry> sketchFiles() {
+    return sketchFiles;
+  }
+
+  /**
+   * The dropped change sets whose staged files this one adopted, oldest first; empty for a manifest
+   * written without the field.
+   */
+  public List<UUID> adoptedChangeSetIds() {
+    return adoptedChangeSetIds;
+  }
+
+  /**
+   * One answer per {@link #sketchFiles} entry, plus one without a Puffin file, covering no column,
+   * for the staged files no entry names.
+   */
+  public List<StatisticsAnswer> statisticsAnswers(long snapshotId) {
+    Map<String, StagedChangeFile> byLocation = Maps.newLinkedHashMap();
+    stagedFiles.forEach(file -> byLocation.putIfAbsent(file.location(), file));
+
+    List<StatisticsAnswer> answers = Lists.newArrayList();
+    Set<String> covered = Sets.newHashSet();
+    for (SketchFileEntry entry : sketchFiles) {
+      List<StagedChangeFile> files =
+          entry.stagedFiles().stream()
+              .map(byLocation::get)
+              .filter(Objects::nonNull)
+              .collect(Collectors.toList());
+      covered.addAll(entry.stagedFiles());
+      answers.add(StatisticsAnswer.ofStagedFiles(snapshotId, files, entry.sketchFile()));
+    }
+
+    List<StagedChangeFile> uncovered =
+        byLocation.values().stream()
+            .filter(file -> !covered.contains(file.location()))
+            .collect(Collectors.toList());
+    if (!uncovered.isEmpty()) {
+      answers.add(StatisticsAnswer.ofStagedFiles(snapshotId, uncovered, null));
+    }
+
+    return answers;
+  }
+
+  /**
    * The path a manifest for this change set lives at: {@code
    * <staging>/<tableDir>/<groupDir>/_changesets/changeSetId.json}, under the connector's staging
    * directory as {@link StagedChangeFileWriter#stagingDirectory} spells it.
@@ -220,6 +356,17 @@ public final class ChangeSetManifest {
 
     ArrayNode files = root.putArray("stagedFiles");
     stagedFiles.forEach(file -> files.add(toJson(file)));
+
+    // left out when empty: a manifest without statistics matches the format without these fields
+    if (!sketchFiles.isEmpty()) {
+      ArrayNode sketches = root.putArray("sketchFiles");
+      sketchFiles.forEach(entry -> sketches.add(toJson(entry)));
+    }
+
+    if (!adoptedChangeSetIds.isEmpty()) {
+      ArrayNode adopted = root.putArray("adoptedChangeSetIds");
+      adoptedChangeSetIds.forEach(id -> adopted.add(id.toString()));
+    }
 
     try (OutputStream out = io.newOutputFile(location).createOrOverwrite()) {
       MAPPER.writeValue(out, root);
@@ -270,8 +417,24 @@ public final class ChangeSetManifest {
     List<StagedChangeFile> stagedFiles = Lists.newArrayList();
     root.get("stagedFiles").forEach(node -> stagedFiles.add(fromJson(node)));
 
+    int formatVersion = root.get("format-version").asInt();
+    // a manifest of another format is not trusted beyond its staged files: its entries are not
+    // read, so a shape this build does not know cannot fail the read
+    List<SketchFileEntry> sketchFiles = Lists.newArrayList();
+    List<UUID> adoptedChangeSetIds = Lists.newArrayList();
+    if (formatVersion == CURRENT_FORMAT_VERSION) {
+      if (root.hasNonNull("sketchFiles")) {
+        root.get("sketchFiles").forEach(node -> sketchFiles.add(sketchFileFromJson(node)));
+      }
+
+      if (root.hasNonNull("adoptedChangeSetIds")) {
+        root.get("adoptedChangeSetIds")
+            .forEach(node -> adoptedChangeSetIds.add(UUID.fromString(node.asText())));
+      }
+    }
+
     return new ChangeSetManifest(
-        root.get("format-version").asInt(),
+        formatVersion,
         UUID.fromString(root.get("changeSetId").asText()),
         root.hasNonNull("tableUuid") ? UUID.fromString(root.get("tableUuid").asText()) : null,
         root.get("createdAtMs").asLong(),
@@ -282,7 +445,33 @@ public final class ChangeSetManifest {
         ImmutableMap.copyOf(controlOffsets),
         root.hasNonNull("validThroughTs")
             ? OffsetDateTime.parse(root.get("validThroughTs").asText())
-            : null);
+            : null,
+        ImmutableList.copyOf(sketchFiles),
+        ImmutableList.copyOf(adoptedChangeSetIds));
+  }
+
+  private static ObjectNode toJson(SketchFileEntry entry) {
+    ObjectNode node = MAPPER.createObjectNode();
+    node.put("location", entry.location());
+    node.put("fileSizeBytes", entry.fileSizeBytes());
+    node.put("footerSizeBytes", entry.footerSizeBytes());
+    ArrayNode files = node.putArray("stagedFiles");
+    entry.stagedFiles().forEach(files::add);
+    return node;
+  }
+
+  private static SketchFileEntry sketchFileFromJson(JsonNode node) {
+    List<String> files = Lists.newArrayList();
+    JsonNode stagedFiles = node.get("stagedFiles");
+    if (stagedFiles != null) {
+      stagedFiles.forEach(file -> files.add(file.asText()));
+    }
+
+    return new SketchFileEntry(
+        node.get("location").asText(),
+        node.get("fileSizeBytes").asLong(),
+        node.get("footerSizeBytes").asLong(),
+        files);
   }
 
   private static ObjectNode toJson(StagedChangeFile file) {

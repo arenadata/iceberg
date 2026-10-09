@@ -237,6 +237,17 @@ public class TestEventFormatEvolution {
                 table,
                 Arrays.asList(EventTestUtil.createDataFile()),
                 Arrays.asList(EventTestUtil.createDeleteFile()))),
+        // with a sketch file reference DataWritten is written in the schema with the field
+        new Event(
+            "cg-connector",
+            new DataWritten(
+                EventTestUtil.SPEC.partitionType(),
+                UUID.randomUUID(),
+                table,
+                Arrays.asList(EventTestUtil.createDataFile()),
+                Arrays.asList(EventTestUtil.createDeleteFile()),
+                Arrays.asList("topic"),
+                EventTestUtil.createSketchFile())),
         new Event(
             "cg-connector",
             new DataComplete(
@@ -253,7 +264,8 @@ public class TestEventFormatEvolution {
                 table,
                 "0",
                 Arrays.asList("topic"),
-                Arrays.asList(EventTestUtil.createStagedChangeFile()))),
+                Arrays.asList(EventTestUtil.createStagedChangeFile()),
+                EventTestUtil.createSketchFile())),
         new Event(
             "cg-connector",
             new RewriteAssigned(

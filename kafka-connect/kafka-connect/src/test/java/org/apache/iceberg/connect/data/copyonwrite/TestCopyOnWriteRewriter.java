@@ -209,7 +209,7 @@ public class TestCopyOnWriteRewriter {
     when(outputTask.start()).thenReturn(0L);
     when(outputTask.length()).thenReturn(result.get(0).fileSizeInBytes());
     try (CloseableIterable<Record> records =
-        AffectedFileReader.open(table.io(), outputTask, table.schema(), table.schema())) {
+        AffectedFileReader.open(table.io(), outputTask, table.schema(), table.schema(), null)) {
       Record raw = records.iterator().next();
       List<String> fieldNames = raw.struct().fields().stream().map(f -> f.name()).toList();
       assertThat(fieldNames).containsExactlyInAnyOrder("id", "data");
@@ -959,7 +959,7 @@ public class TestCopyOnWriteRewriter {
       when(task.start()).thenReturn(0L);
       when(task.length()).thenReturn(file.fileSizeInBytes());
       try (CloseableIterable<Record> records =
-          AffectedFileReader.open(target.io(), task, target.schema(), target.schema())) {
+          AffectedFileReader.open(target.io(), task, target.schema(), target.schema(), null)) {
         for (Record record : records) {
           Record nested = (Record) record.get(1, Object.class);
           rows.add(tuple(record.get(0, Object.class), nested == null ? null : nested.get(0)));
@@ -1016,7 +1016,7 @@ public class TestCopyOnWriteRewriter {
     when(task.length()).thenReturn(file.fileSizeInBytes());
     List<Record> rows = Lists.newArrayList();
     try (CloseableIterable<Record> records =
-        AffectedFileReader.open(target.io(), task, schema, schema)) {
+        AffectedFileReader.open(target.io(), task, schema, schema, null)) {
       for (Record record : records) {
         rows.add(
             regionRow(
@@ -1160,7 +1160,7 @@ public class TestCopyOnWriteRewriter {
       when(task.start()).thenReturn(0L);
       when(task.length()).thenReturn(file.fileSizeInBytes());
       try (CloseableIterable<Record> records =
-          AffectedFileReader.open(table.io(), task, table.schema(), table.schema())) {
+          AffectedFileReader.open(table.io(), task, table.schema(), table.schema(), null)) {
         // AffectedFileReader returns rows through a reused RecordProjection view, which only
         // supports positional access; copy each one out before it is overwritten by the next
         for (Record record : records) {

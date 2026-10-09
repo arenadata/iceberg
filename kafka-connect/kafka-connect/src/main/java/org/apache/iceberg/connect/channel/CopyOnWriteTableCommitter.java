@@ -21,11 +21,9 @@ package org.apache.iceberg.connect.channel;
 import java.util.Collection;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.Executor;
-import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -38,7 +36,8 @@ import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.connect.IcebergSinkConfig;
 import org.apache.iceberg.connect.MetadataEvents;
 import org.apache.iceberg.connect.data.RecordRoutingStrategy;
-import org.apache.iceberg.connect.data.copyonwrite.ChangeSetManifest;
+import org.apache.iceberg.connect.data.StatisticsHealth;
+import org.apache.iceberg.connect.data.StatisticsStep;
 import org.apache.iceberg.connect.data.copyonwrite.ChangeSetNormalizer;
 import org.apache.iceberg.connect.data.copyonwrite.ChangeSetSlice;
 import org.apache.iceberg.connect.data.copyonwrite.PermanentCopyOnWriteException;
@@ -57,10 +56,9 @@ import org.apache.iceberg.exceptions.NoSuchTableException;
 import org.apache.iceberg.exceptions.ValidationException;
 import org.apache.iceberg.io.FileIO;
 import org.apache.iceberg.relocated.com.google.common.annotations.VisibleForTesting;
+import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
-import org.apache.iceberg.relocated.com.google.common.collect.ImmutableSet;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
-import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.relocated.com.google.common.collect.Sets;
 import org.apache.iceberg.types.Types.StructType;
 import org.slf4j.Logger;
@@ -83,9 +81,14 @@ import org.slf4j.LoggerFactory;
  * next tick.
  *
  * <p>The persisted side of a change set is {@link ChangeSetStore}, the Iceberg commit of a slice
- * {@link SliceCommitter}, the staging sweep {@link StagingCleanupScheduler}. {@link
- * #discardSliceFiles} stays private to the state machine: it is where a replacement file changes
- * owner, and no collaborator may reach a data file.
+ * {@link SliceCommitter}, what the coordinator's staging cleanup is to leave alone {@link
+ * CopyOnWriteStagingCleanupSource}. {@link #discardSliceFiles} stays private to the state machine:
+ * it is where a replacement file changes owner, and no collaborator may reach a data file.
+ *
+ * <p>With the statistics of a table on, the final snapshot F of a drain of change set X gets a
+ * statistics step. An F whose step did not finish is pending: X stays, and the recount of F runs
+ * the step again from the manifest of X. Both are {@link CopyOnWriteFinalStatistics}'; when they
+ * run, under the lock of the table, is the state machine's.
  */
 class CopyOnWriteTableCommitter implements TableCommitter {
 
@@ -103,12 +106,15 @@ class CopyOnWriteTableCommitter implements TableCommitter {
   private final ChangeSetStore changeSets;
   private final SliceCommitter sliceCommitter;
   private final SlicePlanner planner;
-  private final StagingCleanupScheduler stagingCleanup;
+  private final CopyOnWriteStagingCleanupSource stagingCleanupSource;
   private final MergeOnReadTailHandoff mergeOnReadTail;
-  private final Map<TableReference, TableDrainState> states = Maps.newConcurrentMap();
-  private final Map<UUID, TableReference> drainingUnder = Maps.newConcurrentMap();
-  private final Set<TableIdentifier> configuredTables;
-  private final Set<TableIdentifier> unresumedTables;
+  private final TableDrainRegistry states;
+  // the statistics lag of copy-on-write: entered at startup, by the step of the final snapshot
+  // of a drain, by a final slice with no snapshot to step on, and by the merge-on-read tail
+  private final StatisticsLag statisticsLag = new StatisticsLag();
+  private final StatisticsHealth health;
+  private final CopyOnWriteFinalStatistics finalStatistics;
+  private final CopyOnWriteLagStepRunner lagStepRunner;
   private volatile boolean stopped;
 
   CopyOnWriteTableCommitter(
@@ -116,34 +122,100 @@ class CopyOnWriteTableCommitter implements TableCommitter {
       IcebergSinkConfig config,
       MetadataEvents metadataEvents,
       Consumer<List<Event>> eventSender,
+      Executor exec) {
+    this(
+        catalog,
+        config,
+        metadataEvents,
+        eventSender,
+        exec,
+        StatisticsHealth.NOOP,
+        new StatisticsStep());
+  }
+
+  /**
+   * @param exec the transition pool
+   */
+  CopyOnWriteTableCommitter(
+      Catalog catalog,
+      IcebergSinkConfig config,
+      MetadataEvents metadataEvents,
+      Consumer<List<Event>> eventSender,
       Executor exec,
-      BooleanSupplier controlTopicCaughtUp) {
+      StatisticsHealth health,
+      StatisticsStep step) {
+    this(
+        catalog,
+        config,
+        metadataEvents,
+        eventSender,
+        exec,
+        health,
+        step,
+        LoggerFactory.getLogger(CopyOnWriteFinalStatistics.class));
+  }
+
+  @VisibleForTesting
+  CopyOnWriteTableCommitter(
+      Catalog catalog,
+      IcebergSinkConfig config,
+      MetadataEvents metadataEvents,
+      Consumer<List<Event>> eventSender,
+      Executor exec,
+      StatisticsHealth health,
+      StatisticsStep step,
+      Logger finalStatisticsLog) {
     this.catalog = catalog;
     this.config = config;
     this.metadataEvents = metadataEvents;
     this.eventSender = eventSender;
     this.exec = exec;
-    this.configuredTables = configuredTables(config);
-    this.unresumedTables = Sets.newConcurrentHashSet(configuredTables);
+    this.health = health;
+    Set<TableIdentifier> configuredTables = config.configuredTables();
+    this.states = new TableDrainRegistry(configuredTables);
     this.changeSets = new ChangeSetStore(config);
     this.sliceCommitter = new SliceCommitter(config);
     this.planner = new SlicePlanner(config);
-    this.stagingCleanup =
-        new StagingCleanupScheduler(
-            config,
-            changeSets,
-            exec,
-            states.values(),
-            controlTopicCaughtUp,
-            () -> stopped,
-            catalog::loadTable);
+    this.finalStatistics =
+        new CopyOnWriteFinalStatistics(
+            config, changeSets, statisticsLag, health, step, () -> stopped, finalStatisticsLog);
     this.mergeOnReadTail =
         new MergeOnReadTailHandoff(
             new MergeOnReadTableCommitter(
                 catalog,
                 config,
                 metadataEvents,
-                event -> eventSender.accept(ImmutableList.of(event))));
+                event -> eventSender.accept(ImmutableList.of(event)),
+                exec,
+                health,
+                step,
+                statisticsLag,
+                MergeOnReadTableCommitter.Mode.TAIL));
+    this.lagStepRunner =
+        new CopyOnWriteLagStepRunner(
+            catalog,
+            config,
+            exec,
+            states,
+            statisticsLag,
+            health,
+            finalStatistics,
+            mergeOnReadTail::hasStep,
+            () -> stopped);
+    this.stagingCleanupSource =
+        new CopyOnWriteStagingCleanupSource(
+            config,
+            changeSets,
+            states.view(),
+            catalog::loadTable,
+            mergeOnReadTail::inFlightSketchLocations);
+    if (config.statisticsInUse()) {
+      // the static tables with statistics start in the lag, not verified until the quick check
+      statisticsLag.enterAtStartup(
+          configuredTables.stream()
+              .filter(id -> config.tableConfig(id.toString()).statisticsEnabled())
+              .collect(Collectors.toList()));
+    }
   }
 
   private <T> T underLock(TableReference tableReference, Function<TableDrainState, T> read) {
@@ -159,6 +231,7 @@ class CopyOnWriteTableCommitter implements TableCommitter {
   @Override
   public void stop() {
     stopped = true;
+    mergeOnReadTail.stop();
     LOG.info(
         "Coordinator is stopping: copy-on-write transitions in flight start no commit, delete or "
             + "send from here on");
@@ -166,16 +239,34 @@ class CopyOnWriteTableCommitter implements TableCommitter {
 
   @Override
   public CommitResult commit(TableCommitRequest request) {
-    TableReference tableReference = request.tableReference();
-    // what pendingTables() lists for a table not looked at yet has no state of its own, and never
-    // gets one: the reference lacks the table's UUID, and a drain under it would run beside the one
-    // the workers' responses start under theirs
-    if (request.envelopes().isEmpty()
-        && configuredTables.contains(tableReference.identifier())
-        && !states.containsKey(tableReference)) {
-      return resumeAfterRestart(request);
+    // read once: a lag step on the pool may remove the state of a recreated table between two
+    // reads, and what was found here is what commitTable goes on with
+    TableDrainState state = states.get(request.tableReference());
+    if (state != null) {
+      return commitTable(request, state);
     }
-    return commitTable(request);
+
+    return request.envelopes().isEmpty() ? commitWithoutState(request) : commitTable(request);
+  }
+
+  /**
+   * What {@link #pendingTables()} lists for a table not looked at yet, in the statistics lag or due
+   * a re-check of its health has no state of its own, and gets none in {@link #commitTable}: the
+   * reference lacks the table's UUID, and a drain under it would run beside the one the workers'
+   * responses start under theirs.
+   */
+  private CommitResult commitWithoutState(TableCommitRequest request) {
+    TableIdentifier tableIdentifier = request.tableReference().identifier();
+    // the lag token, taken before the table is loaded. Whatever removes the lag below does
+    // it by
+    // this token, and an evaluation by the head applies only at this version
+    long lagToken = statisticsLag.token(tableIdentifier);
+    long healthVersion = health.version(tableIdentifier);
+    if (states.unresumed(tableIdentifier)) {
+      return resumeAfterRestart(request, lagToken, healthVersion);
+    }
+
+    return lagStepRunner.commitWithoutResponses(request, null, lagToken, healthVersion);
   }
 
   /**
@@ -188,31 +279,37 @@ class CopyOnWriteTableCommitter implements TableCommitter {
    * UUID (only a loaded table can supply one) until its pointer has been read, and a drain to
    * resume runs under the reference a worker names the table by. A table routed dynamically is not
    * named here: its replay anchor (see {@link #replayAnchors()}) brings it back.
+   *
+   * <p>A table with a drain to resume has its state made first, under the reference with the UUID,
+   * as {@link #commitTable} requires of a request without responses.
    */
-  private CommitResult resumeAfterRestart(TableCommitRequest request) {
+  private CommitResult resumeAfterRestart(
+      TableCommitRequest request, long lagToken, long healthVersion) {
     TableIdentifier tableIdentifier = request.tableReference().identifier();
     Table table;
     try {
       table = catalog.loadTable(tableIdentifier);
     } catch (NoSuchTableException e) {
       // nothing to resume: once created and written to, it starts the ordinary way
-      unresumedTables.remove(tableIdentifier);
+      states.resumed(tableIdentifier);
       return CommitResult.committed(ImmutableList.of());
     }
 
     // before checking the active tasks, so that only a table with a drain to resume waits for a
     // cycle with tasks; and no state for the others, which would put every configured table under
-    // the staging sweep
+    // the staging cleanup
     String branch = config.tableConfig(tableIdentifier.toString()).commitBranch();
     if (!changeSets.pointsAtChangeSet(table, branch)) {
-      unresumedTables.remove(tableIdentifier);
-      return CommitResult.committed(ImmutableList.of());
+      states.resumed(tableIdentifier);
+      return lagStepRunner.commitWithoutResponses(request, table, lagToken, healthVersion);
     }
 
-    // startDrain takes the table off unresumedTables once it has read the pointer; until then (a
-    // cycle with no tasks defers before reading it) the table is listed again
+    // startDrain takes the table off the unresumed tables once it has read the pointer; until
+    // then (a cycle with no tasks defers before reading it) the table is listed again, and finds
+    // the state made here
     TableReference tableReference =
         TableReference.of(request.tableReference().catalog(), tableIdentifier, table.uuid());
+    states.getOrCreate(tableReference);
     return commitTable(
         new TableCommitRequest(
             tableReference,
@@ -223,21 +320,10 @@ class CopyOnWriteTableCommitter implements TableCommitter {
             request.activeTasks()));
   }
 
-  private static Set<TableIdentifier> configuredTables(IcebergSinkConfig config) {
-    Collection<String> names =
-        config.routingStrategy() == RecordRoutingStrategy.TOPIC_TO_TABLE
-            ? config.topicToTableMapping().values()
-            : config.tables();
-    if (names == null) {
-      return ImmutableSet.of();
-    }
-    return names.stream().map(TableIdentifier::parse).collect(ImmutableSet.toImmutableSet());
-  }
-
   /**
    * Under dynamic routing, holds the control topic at the latest response of the table in {@code
-   * envelopes}, if there is one (ADR-0042). A table the configuration names needs no anchor: it is
-   * probed after a restart. A merge-on-read tail is not one: the start spends it outright.
+   * envelopes}, if there is one. A table the configuration names needs no anchor: it is probed
+   * after a restart. A merge-on-read tail is not one: the start spends it outright.
    */
   private void anchorAt(TableDrainState state, List<Envelope> envelopes) {
     if (config.routingStrategy() != RecordRoutingStrategy.DYNAMIC_FIELD) {
@@ -255,9 +341,13 @@ class CopyOnWriteTableCommitter implements TableCommitter {
     }
   }
 
-  private CommitResult commitTable(TableCommitRequest request) {
-    TableDrainState state = states.computeIfAbsent(request.tableReference(), TableDrainState::new);
+  @VisibleForTesting
+  CommitResult commitTable(TableCommitRequest request) {
+    checkResponsesOrState(request);
+    return commitTable(request, states.getOrCreate(request.tableReference()));
+  }
 
+  private CommitResult commitTable(TableCommitRequest request, TableDrainState state) {
     // tryLock, never lock: doCommit() joins this pool from the coordinator thread, and what holds
     // the lock is a slice being planned or an Iceberg commit retrying, for minutes. A table
     // mid-transition is skipped: its envelopes stay buffered, its offsets held, and pendingTables()
@@ -266,11 +356,17 @@ class CopyOnWriteTableCommitter implements TableCommitter {
       return CommitResult.pending(ImmutableList.of());
     }
     try {
+      // a request without responses found a state that a lag step removed since (the table was
+      // created again): there is no drain to go on with, and the lag check takes the request
+      if (removedUnderRequestWithoutResponses(request, state)) {
+        return commitWithoutState(request);
+      }
+
       // reported once, whether or not this cycle does anything else: the change set that spent
       // them is persisted, so the coordinator may drop them from its buffer
       List<Envelope> consumed = takeConsumed(state);
 
-      stopIfASecondNameOfTheSameTable(state);
+      states.stopIfSecondNameOfSameTable(state);
 
       if (state.stopped()) {
         // already reported at ERROR, once, when it happened. Repeating it every commit interval
@@ -278,11 +374,7 @@ class CopyOnWriteTableCommitter implements TableCommitter {
         return CommitResult.failed(consumed);
       }
 
-      if (!request.activeTasks().isEmpty()) {
-        // refreshed every cycle rather than pinned for the whole drain: after a rebalance
-        // mid-drain, re-assignments would otherwise go to dead task ids
-        state.activeTasks = request.activeTasks();
-      }
+      refreshActiveTasks(state, request);
 
       if (state.active()) {
         retrySliceThatWaited(state);
@@ -315,7 +407,7 @@ class CopyOnWriteTableCommitter implements TableCommitter {
         endDrain(state);
         return CommitResult.failed(Envelopes.concat(consumed, spentByStart));
       } catch (RuntimeException e) {
-        if (!stopIfPermanent(state, e)) {
+        if (!states.stopIfPermanent(state, e)) {
           LOG.warn(
               "Failed to start copy-on-write drain for table {}, will try again next cycle",
               request.tableReference().identifier(),
@@ -333,6 +425,27 @@ class CopyOnWriteTableCommitter implements TableCommitter {
     }
   }
 
+  private static void refreshActiveTasks(TableDrainState state, TableCommitRequest request) {
+    if (!request.activeTasks().isEmpty()) {
+      // refreshed every cycle rather than pinned for the whole drain: after a rebalance
+      // mid-drain, re-assignments would otherwise go to dead task ids
+      state.activeTasks = request.activeTasks();
+    }
+  }
+
+  private boolean removedUnderRequestWithoutResponses(
+      TableCommitRequest request, TableDrainState state) {
+    return request.envelopes().isEmpty() && states.get(request.tableReference()) != state;
+  }
+
+  /** Only responses make a state in {@link #commitTable}, so a table has one state. */
+  private void checkResponsesOrState(TableCommitRequest request) {
+    Preconditions.checkState(
+        !request.envelopes().isEmpty() || states.contains(request.tableReference()),
+        "Invalid commit of table %s: no responses and no copy-on-write state under the reference",
+        request.tableReference().identifier());
+  }
+
   /**
    * Tables the coordinator must offer a commit to even when no response for them is buffered.
    *
@@ -342,6 +455,10 @@ class CopyOnWriteTableCommitter implements TableCommitter {
    * for a stream gone quiet. An active drain is listed too: {@code commit()} refreshes the active
    * tasks, and a drain spanning a rebalance needs that to stop handing slices to tasks that are
    * gone.
+   *
+   * <p>So are the tables of the statistics lag and those due a re-check of their health, under
+   * references without a UUID. A table whose lock a lag step holds is not listed for it: the step
+   * runs only on a table with nothing unapplied.
    */
   @Override
   public Set<TableReference> pendingTables() {
@@ -349,8 +466,12 @@ class CopyOnWriteTableCommitter implements TableCommitter {
     states.forEach(
         (tableReference, state) -> {
           if (!state.lock.tryLock()) {
-            // a transition is running, so this table is plainly not idle
-            pending.add(tableReference);
+            // a transition is running, so this table is plainly not idle; a lag step is not
+            // one. Read after the failed tryLock: a step over since leaves the flag down, and the
+            // table is listed, which errs on the safe side
+            if (!state.lagStepHoldsLock) {
+              pending.add(tableReference);
+            }
             return;
           }
           try {
@@ -358,7 +479,7 @@ class CopyOnWriteTableCommitter implements TableCommitter {
             // the tail of a change set whose envelopes are spent) and answering FAILED every
             // cycle is what keeps CommitComplete from claiming a valid-through it has not reached.
             // commit() answers without any IO and without repeating the ERROR
-            if (state.stopped() || state.active() || state.unfinishedDrain) {
+            if (!state.idle()) {
               pending.add(tableReference);
             }
           } finally {
@@ -366,8 +487,12 @@ class CopyOnWriteTableCommitter implements TableCommitter {
           }
         });
     // and a drain a previous coordinator left behind, before anything is known of it
-    unresumedTables.forEach(
-        tableIdentifier -> pending.add(TableReference.of(catalog.name(), tableIdentifier, null)));
+    states
+        .unresumed()
+        .forEach(
+            tableIdentifier ->
+                pending.add(TableReference.of(catalog.name(), tableIdentifier, null)));
+    lagStepRunner.addTables(pending);
     return pending;
   }
 
@@ -380,7 +505,7 @@ class CopyOnWriteTableCommitter implements TableCommitter {
   public Collection<Envelope> replayAnchors() {
     List<Envelope> anchors = Lists.newArrayList();
     states
-        .values()
+        .all()
         .forEach(
             state -> {
               Envelope anchor = state.replayAnchor;
@@ -495,19 +620,12 @@ class CopyOnWriteTableCommitter implements TableCommitter {
     }
 
     PermanentCopyOnWriteException failure =
-        new PermanentCopyOnWriteException(
-            String.format(
-                Locale.ROOT,
-                "task %s reported that slice %d of change set %s fails the same way on every "
-                    + "attempt, and that task's log names the cause and the remedy",
-                payload.taskId(),
-                payload.sliceSeq(),
-                payload.changeSetId()));
+        new PermanentCopyOnWriteException(CopyOnWriteMessages.permanentRewriteFailure(payload));
     state.awaiting = false;
     submit(
         state,
         () -> {
-          stopIfPermanent(state, failure);
+          states.stopIfPermanent(state, failure);
           discardSliceFiles(state, false);
           failDrain(state);
         });
@@ -515,7 +633,7 @@ class CopyOnWriteTableCommitter implements TableCommitter {
 
   @Override
   public void process(long nowMs, Supplier<Collection<Envelope>> bufferedResponses) {
-    for (TableDrainState state : states.values()) {
+    for (TableDrainState state : states.all()) {
       // a table whose transition is in flight is simply skipped this tick.
       // Waiting here would stall the coordinator's poll loop behind an Iceberg commit
       if (!state.lock.tryLock()) {
@@ -529,39 +647,18 @@ class CopyOnWriteTableCommitter implements TableCommitter {
 
         if (state.awaiting
             && nowMs - state.attempt.assignedAtMs() > config.copyOnWriteRewriteTimeoutMs()) {
-          cancelSlice(state, Cancellation.TIMED_OUT, timeoutReason(state));
+          cancelSlice(
+              state, Cancellation.TIMED_OUT, CopyOnWriteMessages.timeoutReason(state, config));
         }
       } finally {
         state.lock.unlock();
       }
     }
-
-    stagingCleanup.maybeClean(nowMs, bufferedResponses);
   }
 
-  private String timeoutReason(TableDrainState state) {
-    long timeoutMs = config.copyOnWriteRewriteTimeoutMs();
-    // no plan on the append path: an empty table or a new branch, with nothing to rewrite
-    long planBytes = state.planSummary == null ? 0 : state.planSummary.totalRewriteBytes();
-    if (planBytes > config.copyOnWriteMaxRewriteBytes()) {
-      return String.format(
-          Locale.ROOT,
-          "the slice plans %d bytes, over the %d byte quota, and was not rewritten within "
-              + "iceberg.tables.copy-on-write.rewrite-timeout-ms (%d ms); it is handed out again "
-              + "with the same plan, so raise that timeout to fit %d bytes (chunks received: %s)",
-          planBytes,
-          config.copyOnWriteMaxRewriteBytes(),
-          timeoutMs,
-          planBytes,
-          state.attempt.receivedChunks());
-    }
-
-    return String.format(
-        Locale.ROOT,
-        "no complete answer within %d ms from %s (chunks received: %s)",
-        timeoutMs,
-        state.attempt.missingTasks(),
-        state.attempt.receivedChunks());
+  @Override
+  public StagingCleanupSource stagingCleanupSource() {
+    return stagingCleanupSource;
   }
 
   /** What {@link #startDrain} managed to do with this cycle's envelopes. */
@@ -582,6 +679,7 @@ class CopyOnWriteTableCommitter implements TableCommitter {
       TableDrainState state, TableCommitRequest request, List<Envelope> spent) {
     TableReference tableReference = request.tableReference();
     TableIdentifier tableIdentifier = tableReference.identifier();
+    state.pendingFinal = null;
 
     Table table;
     try {
@@ -603,7 +701,7 @@ class CopyOnWriteTableCommitter implements TableCommitter {
       // and nothing of the table stays in memory: a state left behind (a drain it had leaves
       // unfinishedDrain set) would have pendingTables() list it, and this warning repeat, every
       // cycle for a table that is not there. One created again under the name starts afresh
-      states.remove(tableReference, state);
+      states.remove(state);
       return DrainStartOutcome.NOTHING_TO_DO;
     }
 
@@ -621,31 +719,31 @@ class CopyOnWriteTableCommitter implements TableCommitter {
       return DrainStartOutcome.DEFERRED;
     }
 
-    state.table = table;
-    state.branch = config.tableConfig(tableIdentifier.toString()).commitBranch();
-    state.stagingLocation =
-        StagedChangeFileWriter.stagingLocation(table, config.copyOnWriteStagingLocation());
+    state.bindTable(table, config);
     Set<Integer> identifierFieldIds = planner.identifierFieldIds(table, tableReference);
 
     ChangeSetStore.DrainStart start =
         changeSets.loadDrainState(
             table, state.branch, tableReference, state.stagingLocation, identifierFieldIds);
     // the pointer is read: whatever a previous coordinator left is this state's from here on
-    unresumedTables.remove(tableIdentifier);
+    states.resumed(tableIdentifier);
     // a pointer naming a change set that was just dropped is a drain nobody has finished: until the
     // change set adopting its files first commits, a failure anywhere below, the freeze included,
     // must leave the table offered a commit every cycle, buffered responses or not
     if (!start.carryOverFiles().isEmpty()) {
       state.unfinishedDrain = true;
     } else if (start.manifest() == null) {
-      // nothing left to drain: whatever the last change set anchored at is applied
+      // nothing left to drain: whatever the last change set anchored at is applied, and none is
+      // unfinished, or its pointer would be there. The final snapshot of the last one may still
+      // wait for its statistics: looked up before a tail takes the pointer off it
       state.replayAnchor = null;
+      state.unfinishedDrain = false;
+      state.pendingFinal = finalStatistics.lookUpPendingFinal(state, table, request.commitId());
     }
 
     TableCommitRequest offered = request;
     if (request.envelopes().stream().anyMatch(Envelopes::isDataWritten)) {
-      boolean drainInProgress = start.manifest() != null || !start.carryOverFiles().isEmpty();
-      offered = mergeOnReadTail.offer(request, drainInProgress, table, spent);
+      offered = mergeOnReadTail.offer(request, drainInProgress(state, start), table, spent);
       if (offered == null) {
         return DrainStartOutcome.DEFERRED;
       }
@@ -660,39 +758,21 @@ class CopyOnWriteTableCommitter implements TableCommitter {
               state.stagingLocation,
               identifierFieldIds,
               offered,
-              start.carryOverFiles(),
-              start.carryOverTopics());
+              start);
       if (frozen == null) {
-        LOG.info("Nothing to commit to table {}, skipping", tableIdentifier);
-        spent.addAll(offered.envelopes());
-        return DrainStartOutcome.NOTHING_TO_DO;
+        return nothingToFreeze(state, request, offered, spent);
       }
 
-      state.droppedManifestLocation = changeSets.adoptDroppedChangeSet(tableReference, start);
-      state.manifest = frozen.manifest();
-      state.manifestLocation = frozen.location();
-      state.cursor = null;
-      state.frozenEnvelopes = ImmutableList.copyOf(offered.envelopes());
+      state.beginFrozen(
+          frozen, changeSets.adoptDroppedChangeSet(tableReference, start), offered.envelopes());
+      state.unfinishedDrain = !start.carryOverFiles().isEmpty();
       // a change set adopting the files of a dropped one, frozen from an empty buffer, keeps the
       // anchor the dropped one had
       anchorAt(state, offered.envelopes());
-      state.spent = false;
-      state.freshlyFrozen = true;
-      state.unfinishedDrain = !start.carryOverFiles().isEmpty();
     } else {
-      // resumed from the snapshot summary: this change set's envelopes were spent by whoever froze
-      // it, possibly a previous coordinator. This cycle's envelopes are not part of it and stay
+      // resumed from the snapshot summary. This cycle's envelopes are not part of it and stay
       // buffered until it drains
-      state.manifest = start.manifest();
-      state.manifestLocation = start.manifestLocation();
-      state.cursor = start.cursor();
-      state.frozenEnvelopes = ImmutableList.of();
-      state.spent = false;
-      // a snapshot points at this manifest: it is not ours to delete on failure
-      state.freshlyFrozen = false;
-      // a persisted change set that is not finished: the table has to be revisited every cycle
-      // from here on, whether or not anything new is ever written to it again
-      state.unfinishedDrain = true;
+      state.beginResumed(start);
       // the envelope a restart replayed to get here is the one to replay after the next restart,
       // though the freeze after this drain will find it applied
       anchorAt(state, request.envelopes());
@@ -703,16 +783,7 @@ class CopyOnWriteTableCommitter implements TableCommitter {
           start.cursor());
     }
 
-    state.commitId = request.commitId();
-    // from the manifest, not from this cycle: a resumed drain exhausts a change set frozen in an
-    // earlier cycle, whose validThroughTs is the one its commits may state. This cycle's responses
-    // are not in it: they wait in the buffer for the next change set
-    state.validThroughTs = state.manifest.validThroughTs();
-    state.sliceSeq = 0;
-    state.changeSetBytesReplaced = 0;
-    state.changeSetSlicesCommitted = 0;
-    state.sliceProgressWarningsLogged = 0;
-    state.resetSliceRetryQuotas(config.copyOnWriteCommitRetries());
+    state.startChangeSet(request.commitId(), config.copyOnWriteCommitRetries());
 
     // normalizing and planning is the expensive half of starting a drain, and doCommit() must not
     // wait for it. Everything above is metadata IO, which merge-on-read does inline as well: the
@@ -721,15 +792,77 @@ class CopyOnWriteTableCommitter implements TableCommitter {
     return DrainStartOutcome.STARTED;
   }
 
+  private static boolean drainInProgress(TableDrainState state, ChangeSetStore.DrainStart start) {
+    return start.manifest() != null
+        || !start.carryOverFiles().isEmpty()
+        || state.pendingFinal != null;
+  }
+
+  /**
+   * A start that froze nothing: what it offered is spent, and a pending final snapshot it found
+   * gets a recount transition of its own, since no first slice recounts it.
+   */
+  private DrainStartOutcome nothingToFreeze(
+      TableDrainState state,
+      TableCommitRequest request,
+      TableCommitRequest offered,
+      List<Envelope> spent) {
+    spent.addAll(offered.envelopes());
+    TableIdentifier tableIdentifier = request.tableReference().identifier();
+    TableDrainState.PendingFinal pending = state.pendingFinal;
+    boolean tailWaits = pending != null && !Envelopes.without(request.envelopes(), spent).isEmpty();
+    finalStatistics.logNothingFrozen(state, tableIdentifier, tailWaits);
+    if (pending != null) {
+      setRecoverPendingFinal(state);
+    }
+
+    return DrainStartOutcome.NOTHING_TO_DO;
+  }
+
+  private void setRecoverPendingFinal(TableDrainState state) {
+    try {
+      exec.execute(() -> recoverPendingFinal(state));
+    } catch (RuntimeException e) {
+      LOG.debug(
+          "Cannot set the NDV recompute of the final snapshot of table {}",
+          state.tableReference.identifier(),
+          e);
+    }
+  }
+
+  /**
+   * The recount transition of a pending final snapshot, for a drain start that froze nothing. Its
+   * guard is its own, not {@link #submit}'s, and it reads the pending snapshot from the state as it
+   * runs: the first transition set for it recounts it, those set after leave by the guard. Takes no
+   * slot or permit.
+   */
+  private void recoverPendingFinal(TableDrainState state) {
+    state.lock.lock();
+    try {
+      TableDrainState.PendingFinal pending = state.pendingFinal;
+      if (stopped || !states.registeredAndIdle(state) || pending == null) {
+        LOG.debug(
+            "NDV recompute of the final snapshot of table {} is not done here: it is done "
+                + "already, or the table is gone, stopped or draining",
+            state.tableReference.identifier());
+        return;
+      }
+
+      finalStatistics.recountOrRefuse(state, pending, pending.commitId);
+    } finally {
+      state.lock.unlock();
+    }
+  }
+
   /**
    * Whether the responses were written for a table since dropped and created again under its name:
    * the UUID they carry is not the one of the table the name loads. Their reference keys a state of
    * its own beside the new table's, so drained, they would be a second drain into the new table,
    * laying changes older than its own over its newer values, from staged files written against
-   * another schema. They are dropped instead, as the change set frozen for the old table is (6.13),
-   * their staged files deleted by name: nothing else would, the staging cleanup of the new table
-   * keeps what its buffer names. The state goes, and its replay anchor with it. A reference without
-   * a UUID is not checked.
+   * another schema. They are dropped instead, as the change set frozen for the old table is, their
+   * staged files deleted by name: nothing else would, the staging cleanup of the new table keeps
+   * what its buffer names. The state goes, and its replay anchor with it. A reference without a
+   * UUID is not checked.
    */
   private boolean writtenForDroppedTable(
       TableDrainState state, TableCommitRequest request, Table table) {
@@ -751,8 +884,8 @@ class CopyOnWriteTableCommitter implements TableCommitter {
         table.uuid(),
         staged.size());
     CopyOnWriteFiles.deleteQuietly(table.io(), staged);
-    states.remove(tableReference, state);
-    drainingUnder.remove(writtenFor, tableReference);
+    states.remove(state);
+    states.forgetDrainUnder(writtenFor, tableReference);
     return true;
   }
 
@@ -798,6 +931,16 @@ class CopyOnWriteTableCommitter implements TableCommitter {
           state.sliceSeq);
       failDrain(state);
       return;
+    }
+
+    // the first slice of a drain that found a pending F recounts it before it plans
+    TableDrainState.PendingFinal pending = state.pendingFinal;
+    if (pending != null) {
+      finalStatistics.recountOrRefuse(state, pending, state.commitId);
+      if (stopped) {
+        // the recount is a long read: nothing is planned or written for a coordinator that is gone
+        return;
+      }
     }
 
     Snapshot base = SliceCommitter.baseSnapshot(table, state.branch);
@@ -927,19 +1070,6 @@ class CopyOnWriteTableCommitter implements TableCommitter {
     return plan.slice();
   }
 
-  private static String sliceProgressWarning(TableDrainState state) {
-    return String.format(
-        Locale.ROOT,
-        "Copy-on-write change set %s for table %s is being sliced: %d slice(s) committed so far, "
-            + "%d byte(s) rewritten in them. To cut the slicing rather than live with it, raise "
-            + "iceberg.control.commit.interval-ms, partition or sort the table by the key, or "
-            + "switch the table back to merge-on-read",
-        state.manifest.changeSetId(),
-        state.tableReference.identifier(),
-        state.changeSetSlicesCommitted,
-        state.changeSetBytesReplaced);
-  }
-
   private void warnOverByteQuota(
       TableDrainState state, PlanSummary summary, int keys, int sliceKeys) {
     UUID changeSetId = state.manifest.changeSetId();
@@ -949,28 +1079,7 @@ class CopyOnWriteTableCommitter implements TableCommitter {
 
     state.overByteQuotaWarnedFor = changeSetId;
     state.overByteQuotaWarning =
-        String.format(
-            Locale.ROOT,
-            "Copy-on-write change set %s for table %s: a single key plans %d bytes, over the %d byte "
-                + "quota, so slice %d goes out over it with the %d of %d key(s) that plan no more than "
-                + "one key does; %d%% of the planned files have no bounds on the identifier columns. "
-                + "Such a slice has to be rewritten within "
-                + "iceberg.tables.copy-on-write.rewrite-timeout-ms (%d ms), or it is cancelled and "
-                + "handed out again whole every cycle, never getting any further: raise that timeout "
-                + "to fit %d bytes. Slices of this table stay over the quota until one of: raise "
-                + "iceberg.tables.copy-on-write.max-rewrite-bytes, enable write.metadata.metrics.* for "
-                + "the identifier columns, partition or sort the table by the key, or switch the table "
-                + "back to merge-on-read",
-            changeSetId,
-            state.tableReference.identifier(),
-            summary.totalRewriteBytes(),
-            config.copyOnWriteMaxRewriteBytes(),
-            state.sliceSeq,
-            keys,
-            sliceKeys,
-            Math.round(summary.fractionFilesWithoutBounds() * 100),
-            config.copyOnWriteRewriteTimeoutMs(),
-            summary.totalRewriteBytes());
+        CopyOnWriteMessages.overByteQuota(state, summary, keys, sliceKeys, config);
     LOG.warn("{}", state.overByteQuotaWarning);
   }
 
@@ -981,14 +1090,7 @@ class CopyOnWriteTableCommitter implements TableCommitter {
     }
 
     state.filesWithoutBoundsWarnedFor = changeSetId;
-    LOG.warn(
-        "Copy-on-write change set {} for table {}: {}% of the planned files have no bounds on "
-            + "the identifier columns and cannot be pruned by them, so they are rewritten on "
-            + "every slice that touches their key range. Enable write.metadata.metrics.* for the "
-            + "identifier columns to avoid it",
-        changeSetId,
-        state.tableReference.identifier(),
-        Math.round(summary.fractionFilesWithoutBounds() * 100));
+    LOG.warn("{}", CopyOnWriteMessages.filesWithoutBounds(state, summary));
   }
 
   private void finishSlice(TableDrainState state) {
@@ -1040,9 +1142,7 @@ class CopyOnWriteTableCommitter implements TableCommitter {
         state.normalizedLocation = null;
       }
       if (state.drained) {
-        ChangeSetManifest manifest = state.manifest;
-        String manifestLocation = state.manifestLocation;
-        unlessStopped(() -> changeSets.cleanupChangeSet(table.io(), manifest, manifestLocation));
+        finalStatistics.finishChangeSet(state, snapshotId);
       }
 
       send(
@@ -1069,7 +1169,7 @@ class CopyOnWriteTableCommitter implements TableCommitter {
           snapshotId,
           state.commitId,
           state.drained,
-          rewriteOutcome(state, committedFiles));
+          CopyOnWriteMessages.rewriteOutcome(state, committedFiles));
 
       if (state.drained) {
         state.unfinishedDrain = false;
@@ -1080,7 +1180,7 @@ class CopyOnWriteTableCommitter implements TableCommitter {
         // on every intermediate commit, unlike warnOverByteQuota: an operator filtering on WARN
         // must see write amplification while it happens
         state.sliceProgressWarningsLogged += 1;
-        LOG.warn("{}", sliceProgressWarning(state));
+        LOG.warn("{}", CopyOnWriteMessages.sliceProgress(state));
         startSliceGuarded(state);
       }
     } catch (RuntimeException e) {
@@ -1088,7 +1188,7 @@ class CopyOnWriteTableCommitter implements TableCommitter {
       // next slice) fails the drain until next cycle, never touches a committed file.
       // discardSliceFiles can only reach the next slice's normalized file: the committed files
       // were taken off the state above, and the next slice has collected no answers yet
-      if (!stopIfPermanent(state, e)) {
+      if (!states.stopIfPermanent(state, e)) {
         LOG.warn(
             "Copy-on-write bookkeeping after snapshot {} of table {} failed, the snapshot stands; "
                 + "the drain resumes next cycle",
@@ -1180,7 +1280,7 @@ class CopyOnWriteTableCommitter implements TableCommitter {
         return settleUnknownOutcome(state, e);
       }
       // the commit did not happen: nothing references the files, and they are this attempt's
-      if (!stopIfPermanent(state, e)) {
+      if (!states.stopIfPermanent(state, e)) {
         LOG.warn(
             "Copy-on-write commit for table {} failed, will try again next cycle",
             state.tableReference.identifier(),
@@ -1229,6 +1329,9 @@ class CopyOnWriteTableCommitter implements TableCommitter {
             + "cycle",
         state.tableReference.identifier(),
         failure);
+    if (state.drained) {
+      finalStatistics.finalSliceNotFound(state);
+    }
     // resetting the state lets go of the files without deleting them
     failDrain(state);
     return false;
@@ -1241,7 +1344,7 @@ class CopyOnWriteTableCommitter implements TableCommitter {
     try {
       startSlice(state);
     } catch (RuntimeException e) {
-      if (!stopIfPermanent(state, e)) {
+      if (!states.stopIfPermanent(state, e)) {
         LOG.warn(
             "Could not start slice {} of change set {} for table {}, the drain resumes next cycle",
             state.sliceSeq,
@@ -1252,23 +1355,6 @@ class CopyOnWriteTableCommitter implements TableCommitter {
       discardSliceFiles(state, false);
       failDrain(state);
     }
-  }
-
-  private String rewriteOutcome(TableDrainState state, List<DataFile> committedFiles) {
-    long bytesWritten = committedFiles.stream().mapToLong(DataFile::fileSizeInBytes).sum();
-    if (state.planSummary == null) {
-      // the append path: an empty table or a new branch, where nothing was planned and so there is
-      // no before-and-after to report
-      return String.format(
-          Locale.ROOT,
-          "appended %d file(s), %d byte(s), nothing replaced",
-          committedFiles.size(),
-          bytesWritten);
-    }
-    return state
-        .planSummary
-        .withRewriteResult(committedFiles.size(), bytesWritten, state.attempt.assignedTaskCount())
-        .toString();
   }
 
   /** Why a slice is cancelled, which decides when it is handed out again. */
@@ -1284,17 +1370,7 @@ class CopyOnWriteTableCommitter implements TableCommitter {
   private void cancelSlice(TableDrainState state, Cancellation cause, String reason) {
     state.cancelledInARow += 1;
     boolean retryAtOnce = cause == Cancellation.FAILED_REWRITE && state.retriesLeft > 0;
-    state.cancellationWarning =
-        String.format(
-            Locale.ROOT,
-            "Cancelling slice %d of change set %s for table %s: %s. Attempts at this slice "
-                + "cancelled in a row: %d; handing it out again %s",
-            state.sliceSeq,
-            state.manifest.changeSetId(),
-            state.tableReference.identifier(),
-            reason,
-            state.cancelledInARow,
-            retryAtOnce ? "now" : "on the next cycle");
+    state.cancellationWarning = CopyOnWriteMessages.cancellation(state, reason, retryAtOnce);
     LOG.warn("{}", state.cancellationWarning);
 
     // handed to the commit pool rather than deleted here: cancelSlice is reached from the
@@ -1330,65 +1406,6 @@ class CopyOnWriteTableCommitter implements TableCommitter {
       CopyOnWriteFiles.deleteQuietly(state.table.io(), state.manifestLocation);
     }
     state.reset();
-  }
-
-  /**
-   * Stops a table that is already draining under another name, before it starts a drain of its own.
-   *
-   * <p>A state is keyed by the name a worker wrote its change files under, and a case-insensitive
-   * catalog answers to more than one spelling: {@code iceberg.tables=db.t,DB.T} names one table
-   * twice, and each name would get a drain of its own: two slice sequences and two {@code
-   * OverwriteFiles} streams into one table, each writing the cursor the other one reads. The
-   * table's UUID tells them apart from two different tables; the first reference to claim it keeps
-   * draining, every other is stopped once, with the remedy. The claim is atomic because tables of
-   * one cycle commit on the pool side by side.
-   *
-   * <p>Called with {@code state}'s lock held. A table whose UUID the catalog does not report cannot
-   * be told apart this way and is left alone.
-   */
-  private void stopIfASecondNameOfTheSameTable(TableDrainState state) {
-    UUID tableUuid = state.tableReference.uuid();
-    if (tableUuid == null || state.stopped()) {
-      return;
-    }
-
-    TableReference draining = drainingUnder.putIfAbsent(tableUuid, state.tableReference);
-    if (draining == null || draining.equals(state.tableReference)) {
-      return;
-    }
-
-    stopIfPermanent(
-        state,
-        new PermanentCopyOnWriteException(
-            String.format(
-                Locale.ROOT,
-                "this is the table already draining as %s -- one Iceberg table (UUID %s) under two "
-                    + "names, which a case-insensitive catalog accepts. Each name would plan, "
-                    + "slice and commit a copy-on-write drain of its own into that one table, so "
-                    + "this one is stopped: name the table once in iceberg.tables (or once per "
-                    + "routing rule), keeping the spelling that is draining",
-                draining.identifier(),
-                tableUuid)));
-  }
-
-  private boolean stopIfPermanent(TableDrainState state, RuntimeException failure) {
-    if (!(failure instanceof PermanentCopyOnWriteException)) {
-      return false;
-    }
-
-    state.stoppedReason = failure.getMessage();
-    // a manifest the pointer names that is gone stops the table as it is read: pendingTables()
-    // must not go on offering it through resumeAfterRestart
-    unresumedTables.remove(state.tableReference.identifier());
-    LOG.error(
-        "Copy-on-write is stopped for table {}: {}. Retrying would fail the same way every commit "
-            + "interval, so it is not retried: this table's responses stay in the coordinator's "
-            + "buffer and its control topic offsets stay held until the connector is restarted. "
-            + "Fix what this message names, then restart the connector",
-        state.tableReference.identifier(),
-        failure.getMessage(),
-        failure);
-    return true;
   }
 
   private void reportRejection(TableDrainState state, TableCommitRejectedException rejection) {
@@ -1456,7 +1473,7 @@ class CopyOnWriteTableCommitter implements TableCommitter {
             try {
               transition.run();
             } catch (RuntimeException e) {
-              if (!stopIfPermanent(state, e)) {
+              if (!states.stopIfPermanent(state, e)) {
                 LOG.warn(
                     "Copy-on-write slice transition failed for table {}, will try again next cycle",
                     state.tableReference.identifier(),
@@ -1538,7 +1555,7 @@ class CopyOnWriteTableCommitter implements TableCommitter {
 
   @VisibleForTesting
   String sliceProgressWarning(TableReference tableReference) {
-    return underLock(tableReference, CopyOnWriteTableCommitter::sliceProgressWarning);
+    return underLock(tableReference, CopyOnWriteMessages::sliceProgress);
   }
 
   @VisibleForTesting

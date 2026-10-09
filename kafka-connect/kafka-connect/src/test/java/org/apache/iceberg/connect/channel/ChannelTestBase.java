@@ -32,11 +32,14 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.Table;
+import org.apache.iceberg.catalog.Catalog;
 import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.connect.IcebergSinkConfig;
+import org.apache.iceberg.connect.MetadataEvents;
 import org.apache.iceberg.connect.MockIcebergSinkTask;
 import org.apache.iceberg.connect.TableSinkConfig;
+import org.apache.iceberg.connect.data.StatisticsStep;
 import org.apache.iceberg.inmemory.InMemoryCatalog;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
@@ -54,6 +57,7 @@ import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.TopicPartitionInfo;
 import org.apache.kafka.common.serialization.ByteArraySerializer;
 import org.apache.kafka.common.serialization.StringSerializer;
+import org.apache.kafka.connect.sink.SinkTaskContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 
@@ -91,6 +95,7 @@ public class ChannelTestBase {
   protected static final String OFFSETS_SNAPSHOT_PROP =
       String.format("kafka.connect.offsets.%s.%s", CTL_TOPIC_NAME, CONNECT_CONSUMER_GROUP_ID);
   protected static final String VALID_THROUGH_TS_SNAPSHOT_PROP = "kafka.connect.valid-through-ts";
+  protected static final int STATISTICS_LG_K = 12;
 
   @BeforeEach
   @SuppressWarnings("deprecation")
@@ -134,6 +139,41 @@ public class ChannelTestBase {
   @AfterEach
   public void after() throws IOException {
     catalog.close();
+  }
+
+  /**
+   * Turns statistics on for the connector and for {@code tables}: NDV of the default column set, no
+   * partition statistics, a gap limit no test reaches. Every other table keeps statistics off.
+   */
+  protected void enableStatistics(TableIdentifier... tables) {
+    when(config.statisticsInUse()).thenReturn(true);
+    when(config.statisticsLgNominalEntries()).thenReturn(STATISTICS_LG_K);
+    when(config.statisticsGapMaxFiles()).thenReturn(1_000);
+    when(config.statisticsGapMaxBytes()).thenReturn(Long.MAX_VALUE);
+    when(config.statisticsRetainSnapshots()).thenReturn(10);
+    when(config.statisticsStaleDeletedRatio()).thenReturn(0.2);
+    when(config.statisticsHealthRecheckIntervalMs()).thenReturn(TimeUnit.HOURS.toMillis(1));
+    for (TableIdentifier tableIdentifier : tables) {
+      when(config.tableConfig(tableIdentifier.toString()))
+          .thenReturn(
+              new TableSinkConfig(
+                  null, ImmutableList.of(), ImmutableList.of(), null, true, false, null));
+    }
+  }
+
+  /** A coordinator whose committers run {@code step}, committing a cycle once it is complete. */
+  protected Coordinator coordinatorWithStep(
+      Catalog coordinatorCatalog, MetadataEvents metadataEvents, StatisticsStep step) {
+    when(config.commitIntervalMs()).thenReturn(0);
+    when(config.commitTimeoutMs()).thenReturn(Integer.MAX_VALUE);
+    return new Coordinator(
+        coordinatorCatalog,
+        config,
+        ImmutableList.of(),
+        clientFactory,
+        mock(SinkTaskContext.class),
+        metadataEvents,
+        step);
   }
 
   protected void initConsumer() {

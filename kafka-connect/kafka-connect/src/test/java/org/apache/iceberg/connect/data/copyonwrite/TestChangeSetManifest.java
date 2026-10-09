@@ -22,7 +22,14 @@ import static org.apache.iceberg.types.Types.NestedField.optional;
 import static org.apache.iceberg.types.Types.NestedField.required;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.io.UncheckedIOException;
 import java.math.BigDecimal;
 import java.nio.ByteBuffer;
 import java.time.LocalDate;
@@ -43,6 +50,7 @@ import org.apache.iceberg.StructLike;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.TableIdentifier;
+import org.apache.iceberg.connect.data.StatisticsAnswer;
 import org.apache.iceberg.connect.events.StagedChangeFile;
 import org.apache.iceberg.connect.events.TableReference;
 import org.apache.iceberg.data.GenericRecord;
@@ -63,6 +71,8 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 public class TestChangeSetManifest {
+
+  private static final ObjectMapper MAPPER = new ObjectMapper();
 
   private static final Namespace NAMESPACE = Namespace.of("db");
   private static final TableIdentifier TABLE_IDENTIFIER = TableIdentifier.of(NAMESPACE, "tbl");
@@ -184,6 +194,214 @@ public class TestChangeSetManifest {
 
     assertThat(manifest.formatVersion()).isEqualTo(ChangeSetManifest.CURRENT_FORMAT_VERSION);
     assertThat(manifest.formatVersionSupported()).isTrue();
+  }
+
+  @Test
+  public void testSketchFilesAndAdoptedChangeSetIdsSurviveRoundTrip() throws IOException {
+    List<StagedChangeFile> stagedFiles =
+        ImmutableList.<StagedChangeFile>builder()
+            .addAll(writeOneStagedFile())
+            .addAll(writeOneStagedFile())
+            .build();
+    UUID dropped = UUID.randomUUID();
+    UUID droppedBefore = UUID.randomUUID();
+    String location = writeManifest(stagedFiles);
+    ObjectNode sketch =
+        sketchFileJson("s3://bucket/puffin-a.stats", 120L, 40L, stagedFiles.get(0).location());
+    withStatisticsFields(location, 1, List.of(sketch), List.of(droppedBefore, dropped));
+
+    ChangeSetManifest read = ChangeSetManifest.read(table.io(), location);
+
+    List<ChangeSetManifest.SketchFileEntry> sketchFiles = read.sketchFiles();
+    assertThat(sketchFiles).hasSize(1);
+    ChangeSetManifest.SketchFileEntry entry = sketchFiles.get(0);
+    assertThat(entry.location()).isEqualTo("s3://bucket/puffin-a.stats");
+    assertThat(entry.fileSizeBytes()).isEqualTo(120L);
+    assertThat(entry.footerSizeBytes()).isEqualTo(40L);
+    assertThat(entry.stagedFiles()).containsExactly(stagedFiles.get(0).location());
+    assertThat(read.adoptedChangeSetIds()).containsExactly(droppedBefore, dropped);
+
+    String rewritten = location + ".rewritten.json";
+    read.write(table.io(), rewritten);
+    JsonNode written = readJson(rewritten);
+    assertThat(written.get("sketchFiles")).isEqualTo(asRead(MAPPER.createArrayNode().add(sketch)));
+    assertThat(written.get("adoptedChangeSetIds"))
+        .isEqualTo(MAPPER.createArrayNode().add(droppedBefore.toString()).add(dropped.toString()));
+  }
+
+  /**
+   * A manifest written before the fields existed (or of a change set without Puffin files and
+   * adopted change sets, which leaves them out) reads them as empty lists.
+   */
+  @Test
+  public void testManifestWithoutFieldsReadsThemAsEmptyLists() throws IOException {
+    String location = writeManifest(writeOneStagedFile());
+    assertThat(readJson(location).has("sketchFiles")).isFalse();
+    assertThat(readJson(location).has("adoptedChangeSetIds")).isFalse();
+
+    ChangeSetManifest read = ChangeSetManifest.read(table.io(), location);
+
+    assertThat(read.sketchFiles()).isEmpty();
+    assertThat(read.adoptedChangeSetIds()).isEmpty();
+  }
+
+  /** A manifest of a format this build does not know is trusted with nothing but its files. */
+  @Test
+  public void testStatisticsFieldsOfUnsupportedFormatAreNotRead() throws IOException {
+    List<StagedChangeFile> stagedFiles = writeOneStagedFile();
+    String location = writeManifest(stagedFiles);
+    withStatisticsFields(
+        location,
+        ChangeSetManifest.CURRENT_FORMAT_VERSION + 1,
+        List.of(sketchFileJson("s3://bucket/puffin.stats", 1L, 1L, stagedFiles.get(0).location())),
+        List.of(UUID.randomUUID()));
+
+    ChangeSetManifest read = ChangeSetManifest.read(table.io(), location);
+
+    assertThat(read.formatVersionSupported()).isFalse();
+    assertThat(read.sketchFiles()).isEmpty();
+    assertThat(read.adoptedChangeSetIds()).isEmpty();
+  }
+
+  /** Each answer holds the staged files of its Puffin file; the uncovered rest get one without. */
+  @Test
+  public void testAnswersOfStepAreOnePerSketchFileAndOneWithoutForRest() throws IOException {
+    List<StagedChangeFile> stagedFiles =
+        ImmutableList.<StagedChangeFile>builder()
+            .addAll(writeOneStagedFile())
+            .addAll(writeOneStagedFile())
+            .addAll(writeOneStagedFile())
+            .addAll(writeOneStagedFile())
+            .build();
+    String location = writeManifest(stagedFiles);
+    withStatisticsFields(
+        location,
+        1,
+        List.of(
+            sketchFileJson(
+                "s3://bucket/puffin-a.stats",
+                10L,
+                2L,
+                stagedFiles.get(0).location(),
+                stagedFiles.get(2).location()),
+            sketchFileJson("s3://bucket/puffin-b.stats", 20L, 3L, stagedFiles.get(1).location())),
+        List.of());
+
+    List<StatisticsAnswer> answers =
+        ChangeSetManifest.read(table.io(), location).statisticsAnswers(42L);
+
+    assertThat(answers)
+        .hasSize(3)
+        .allSatisfy(answer -> assertThat(answer.snapshotId()).isEqualTo(42L));
+    assertThat(answers).allSatisfy(answer -> assertThat(answer.dataFiles()).isEmpty());
+    assertThat(answers.get(0).sketchFile().location()).isEqualTo("s3://bucket/puffin-a.stats");
+    assertThat(answers.get(0).sketchFile().fileSizeBytes()).isEqualTo(10L);
+    assertThat(answers.get(0).sketchFile().footerSizeBytes()).isEqualTo(2L);
+    assertThat(locations(answers.get(0)))
+        .containsExactly(stagedFiles.get(0).location(), stagedFiles.get(2).location());
+    assertThat(answers.get(1).sketchFile().location()).isEqualTo("s3://bucket/puffin-b.stats");
+    assertThat(locations(answers.get(1))).containsExactly(stagedFiles.get(1).location());
+    // not covered by any Puffin file: an answer without a reference, recounted by its staged file
+    assertThat(answers.get(2).sketchFile()).isNull();
+    assertThat(locations(answers.get(2))).containsExactly(stagedFiles.get(3).location());
+    assertThat(answers.get(2).stagedFiles().get(0).recordCount())
+        .isEqualTo(stagedFiles.get(3).recordCount());
+  }
+
+  @Test
+  public void testAnswersOfManifestWithoutSketchFilesAreOneWithoutReference() {
+    List<StagedChangeFile> stagedFiles =
+        ImmutableList.<StagedChangeFile>builder()
+            .addAll(writeOneStagedFile())
+            .addAll(writeOneStagedFile())
+            .build();
+    String location = writeManifest(stagedFiles);
+
+    List<StatisticsAnswer> answers =
+        ChangeSetManifest.read(table.io(), location).statisticsAnswers(7L);
+
+    assertThat(answers).hasSize(1);
+    assertThat(answers.get(0).sketchFile()).isNull();
+    assertThat(answers.get(0).snapshotId()).isEqualTo(7L);
+    assertThat(locations(answers.get(0)))
+        .containsExactly(stagedFiles.get(0).location(), stagedFiles.get(1).location());
+  }
+
+  @Test
+  public void testAnswersOfManifestWhosePuffinFilesCoverEveryFileHaveNoneWithoutReference()
+      throws IOException {
+    List<StagedChangeFile> stagedFiles = writeOneStagedFile();
+    String location = writeManifest(stagedFiles);
+    withStatisticsFields(
+        location,
+        1,
+        List.of(sketchFileJson("s3://bucket/puffin.stats", 1L, 1L, stagedFiles.get(0).location())),
+        List.of());
+
+    List<StatisticsAnswer> answers =
+        ChangeSetManifest.read(table.io(), location).statisticsAnswers(7L);
+
+    assertThat(answers).hasSize(1);
+    assertThat(answers.get(0).sketchFile()).isNotNull();
+  }
+
+  private String writeManifest(List<StagedChangeFile> stagedFiles) {
+    ChangeSetManifest manifest =
+        ChangeSetManifest.freeze(
+            table, ID_FIELDS, stagedFiles, Set.of("topic-a"), Map.of(0, 100L), null);
+    String location =
+        ChangeSetManifest.location(
+            table.location() + "/_staging", TABLE_REFERENCE, "cg-connect", manifest.changeSetId());
+    manifest.write(table.io(), location);
+    return location;
+  }
+
+  private static ObjectNode sketchFileJson(
+      String location, long fileSizeBytes, long footerSizeBytes, String... stagedFiles) {
+    ObjectNode node = MAPPER.createObjectNode();
+    node.put("location", location);
+    node.put("fileSizeBytes", fileSizeBytes);
+    node.put("footerSizeBytes", footerSizeBytes);
+    ArrayNode files = node.putArray("stagedFiles");
+    for (String file : stagedFiles) {
+      files.add(file);
+    }
+    return node;
+  }
+
+  /** The manifest at {@code location} as a build with the statistics fields writes it. */
+  private void withStatisticsFields(
+      String location, int formatVersion, List<ObjectNode> sketchFiles, List<UUID> adopted)
+      throws IOException {
+    ObjectNode root = (ObjectNode) readJson(location);
+    root.put("format-version", formatVersion);
+    root.putArray("sketchFiles").addAll(sketchFiles);
+    ArrayNode adoptedIds = root.putArray("adoptedChangeSetIds");
+    adopted.forEach(id -> adoptedIds.add(id.toString()));
+    try (OutputStream out = table.io().newOutputFile(location).createOrOverwrite()) {
+      MAPPER.writeValue(out, root);
+    }
+  }
+
+  /** {@code node} as read from a file: the numbers of a read tree are ints where they fit. */
+  private static JsonNode asRead(JsonNode node) {
+    try {
+      return MAPPER.readTree(MAPPER.writeValueAsString(node));
+    } catch (IOException e) {
+      throw new UncheckedIOException(e);
+    }
+  }
+
+  private JsonNode readJson(String location) throws IOException {
+    try (InputStream in = table.io().newInputFile(location).newStream()) {
+      return MAPPER.readTree(in);
+    }
+  }
+
+  private static List<String> locations(StatisticsAnswer answer) {
+    return answer.stagedFiles().stream()
+        .map(StagedChangeFile::location)
+        .collect(Collectors.toList());
   }
 
   /**

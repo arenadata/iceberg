@@ -114,7 +114,7 @@ public class TestCommitState {
     // that arrived while a drain was running belongs to no change set yet, so nothing in the table
     // points at its staged files. A drain outlasting the orphan TTL would have them deleted
     // before the freeze that adopts them. CommitState owns the buffer; reading staged files out of
-    // it is the copy-on-write cleanup's business, so the projection lives there
+    // it is the staging cleanup's business, so the projection lives there
     CommitState commitState = new CommitState(mock(IcebergSinkConfig.class));
     commitState.startNewCommit();
 
@@ -137,12 +137,12 @@ public class TestCommitState {
                 ImmutableList.of(staged)));
     commitState.addResponse(rowChanges);
 
-    assertThat(StagingCleanupScheduler.stagedFileLocations(commitState.bufferedResponses()))
+    assertThat(StagingCleanupScheduler.bufferedReachable(commitState.bufferedResponses()).anchors())
         .containsExactly(staged.location());
 
     // once the response is spent it stops protecting anything
     commitState.clearResponses(ImmutableList.of(rowChanges));
-    assertThat(StagingCleanupScheduler.stagedFileLocations(commitState.bufferedResponses()))
+    assertThat(StagingCleanupScheduler.bufferedReachable(commitState.bufferedResponses()).live())
         .isEmpty();
   }
 

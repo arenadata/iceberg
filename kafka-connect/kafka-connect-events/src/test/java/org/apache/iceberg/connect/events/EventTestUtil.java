@@ -107,4 +107,8 @@ class EventTestUtil {
         ImmutableMap.of(1, ByteBuffer.wrap(new byte[] {9})),
         ImmutableList.of(1));
   }
+
+  static SketchFile createSketchFile() {
+    return new SketchFile("path/to/kc-staging/stats/sketches.puffin", 1234L, 56L);
+  }
 }

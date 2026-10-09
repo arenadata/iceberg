@@ -49,6 +49,10 @@ public class TestContext {
   private static final String AWS_ACCESS_KEY = "admin";
   private static final String AWS_SECRET_KEY = "password";
   private static final String AWS_REGION = "us-east-1";
+  private static final String CONNECT_SERVICE = "connect";
+  private static final String COMPOSE_PROJECT_LABEL = "com.docker.compose.project";
+
+  private final String composeProject;
 
   public static synchronized TestContext instance() {
     if (instance == null) {
@@ -61,9 +65,21 @@ public class TestContext {
     ComposeContainer container =
         new ComposeContainer(new File("./docker/docker-compose.yml"))
             .withStartupTimeout(Duration.ofMinutes(2))
-            .waitingFor("connect", Wait.forHttp("/connectors"))
+            .waitingFor(CONNECT_SERVICE, Wait.forHttp("/connectors"))
             .waitingFor("iceberg", Wait.forHealthcheck());
     container.start();
+    this.composeProject =
+        container
+            .getContainerByServiceName(CONNECT_SERVICE)
+            .map(state -> state.getContainerInfo().getConfig().getLabels())
+            .map(labels -> labels.get(COMPOSE_PROJECT_LABEL))
+            .orElseThrow(
+                () -> new IllegalStateException("No compose project on the container of connect"));
+  }
+
+  /** The random compose project name of the stand; every container of it carries it as a label. */
+  public String composeProject() {
+    return composeProject;
   }
 
   public void startConnector(KafkaConnectUtils.Config config) {

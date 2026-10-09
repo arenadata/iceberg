@@ -64,7 +64,7 @@ import org.apache.iceberg.util.LocationUtil;
  */
 public class StagedChangeFileWriter {
 
-  private static final String STAGING_DIR = "kc-copy-on-write-staging";
+  private static final String STAGING_DIR = "kc-staging";
 
   private final Table table;
   private final Set<Integer> identifierFieldIds;
@@ -103,8 +103,8 @@ public class StagedChangeFileWriter {
     // from those of its predecessor, the way OutputFileFactory uses an operation id
     String writerEpoch = UUID.randomUUID().toString();
     // table / group / task / epoch, in that order: the staging location may be shared by a fan-out
-    // connector, several connectors may write one table and each sweeps only its own group, the
-    // task id gives sweeping a narrow prefix, and the epoch separates writers
+    // connector, several connectors may write one table and each cleans up only its own group, the
+    // task id gives the cleanup a narrow prefix, and the epoch separates writers
     this.directory =
         String.format(
             "%s/%s/%s",
@@ -120,26 +120,31 @@ public class StagedChangeFileWriter {
    * to place its staged files.
    *
    * <p>A trailing slash of the configured value is dropped: every path is joined under it with a
-   * separator of its own, and the sweep compares the locations it lists with the written ones as
+   * separator of its own, and the cleanup compares the locations it lists with the written ones as
    * plain strings.
    */
   public static String stagingLocation(Table table, String configured) {
+    return stagingLocation(table.location(), configured);
+  }
+
+  /** {@link #stagingLocation(Table, String)} of a table at {@code tableLocation}. */
+  public static String stagingLocation(String tableLocation, String configured) {
     return configured != null
         ? LocationUtil.stripTrailingSlash(configured)
-        : table.location() + "/" + STAGING_DIR;
+        : tableLocation + "/" + STAGING_DIR;
   }
 
   /**
    * One connector's staging directory for one table, {@code <staging>/<tableDir>/<groupDir>}:
-   * staged files, change set manifests, normalized files and the sweep prefix all live under it,
+   * staged files, change set manifests, normalized files and the cleanup prefix all live under it,
    * and this is the only place that spells it.
    *
    * <p>The table part is the namespace levels and the table name joined with {@code .}; the group
-   * part is the connector's group id, so the sweep of one connector never lists another's files. In
-   * every part {@code .}, {@code /} and {@code %} are escaped as {@code %XX}: otherwise table
+   * part is the connector's group id, so the cleanup of one connector never lists another's files.
+   * In every part {@code .}, {@code /} and {@code %} are escaped as {@code %XX}: otherwise table
    * {@code c} in namespace {@code a.b} and table {@code b.c} in namespace {@code a} share a
-   * directory, and the sweep of one deletes the files of the other. Names without those characters
-   * keep the directory they print as.
+   * directory, and the cleanup of one deletes the files of the other. Names without those
+   * characters keep the directory they print as.
    */
   public static String stagingDirectory(
       String stagingLocation, TableReference tableReference, String groupId) {

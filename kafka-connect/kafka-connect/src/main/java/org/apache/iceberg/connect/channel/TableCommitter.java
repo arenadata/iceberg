@@ -68,14 +68,19 @@ interface TableCommitter {
   /**
    * Advances whatever this committer has in flight. Must not block the coordinator thread.
    *
-   * @param bufferedResponses the coordinator's commit buffer, as a supplier rather than a value.
-   *     Copy-on-write's staging cleanup needs the staged files these responses name (they belong to
-   *     no change set yet, so no manifest and no snapshot points at them, and nothing else can tell
-   *     the cleanup to leave them alone) but it needs them once an hour, while this method runs on
-   *     every poll. Merge-on-read never calls it at all. Invoked only on the coordinator thread,
-   *     and only inside this call: the buffer is that thread's own.
+   * @param bufferedResponses the coordinator's commit buffer, as a supplier rather than a value,
+   *     for a committer that needs to look at it. Invoked only on the coordinator thread, and only
+   *     inside this call: the buffer is that thread's own.
    */
   default void process(long nowMs, Supplier<Collection<Envelope>> bufferedResponses) {}
+
+  /**
+   * The staging cleanup's view of this committer's tables, or {@code null} if the committer writes
+   * nothing to staging. Asked once, when the coordinator is built.
+   */
+  default StagingCleanupSource stagingCleanupSource() {
+    return null;
+  }
 
   /**
    * Tables that must be offered a commit this cycle even though no response for them is buffered.
@@ -107,8 +112,7 @@ interface TableCommitter {
    * here on. A commit already under way is atomic and is let finish.
    *
    * <p>Called once, from {@code Coordinator.terminate()}, before its pools are shut down; the
-   * transitions still running see it from their own threads. Merge-on-read has nothing in flight
-   * outside {@link #commit}, which the coordinator thread has finished by then.
+   * transitions still running see it from their own threads.
    */
   default void stop() {}
 }

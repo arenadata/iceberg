@@ -19,6 +19,7 @@
 package org.apache.iceberg.connect.events;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -31,7 +32,14 @@ import java.time.ZoneOffset;
 import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
+import org.apache.avro.Schema;
+import org.apache.iceberg.ContentFile;
+import org.apache.iceberg.DataFile;
+import org.apache.iceberg.DeleteFile;
+import org.apache.iceberg.FileContent;
+import org.apache.iceberg.FileFormat;
 import org.apache.iceberg.catalog.TableIdentifier;
+import org.apache.iceberg.util.DateTimeUtil;
 import org.junit.jupiter.api.Test;
 
 public class TestEventSerialization {
@@ -43,6 +51,16 @@ public class TestEventSerialization {
       UUID.fromString("d1e2f3a4-b5c6-4d7e-8f90-a1b2c3d4e5f6");
   private static final OffsetDateTime DATA_COMPLETE_BEFORE_TASK_ID_TIMESTAMP =
       OffsetDateTime.of(2026, 9, 14, 12, 0, 0, 0, ZoneOffset.UTC);
+
+  // A DataWritten without the sketch file reference, encoded by this module at c9ef4dd91 with
+  // hand-set ids, timestamp and one data and one delete file; the released connector (6848f6123)
+  // encodes the same event to the same bytes. Do not regenerate it from code that changed
+  // DataWritten, or the byte comparison proves nothing.
+  private static final String DATA_WRITTEN_RELEASED = "data-written-released.bin";
+  private static final UUID DATA_WRITTEN_RELEASED_COMMIT =
+      UUID.fromString("a7f3c1d2-4b5e-4c6d-8e9f-0a1b2c3d4e5f");
+  private static final UUID DATA_WRITTEN_RELEASED_TABLE =
+      UUID.fromString("0b1c2d3e-4f50-4a61-b072-8394a5b6c7d8");
 
   @Test
   public void testStartCommitSerialization() {
@@ -390,6 +408,306 @@ public class TestEventSerialization {
                     new TopicPartitionOffset(
                         "topic", 1, 1L, DATA_COMPLETE_BEFORE_TASK_ID_TIMESTAMP),
                     new TopicPartitionOffset("topic", 2, null, null))));
+  }
+
+  @Test
+  public void testDataWrittenWithoutReferenceIsEncodedAsReleasedOne() throws IOException {
+    byte[] released = readResource(DATA_WRITTEN_RELEASED);
+    Event original = AvroUtil.decode(released);
+    Event event =
+        new Event(
+            "cg-connector",
+            new DataWritten(
+                EventTestUtil.SPEC.partitionType(),
+                DATA_WRITTEN_RELEASED_COMMIT,
+                TableReference.of(
+                    "catalog", TableIdentifier.of("db", "tbl"), DATA_WRITTEN_RELEASED_TABLE),
+                Arrays.asList(EventTestUtil.createDataFile()),
+                Arrays.asList(EventTestUtil.createDeleteFile()),
+                Arrays.asList("topic")));
+    withIdAndTimeOf(event, original);
+
+    assertThat(AvroUtil.encode(event)).isEqualTo(released);
+  }
+
+  @Test
+  public void testDataWrittenWithNullReferenceIsEncodedAsReleasedOne() throws IOException {
+    // a worker that wrote no Puffin passes a null reference
+    byte[] released = readResource(DATA_WRITTEN_RELEASED);
+    Event original = AvroUtil.decode(released);
+    Event event =
+        new Event(
+            "cg-connector",
+            new DataWritten(
+                EventTestUtil.SPEC.partitionType(),
+                DATA_WRITTEN_RELEASED_COMMIT,
+                TableReference.of(
+                    "catalog", TableIdentifier.of("db", "tbl"), DATA_WRITTEN_RELEASED_TABLE),
+                Arrays.asList(EventTestUtil.createDataFile()),
+                Arrays.asList(EventTestUtil.createDeleteFile()),
+                Arrays.asList("topic"),
+                null));
+    withIdAndTimeOf(event, original);
+
+    assertThat(AvroUtil.encode(event)).isEqualTo(released);
+  }
+
+  @Test
+  public void testDataWrittenWithReferenceHasFieldAfterReleasedOnes() {
+    DataWritten payload = dataWrittenWithReference();
+
+    Schema schema = payload.getSchema();
+    assertThat(schema.getFields())
+        .extracting(Schema.Field::name)
+        .containsExactly(
+            "commit_id",
+            "table_reference",
+            "data_files",
+            "delete_files",
+            "source_topics",
+            "sketch_file");
+    assertThat(AvroUtil.positionToId(5, schema)).isEqualTo(10_308);
+    Schema field = schema.getField("sketch_file").schema();
+    assertThat(field.getType()).isEqualTo(Schema.Type.UNION);
+    assertThat(field.getTypes())
+        .extracting(Schema::getType)
+        .containsExactly(Schema.Type.NULL, Schema.Type.RECORD);
+    assertThat(field.getTypes().get(1).getFullName())
+        .isEqualTo("org.apache.iceberg.connect.events.SketchFile");
+  }
+
+  @Test
+  public void testDataWrittenWithReferenceSerialization() {
+    Event event = new Event("cg-connector", dataWrittenWithReference());
+
+    Event result = AvroUtil.decode(AvroUtil.encode(event));
+
+    assertThat(result)
+        .usingRecursiveComparison()
+        .ignoringFieldsMatchingRegexes(
+            "payload\\.partitionType",
+            ".*avroSchema",
+            ".*icebergSchema",
+            ".*schema",
+            ".*fromProjectionPos")
+        .isEqualTo(event);
+    SketchFile sketchFile = ((DataWritten) result.payload()).sketchFile();
+    assertThat(sketchFile.location()).isEqualTo(EventTestUtil.createSketchFile().location());
+    assertThat(sketchFile.fileSizeBytes()).isEqualTo(1234L);
+    assertThat(sketchFile.footerSizeBytes()).isEqualTo(56L);
+  }
+
+  @Test
+  public void testDataWrittenWithNullReferenceSerialization() {
+    Event event =
+        new Event(
+            "cg-connector",
+            new DataWritten(
+                EventTestUtil.SPEC.partitionType(),
+                UUID.randomUUID(),
+                TableReference.of("catalog", TableIdentifier.of("db", "tbl"), UUID.randomUUID()),
+                Arrays.asList(EventTestUtil.createDataFile()),
+                Arrays.asList(EventTestUtil.createDeleteFile()),
+                Arrays.asList("topic"),
+                null));
+
+    Event result = AvroUtil.decode(AvroUtil.encode(event));
+
+    assertThat(((DataWritten) result.payload()).sketchFile()).isNull();
+    assertThat(((DataWritten) result.payload()).getSchema().getField("sketch_file")).isNull();
+    assertThat(result)
+        .usingRecursiveComparison()
+        .ignoringFieldsMatchingRegexes(
+            "payload\\.partitionType",
+            ".*avroSchema",
+            ".*icebergSchema",
+            ".*schema",
+            ".*fromProjectionPos")
+        .isEqualTo(event);
+  }
+
+  @Test
+  public void testDataWrittenWithReferenceIsNotReadByReleasedReader() throws IOException {
+    // the released reader throws on an unknown field, so a DataWritten without a reference must
+    // not carry the field even as null
+    byte[] data = AvroUtil.encode(new Event("cg-connector", dataWrittenWithReference()));
+
+    assertThatThrownBy(
+            () -> AvroUtil.decode(readPayloadAs(data, DataWritten.class, LegacyDataWritten.class)))
+        .isInstanceOf(UnsupportedOperationException.class)
+        .hasMessageContaining("Unknown field ordinal");
+  }
+
+  @Test
+  public void testDataWrittenWithNullReferenceIsReadByReleasedReader() throws IOException {
+    UUID commitId = UUID.randomUUID();
+    byte[] data =
+        AvroUtil.encode(
+            new Event(
+                "cg-connector",
+                new DataWritten(
+                    EventTestUtil.SPEC.partitionType(),
+                    commitId,
+                    TableReference.of(
+                        "catalog", TableIdentifier.of("db", "tbl"), UUID.randomUUID()),
+                    Arrays.asList(EventTestUtil.createDataFile()),
+                    Arrays.asList(EventTestUtil.createDeleteFile()),
+                    Arrays.asList("topic"),
+                    null)));
+
+    Event result = AvroUtil.decode(readPayloadAs(data, DataWritten.class, LegacyDataWritten.class));
+
+    LegacyDataWritten written = (LegacyDataWritten) result.payload();
+    assertThat(written.commitId()).isEqualTo(commitId);
+    assertWrittenFiles(written.dataFiles(), written.deleteFiles());
+    assertThat(written.sourceTopics()).containsExactly("topic");
+  }
+
+  @Test
+  public void testRowChangesWrittenWithReferenceSerialization() {
+    Event event =
+        new Event(
+            "cg-connector",
+            new RowChangesWritten(
+                UUID.randomUUID(),
+                TableReference.of("catalog", TableIdentifier.of("db", "tbl"), UUID.randomUUID()),
+                "0",
+                Arrays.asList("topic"),
+                Arrays.asList(EventTestUtil.createStagedChangeFile()),
+                EventTestUtil.createSketchFile()));
+
+    Event result = AvroUtil.decode(AvroUtil.encode(event));
+
+    assertThat(result)
+        .usingRecursiveComparison()
+        .ignoringFieldsMatchingRegexes(".*avroSchema")
+        .isEqualTo(event);
+    SketchFile sketchFile = ((RowChangesWritten) result.payload()).sketchFile();
+    assertThat(sketchFile.location()).isEqualTo(EventTestUtil.createSketchFile().location());
+    assertThat(sketchFile.fileSizeBytes()).isEqualTo(1234L);
+    assertThat(sketchFile.footerSizeBytes()).isEqualTo(56L);
+  }
+
+  @Test
+  public void testRowChangesWrittenWithNullReferenceSerialization() {
+    Event event =
+        new Event(
+            "cg-connector",
+            new RowChangesWritten(
+                UUID.randomUUID(),
+                TableReference.of("catalog", TableIdentifier.of("db", "tbl"), UUID.randomUUID()),
+                "0",
+                Arrays.asList("topic"),
+                Arrays.asList(EventTestUtil.createStagedChangeFile()),
+                null));
+
+    Event result = AvroUtil.decode(AvroUtil.encode(event));
+
+    RowChangesWritten written = (RowChangesWritten) result.payload();
+    assertThat(written.sketchFile()).isNull();
+    assertThat(written.getSchema().getField("sketch_file")).isNotNull();
+    assertThat(
+            AvroUtil.positionToId(
+                written.getSchema().getField("sketch_file").pos(), written.getSchema()))
+        .isEqualTo(10_807);
+    assertThat(result)
+        .usingRecursiveComparison()
+        .ignoringFieldsMatchingRegexes(".*avroSchema")
+        .isEqualTo(event);
+  }
+
+  @Test
+  public void testDataWrittenOfReleasedVersionIsRead() throws IOException {
+    Event result = AvroUtil.decode(readResource(DATA_WRITTEN_RELEASED));
+
+    assertThat(result.type()).isEqualTo(PayloadType.DATA_WRITTEN);
+    assertThat(result.groupId()).isEqualTo("cg-connector");
+    assertThat(result.payload()).isInstanceOf(DataWritten.class);
+    DataWritten written = (DataWritten) result.payload();
+    assertThat(written.commitId()).isEqualTo(DATA_WRITTEN_RELEASED_COMMIT);
+    assertThat(written.tableReference().catalog()).isEqualTo("catalog");
+    assertThat(written.tableReference().identifier()).isEqualTo(TableIdentifier.of("db", "tbl"));
+    assertThat(written.tableReference().uuid()).isEqualTo(DATA_WRITTEN_RELEASED_TABLE);
+    assertWrittenFiles(written.dataFiles(), written.deleteFiles());
+    assertThat(written.sourceTopics()).containsExactly("topic");
+    assertThat(written.sketchFile()).isNull();
+  }
+
+  @Test
+  public void testDataWrittenOfReleasedVersionIsReadByReleasedReader() throws IOException {
+    byte[] released = readResource(DATA_WRITTEN_RELEASED);
+
+    Event result =
+        AvroUtil.decode(readPayloadAs(released, DataWritten.class, LegacyDataWritten.class));
+
+    assertThat(result.payload()).isInstanceOf(LegacyDataWritten.class);
+    LegacyDataWritten written = (LegacyDataWritten) result.payload();
+    assertThat(written.commitId()).isEqualTo(DATA_WRITTEN_RELEASED_COMMIT);
+    assertWrittenFiles(written.dataFiles(), written.deleteFiles());
+    assertThat(written.sourceTopics()).containsExactly("topic");
+  }
+
+  @Test
+  public void testDataWrittenOfThisVersionIsReadByReleasedReader() throws IOException {
+    UUID commitId = UUID.randomUUID();
+    byte[] data =
+        AvroUtil.encode(
+            new Event(
+                "cg-connector",
+                new DataWritten(
+                    EventTestUtil.SPEC.partitionType(),
+                    commitId,
+                    TableReference.of(
+                        "catalog", TableIdentifier.of("db", "tbl"), UUID.randomUUID()),
+                    Arrays.asList(EventTestUtil.createDataFile()),
+                    Arrays.asList(EventTestUtil.createDeleteFile()),
+                    Arrays.asList("topic"))));
+
+    Event result = AvroUtil.decode(readPayloadAs(data, DataWritten.class, LegacyDataWritten.class));
+
+    LegacyDataWritten written = (LegacyDataWritten) result.payload();
+    assertThat(written.commitId()).isEqualTo(commitId);
+    assertWrittenFiles(written.dataFiles(), written.deleteFiles());
+    assertThat(written.sourceTopics()).containsExactly("topic");
+  }
+
+  // field by field: a field decoded into another or not decoded still leaves one file of each
+  private static void assertWrittenFiles(List<DataFile> dataFiles, List<DeleteFile> deleteFiles) {
+    assertThat(dataFiles).hasSize(1);
+    assertWrittenFile(dataFiles.get(0), FileContent.DATA);
+    assertThat(dataFiles.get(0).equalityFieldIds()).isNullOrEmpty();
+    assertThat(deleteFiles).hasSize(1);
+    assertWrittenFile(deleteFiles.get(0), FileContent.EQUALITY_DELETES);
+    assertThat(deleteFiles.get(0).equalityFieldIds()).containsExactly(1);
+  }
+
+  private static void assertWrittenFile(ContentFile<?> file, FileContent content) {
+    assertThat(file.content()).as("the content of %s", file.location()).isEqualTo(content);
+    assertThat(file.location()).isEqualTo("path/to/file.parquet");
+    assertThat(file.format()).isEqualTo(FileFormat.PARQUET);
+    assertThat(file.recordCount()).isEqualTo(1L);
+    assertThat(file.fileSizeInBytes()).isEqualTo(100L);
+    assertThat(file.partition().size()).isEqualTo(1);
+    assertThat(file.partition().get(0, Long.class)).isEqualTo(1L);
+  }
+
+  private static DataWritten dataWrittenWithReference() {
+    return new DataWritten(
+        EventTestUtil.SPEC.partitionType(),
+        UUID.randomUUID(),
+        TableReference.of("catalog", TableIdentifier.of("db", "tbl"), UUID.randomUUID()),
+        Arrays.asList(EventTestUtil.createDataFile()),
+        Arrays.asList(EventTestUtil.createDeleteFile()),
+        Arrays.asList("topic"),
+        EventTestUtil.createSketchFile());
+  }
+
+  // the constructor of Event sets a random id and the current time: take the ones of the other
+  private static void withIdAndTimeOf(Event event, Event other) {
+    event.put(event.getSchema().getField("id").pos(), other.id());
+    event.put(
+        event.getSchema().getField("timestamp").pos(),
+        DateTimeUtil.microsFromTimestamptz(other.timestamp()));
   }
 
   /**

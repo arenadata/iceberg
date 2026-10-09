@@ -29,6 +29,7 @@ import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.Table;
@@ -121,7 +122,9 @@ public class TestCopyOnWriteSchemaEvolution {
 
   private List<StagedChangeFile> stagedFiles(CopyOnWriteStagingWriter writer) {
     List<StagedChangeFile> files = Lists.newArrayList();
-    writer.complete().forEach(result -> files.addAll(((StagedChangesResult) result).stagedFiles()));
+    writer
+        .complete(UUID.randomUUID())
+        .forEach(result -> files.addAll(((StagedChangesResult) result).stagedFiles()));
     return files;
   }
 
@@ -137,7 +140,7 @@ public class TestCopyOnWriteSchemaEvolution {
     when(config.taskId()).thenReturn("task-0");
     when(config.isUpsertMode()).thenReturn(true);
     when(config.evolveSchemaEnabled()).thenReturn(evolveSchema);
-    when(config.copyOnWriteStagingLocation()).thenReturn(null);
+    when(config.stagingLocation()).thenReturn(null);
     return config;
   }
 }
