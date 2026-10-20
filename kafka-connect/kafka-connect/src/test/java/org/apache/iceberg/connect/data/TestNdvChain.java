@@ -357,6 +357,46 @@ public class TestNdvChain {
   }
 
   @Test
+  public void ownSnapshotsBehindBaseAreDroppedWithTheirAnswers() {
+    long first = connectorCommit();
+    long deleted = deleteFirstFile();
+    StatisticsFile record = writeStatistics(deleted); // a full ANALYZE after the DELETE
+    long second = connectorCommit();
+    StatisticsAnswer firstAnswer = answer(first);
+    StatisticsAnswer secondAnswer = answer(second);
+
+    NdvChain chain =
+        resolve(
+            second, ImmutableSet.of(first, second), ImmutableSet.of(), firstAnswer, secondAnswer);
+
+    assertThat(chain.answers())
+        .as("the rows of the first commit are in the base or deleted before it")
+        .containsExactly(secondAnswer);
+    assertThat(chain.kind()).isEqualTo(Kind.BASE);
+    assertThat(chain.base()).isEqualTo(record);
+    assertThat(chain.gap()).isEmpty();
+  }
+
+  @Test
+  public void ownSnapshotsBehindEmptyPointAreDroppedWithTheirAnswers() {
+    long first = connectorCommit();
+    truncate();
+    long second = connectorCommit();
+    StatisticsAnswer firstAnswer = answer(first);
+    StatisticsAnswer secondAnswer = answer(second);
+
+    NdvChain chain =
+        resolve(
+            second, ImmutableSet.of(first, second), ImmutableSet.of(), firstAnswer, secondAnswer);
+
+    assertThat(chain.answers())
+        .as("the rows of the first commit are gone")
+        .containsExactly(secondAnswer);
+    assertThat(chain.kind()).isEqualTo(Kind.EMPTY_BASE);
+    assertThat(chain.gap()).isEmpty();
+  }
+
+  @Test
   public void firstCommitIntoEmptyTableStartsFromScratch() {
     long snapshot = connectorCommit();
     List<String> logs = Lists.newArrayList();

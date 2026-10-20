@@ -21,7 +21,6 @@ package org.apache.iceberg.connect.data;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.stream.Collectors;
 import org.apache.iceberg.BlobMetadata;
 import org.apache.iceberg.DataOperations;
 import org.apache.iceberg.Schema;
@@ -75,12 +74,16 @@ public class NdvChain {
       StatisticsFile base,
       Schema baseSchema,
       List<Snapshot> gap,
-      List<StatisticsAnswer> answers) {
+      List<StatisticsAnswer> answers,
+      Set<Long> passedOwn) {
     this.kind = kind;
     this.base = base;
     this.baseSchema = baseSchema;
     this.gap = ImmutableList.copyOf(gap);
-    this.answers = answers;
+    this.answers =
+        answers.stream()
+            .filter(answer -> passedOwn.contains(answer.snapshotId()))
+            .collect(ImmutableList.toImmutableList());
   }
 
   /**
@@ -108,14 +111,6 @@ public class NdvChain {
     Preconditions.checkArgument(
         snapshot != null, "Cannot find snapshot %s of table %s", snapshotId, table.name());
 
-    // own snapshots of a rolled back branch are not in the chain of S, nor are their rows
-    Set<Long> chain = Sets.newHashSet(SnapshotUtil.ancestorIds(snapshot, table::snapshot));
-    Set<Long> own = ownSnapshotIds.stream().filter(chain::contains).collect(Collectors.toSet());
-    List<StatisticsAnswer> kept =
-        answers.stream()
-            .filter(answer -> own.contains(answer.snapshotId()))
-            .collect(ImmutableList.toImmutableList());
-
     Map<Long, StatisticsFile> records = Maps.newHashMap();
     for (StatisticsFile file : table.statisticsFiles()) {
       records.putIfAbsent(file.snapshotId(), file);
@@ -124,15 +119,18 @@ public class NdvChain {
     List<Snapshot> gap = Lists.newArrayList();
     int gapSnapshots = 0;
     boolean marked = true; // every snapshot of the gap but a replace carries the marker
+    Set<Long> passedOwn = Sets.newHashSet();
     Snapshot current = snapshot;
     while (true) {
-      if (!isOwn(current, own, ownChangeSetIds)) {
+      if (isOwn(current, ownSnapshotIds, ownChangeSetIds)) {
+        passedOwn.add(current.snapshotId());
+      } else {
         StatisticsFile record = recordOf(table, records, current);
         if (record != null) {
           Schema baseSchema = SnapshotUtil.schemaFor(table, current.snapshotId());
-          return new NdvChain(Kind.BASE, record, baseSchema, gap, kept);
+          return new NdvChain(Kind.BASE, record, baseSchema, gap, answers, passedOwn);
         } else if (marked && totalDataFiles(current) == 0L) {
-          return emptyBase(logger, table, snapshotId, gap, gapSnapshots, kept);
+          return emptyBase(logger, table, snapshotId, gap, gapSnapshots, answers, passedOwn);
         }
 
         gapSnapshots += 1;
@@ -145,14 +143,14 @@ public class NdvChain {
       Long parentId = current.parentId();
       if (parentId == null) {
         return marked
-            ? emptyBase(logger, table, snapshotId, gap, gapSnapshots, kept)
-            : new NdvChain(Kind.NO_BASELINE, null, null, gap, kept);
+            ? emptyBase(logger, table, snapshotId, gap, gapSnapshots, answers, passedOwn)
+            : new NdvChain(Kind.NO_BASELINE, null, null, gap, answers, passedOwn);
       }
 
       Snapshot parent = table.snapshot(parentId);
       if (parent == null) {
         // expired: whatever the gap, what is behind it is unknown
-        return new NdvChain(Kind.NO_BASELINE, null, null, gap, kept);
+        return new NdvChain(Kind.NO_BASELINE, null, null, gap, answers, passedOwn);
       }
 
       current = parent;
@@ -165,7 +163,8 @@ public class NdvChain {
       long snapshotId,
       List<Snapshot> gap,
       int gapSnapshots,
-      List<StatisticsAnswer> answers) {
+      List<StatisticsAnswer> answers,
+      Set<Long> passedOwn) {
     if (gapSnapshots > 0) {
       long files = gap.stream().mapToLong(NdvChain::addedDataFiles).sum();
       logger.info(
@@ -178,7 +177,7 @@ public class NdvChain {
           files);
     }
 
-    return new NdvChain(Kind.EMPTY_BASE, null, null, gap, answers);
+    return new NdvChain(Kind.EMPTY_BASE, null, null, gap, answers, passedOwn);
   }
 
   /** The statistics record of the snapshot, {@code null} if none describes the snapshot itself. */
@@ -298,7 +297,7 @@ public class NdvChain {
     return gap;
   }
 
-  /** The answers of the own snapshots that are ancestors of S (S included). */
+  /** The answers of the own snapshots from S (included) to the base or the empty point. */
   public List<StatisticsAnswer> answers() {
     return answers;
   }

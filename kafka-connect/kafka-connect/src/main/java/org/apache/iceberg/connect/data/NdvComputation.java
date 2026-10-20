@@ -469,7 +469,8 @@ public class NdvComputation {
                 column,
                 base.sketches().get(fieldId),
                 intermediate.sketch(fieldId),
-                recount.sketches().get(fieldId));
+                recount.sketches().get(fieldId),
+                readsInitialDefault(chain, intermediate, column));
         Recompute origin = origin(chain, fieldId);
         long sketchedRows =
             origin.sketchedRows() + intermediate.coveredRows(fieldId) + recount.rowsRead(fieldId);
@@ -498,7 +499,11 @@ public class NdvComputation {
     }
 
     private CompactSketch union(
-        Types.NestedField column, Sketch initial, CompactSketch covered, UpdateSketch recounted) {
+        Types.NestedField column,
+        Sketch initial,
+        CompactSketch covered,
+        UpdateSketch recounted,
+        boolean withInitialDefault) {
       Union union = SetOperation.builder().setNominalEntries(1 << lgK).buildUnion();
       union.union(initial);
       if (covered != null) {
@@ -509,15 +514,34 @@ public class NdvComputation {
         union.union(recounted);
       }
 
-      Object initialDefault = column.initialDefault();
-      if (initialDefault != null) {
+      if (withInitialDefault) {
         UpdateSketch defaults = SketchValues.newSketch(lgK);
         SketchValues.update(
-            defaults, SketchValues.toByteBuffer(column.type().asPrimitiveType(), initialDefault));
+            defaults,
+            SketchValues.toByteBuffer(column.type().asPrimitiveType(), column.initialDefault()));
         union.union(defaults);
       }
 
       return union.getResult();
+    }
+
+    /**
+     * Whether rows of S that are not read here read the initial default of the column: rows the
+     * base had before the column was added, or rows of a writer that did not know it.
+     */
+    private boolean readsInitialDefault(
+        NdvChain chain, IntermediateSketchSet intermediate, Types.NestedField column) {
+      if (column.initialDefault() == null) {
+        return false;
+      } else if (intermediate.hasRowsWithout(column.fieldId())) {
+        return true;
+      } else if (chain.kind() != NdvChain.Kind.BASE
+          || chain.baseSchema().findField(column.fieldId()) != null) {
+        return false;
+      }
+
+      Long liveBase = live(table, table.snapshot(chain.base().snapshotId()));
+      return liveBase == null || liveBase > 0L;
     }
 
     /** Where the sketch of the column was last built in full. */

@@ -71,7 +71,7 @@ public class IntermediateSketchSet {
   public enum Coverage {
     /** The blob of the column in the answer's file is in {@link #sketch(int)}. */
     COVERED,
-    /** The writer did not know the column: the rows of the answer add no values of it. */
+    /** The writer did not know the column: the rows of the answer have only its initial default. */
     EMPTY,
     /** The values of the column in the answer's rows are in no sketch. */
     UNCOVERED
@@ -333,11 +333,16 @@ public class IntermediateSketchSet {
       return Coverage.UNCOVERED;
     } else if (content.covered.contains(fieldId)) {
       return Coverage.COVERED;
-    } else if (!content.withBlob.contains(fieldId) && fieldId > content.lastColumnId) {
+    } else if (content.lacks(fieldId)) {
       return Coverage.EMPTY;
     }
 
     return Coverage.UNCOVERED;
+  }
+
+  public boolean hasRowsWithout(int fieldId) {
+    return files.values().stream()
+        .anyMatch(content -> content.available && content.rowCount > 0 && content.lacks(fieldId));
   }
 
   /** The union of the covering blobs of the column, or {@code null} when no file covers it. */
@@ -378,6 +383,10 @@ public class IntermediateSketchSet {
       this.rowCount = rowCount;
       this.covered = covered;
       this.withBlob = withBlob;
+    }
+
+    private boolean lacks(int fieldId) {
+      return !withBlob.contains(fieldId) && fieldId > lastColumnId;
     }
   }
 

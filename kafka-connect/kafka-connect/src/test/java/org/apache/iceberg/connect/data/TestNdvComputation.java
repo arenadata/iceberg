@@ -120,6 +120,7 @@ import org.junit.jupiter.api.io.TempDir;
 public class TestNdvComputation {
   private static final Namespace NAMESPACE = Namespace.of("db");
   private static final TableIdentifier TABLE = TableIdentifier.of(NAMESPACE, "tbl");
+  private static final TableIdentifier V3_TABLE = TableIdentifier.of(NAMESPACE, "v3");
   private static final String STAGING = "mem://bucket/kc-staging/db.tbl/group";
   private static final int LG_K = 12;
   private static final double STALE_RATIO = 0.2;
@@ -519,6 +520,98 @@ public class TestNdvComputation {
         .containsEntry(NdvComputation.RECOMPUTE_SNAPSHOT_ID_PROPERTY, String.valueOf(baseId))
         .containsEntry(NdvComputation.SKETCHED_ROWS_PROPERTY, "10");
     assertThat(result.filesRead()).isZero();
+  }
+
+  @Test
+  public void columnAddedToEmptyTableHasNoInitialDefaultThatNoRowReads() {
+    Table v3 = v3Table();
+    v3.updateSchema().addColumn("flag", Types.BooleanType.get(), Literal.of(false)).commit();
+    SketchFile puffin = writerFile(v3, v3.schema(), rowsOf(v3.schema(), 3));
+    DataFile file = fakeFile(3L);
+    v3.newAppend().appendFile(file).commit();
+    long snapshotId = v3.currentSnapshot().snapshotId();
+
+    NdvResult result =
+        computeFlag(
+            v3, snapshotId, StatisticsAnswer.ofDataFiles(snapshotId, List.of(file), puffin));
+
+    assertThat(sketchOf(result, 3).getEstimate())
+        .as("every row is true, none reads the initial default")
+        .isEqualTo(1.0);
+    assertThat(properties(result, 3)).containsEntry(NdvComputation.NDV_PROPERTY, "1");
+  }
+
+  @Test
+  public void initialDefaultIsNotAddedOverBaseWithBlobOfColumn() {
+    Table v3 = v3Table();
+    v3.updateSchema().addColumn("flag", Types.BooleanType.get(), Literal.of(false)).commit();
+    v3.newAppend().appendFile(fakeFile(3L)).commit();
+    long analyzed = v3.currentSnapshot().snapshotId();
+    // an external ANALYZE: every row is true
+    setBase(
+        v3,
+        analyzed,
+        ImmutableMap.of(3, valueSketch(Types.BooleanType.get(), true).toByteArray()),
+        TRINO_PROPERTIES);
+    SketchFile puffin = writerFile(v3, v3.schema(), rowsOf(v3.schema(), 3));
+    DataFile file = fakeFile(3L);
+    v3.newAppend().appendFile(file).commit();
+    long snapshotId = v3.currentSnapshot().snapshotId();
+
+    NdvResult result =
+        computeFlag(
+            v3, snapshotId, StatisticsAnswer.ofDataFiles(snapshotId, List.of(file), puffin));
+
+    assertThat(sketchOf(result, 3).getEstimate())
+        .as("the base already has every value of the column")
+        .isEqualTo(1.0);
+    assertThat(properties(result, 3)).containsEntry(NdvComputation.NDV_PROPERTY, "1");
+  }
+
+  @Test
+  public void writerThatDidNotKnowColumnAddsItsInitialDefault() {
+    Table v3 = v3Table();
+    Schema before = v3.schema();
+    v3.updateSchema().addColumn("flag", Types.BooleanType.get(), Literal.of(false)).commit();
+    SketchFile puffin = writerFile(v3, before, rowsOf(before, 3));
+    DataFile file = fakeFile(3L);
+    v3.newAppend().appendFile(file).commit();
+    long snapshotId = v3.currentSnapshot().snapshotId();
+
+    NdvResult result =
+        computeFlag(
+            v3, snapshotId, StatisticsAnswer.ofDataFiles(snapshotId, List.of(file), puffin));
+
+    Sketch flag = sketchOf(result, 3);
+    assertThat(flag.getEstimate()).isEqualTo(1.0);
+    assertThat(
+            SetOperation.builder()
+                .buildANotB()
+                .aNotB(valueSketch(Types.BooleanType.get(), false), flag)
+                .getRetainedEntries(true))
+        .as("the rows of the writer read the initial default")
+        .isZero();
+  }
+
+  @Test
+  public void columnAddedOverNonEmptyBaseHasInitialDefaultOfOlderRows() {
+    Table v3 = v3Table();
+    v3.newAppend().appendFile(fakeFile(10L)).commit();
+    long baseId = v3.currentSnapshot().snapshotId();
+    setBase(v3, baseId, ImmutableMap.of(1, longSketch(LG_K, 0, 10)), TRINO_PROPERTIES);
+    v3.updateSchema().addColumn("flag", Types.BooleanType.get(), Literal.of(false)).commit();
+    SketchFile puffin = writerFile(v3, v3.schema(), rowsOf(v3.schema(), 3));
+    DataFile file = fakeFile(3L);
+    v3.newAppend().appendFile(file).commit();
+    long snapshotId = v3.currentSnapshot().snapshotId();
+
+    NdvResult result =
+        computeFlag(
+            v3, snapshotId, StatisticsAnswer.ofDataFiles(snapshotId, List.of(file), puffin));
+
+    assertThat(sketchOf(result, 3).getEstimate())
+        .as("the rows of the base read the initial default, the new rows are true")
+        .isEqualTo(2.0);
   }
 
   @Test
@@ -1058,6 +1151,42 @@ public class TestNdvComputation {
   }
 
   @Test
+  public void answersOfOwnSnapshotBehindExternalAnalyzeAreNotUnited() {
+    DataFile deletedFile = fakeFile(3L);
+    SketchFile deletedPuffin = writerFile(table, SCHEMA, rows(0, 3));
+    long deleted = append(deletedFile);
+    // an external DELETE of ids 1 and 2, then a full ANALYZE
+    table.newOverwrite().deleteFile(deletedFile).addFile(fakeFile(1L)).commit();
+    long analyzed = table.currentSnapshot().snapshotId();
+    setBase(analyzed, ImmutableMap.of(1, longSketch(LG_K, 0, 1)), TRINO_PROPERTIES);
+    DataFile file = fakeFile(3L);
+    SketchFile puffin =
+        writerFile(table, SCHEMA, row(0, null, null), row(0, null, null), row(0, null, null));
+    long snapshotId = append(file);
+    ReadFileIO io = new ReadFileIO();
+
+    NdvResult result =
+        compute(
+            reading(io),
+            config(LG_K),
+            tableConfig(List.of("id")),
+            snapshotId,
+            Set.of(deleted, snapshotId),
+            List.of(
+                StatisticsAnswer.ofDataFiles(deleted, List.of(deletedFile), deletedPuffin),
+                StatisticsAnswer.ofDataFiles(snapshotId, List.of(file), puffin)),
+            RUNNING);
+
+    assertThat(sketchOf(result, 1).getEstimate())
+        .as("ids 1 and 2 were deleted before the ANALYZE")
+        .isEqualTo(1.0);
+    assertThat(properties(result, 1))
+        .containsEntry(NdvComputation.NDV_PROPERTY, "1")
+        .containsEntry(NdvComputation.SKETCHED_ROWS_PROPERTY, "4");
+    assertThat(io.opened(deletedPuffin.location())).isZero();
+  }
+
+  @Test
   public void boundsExactModeIsEqualityForAppendFromEmptyBase() {
     long snapshotId = append(writeDataFile(table, row(1, "a", 1), row(2, "a", 1), row(2, "b", 1)));
     NdvBounds bounds = NdvBounds.of(table, snapshotId, "id").written(1L, 2L, 2L);
@@ -1192,6 +1321,27 @@ public class TestNdvComputation {
     TableSinkConfig tableConfig = mock(TableSinkConfig.class);
     when(tableConfig.statisticsColumns()).thenReturn(columns);
     return tableConfig;
+  }
+
+  private static NdvResult computeFlag(Table v3, long snapshotId, StatisticsAnswer answer) {
+    return compute(
+        V3_TABLE,
+        v3,
+        config(LG_K),
+        tableConfig(List.of("flag")),
+        snapshotId,
+        Set.of(snapshotId),
+        List.of(answer),
+        RUNNING);
+  }
+
+  private Table v3Table() {
+    return catalog.createTable(
+        V3_TABLE,
+        new Schema(
+            required(1, "id", Types.LongType.get()), optional(2, "data", Types.StringType.get())),
+        PartitionSpec.unpartitioned(),
+        ImmutableMap.of(TableProperties.FORMAT_VERSION, "3"));
   }
 
   private Table reading(ReadFileIO io) {
@@ -1346,6 +1496,21 @@ public class TestNdvComputation {
     return LongStream.range(from, to).mapToObj(id -> row(id, null, null)).toArray(Record[]::new);
   }
 
+  private static Record[] rowsOf(Schema schema, long count) {
+    return LongStream.range(0, count)
+        .mapToObj(
+            id -> {
+              Record row = GenericRecord.create(schema);
+              row.setField("id", id);
+              if (schema.findField("flag") != null) {
+                row.setField("flag", true);
+              }
+
+              return row;
+            })
+        .toArray(Record[]::new);
+  }
+
   private static List<Long> ids(long from, long to) {
     return LongStream.range(from, to).boxed().collect(Collectors.toList());
   }
@@ -1453,6 +1618,15 @@ public class TestNdvComputation {
     }
 
     return sketch.compact().toByteArray();
+  }
+
+  private static Sketch valueSketch(Type.PrimitiveType type, Object... values) {
+    UpdateSketch sketch = SketchValues.newSketch(LG_K);
+    for (Object value : values) {
+      SketchValues.update(sketch, SketchValues.toByteBuffer(type, value));
+    }
+
+    return sketch.compact();
   }
 
   private static Map<Integer, Blob> blobs(NdvResult result) {
