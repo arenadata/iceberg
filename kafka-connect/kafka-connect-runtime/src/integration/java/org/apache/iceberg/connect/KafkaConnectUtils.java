@@ -108,6 +108,38 @@ public class KafkaConnectUtils {
                     }));
   }
 
+  /** Waits until a task of the connector is FAILED with a trace containing the message part. */
+  public static void awaitTaskFailed(String name, String messagePart) {
+    HttpGet request =
+        new HttpGet(
+            String.format(
+                Locale.ROOT,
+                "http://localhost:%d/connectors/%s/status",
+                TestContext.CONNECT_PORT,
+                name));
+    Awaitility.await()
+        .atMost(60, TimeUnit.SECONDS)
+        .until(
+            () ->
+                HTTP.execute(
+                    request,
+                    response -> {
+                      if (response.getCode() == HttpStatus.SC_OK) {
+                        JsonNode root =
+                            TestContext.MAPPER.readTree(response.getEntity().getContent());
+                        ArrayNode taskNodes = (ArrayNode) root.get("tasks");
+                        for (JsonNode node : taskNodes) {
+                          if ("FAILED".equals(node.get("state").asText())
+                              && node.has("trace")
+                              && node.get("trace").asText().contains(messagePart)) {
+                            return true;
+                          }
+                        }
+                      }
+                      return false;
+                    }));
+  }
+
   public static void stopConnector(String name) {
     try {
       HttpDelete request =
