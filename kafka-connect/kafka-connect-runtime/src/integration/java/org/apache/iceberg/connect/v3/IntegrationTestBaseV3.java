@@ -18,48 +18,14 @@
  */
 package org.apache.iceberg.connect.v3;
 
-import java.time.Duration;
-import java.util.List;
-import java.util.Map;
 import org.apache.iceberg.catalog.TableIdentifier;
-import org.apache.iceberg.connect.AbstractTestBase;
 import org.apache.iceberg.connect.KafkaConnectUtils;
-import org.apache.iceberg.connect.v3.dto.UserEvent;
-import org.awaitility.Awaitility;
+import org.apache.iceberg.connect.SchemaTestBase;
 
-public abstract class IntegrationTestBaseV3 extends AbstractTestBase {
+public abstract class IntegrationTestBaseV3 extends SchemaTestBase {
   protected static final String TEST_TABLE_V3 = "tb1";
   protected static final TableIdentifier TABLE_IDENTIFIER_V3 =
       TableIdentifier.of(TEST_DB, TEST_TABLE_V3);
-
-  protected void runTest(
-      boolean useSchema,
-      Map<String, Object> extraConfig,
-      List<TableIdentifier> tableIdentifiers,
-      List<? extends UserEvent> events) {
-    KafkaConnectUtils.Config connectorConfig = initConnectorConfig(useSchema, extraConfig);
-    events.forEach(event -> send(testTopic(), event, useSchema));
-
-    context().startConnector(connectorConfig);
-
-    flush();
-
-    Awaitility.await()
-        .atMost(Duration.ofSeconds(60))
-        .pollInterval(Duration.ofSeconds(1))
-        .untilAsserted(() -> assertSnapshotAdded(tableIdentifiers));
-  }
-
-  protected KafkaConnectUtils.Config initConnectorConfig(
-      boolean useSchema, Map<String, Object> extraConfig) {
-    KafkaConnectUtils.Config connectorConfig = createConfig(useSchema);
-
-    context().connectorCatalogProperties().forEach(connectorConfig::config);
-
-    extraConfig.forEach(connectorConfig::config);
-
-    return connectorConfig;
-  }
 
   @Override
   protected KafkaConnectUtils.Config createConfig(boolean useSchema) {

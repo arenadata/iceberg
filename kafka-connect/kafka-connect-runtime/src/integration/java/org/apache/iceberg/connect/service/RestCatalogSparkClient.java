@@ -23,7 +23,7 @@ import static org.apache.iceberg.connect.service.ConnectorService.AWS_ACCESS_KEY
 import static org.apache.iceberg.connect.service.ConnectorService.AWS_REGION;
 import static org.apache.iceberg.connect.service.ConnectorService.AWS_SECRET_KEY;
 import static org.apache.iceberg.connect.service.ConnectorService.CATALOG_PORT;
-import static org.apache.iceberg.connect.service.ConnectorService.MINIO_PORT;
+import static org.apache.iceberg.connect.service.ConnectorService.S3_PORT;
 import static org.apache.iceberg.connect.service.DockerClient.DOCKER_CLIENT;
 import static org.apache.iceberg.connect.service.DockerClient.getContainer;
 
@@ -56,7 +56,8 @@ public class RestCatalogSparkClient {
                 "--conf",
                 format("spark.sql.catalog.spark_catalog.uri=http://iceberg:%s", CATALOG_PORT),
                 "--conf",
-                format("spark.sql.catalog.spark_catalog.s3.endpoint=http://minio:%s", MINIO_PORT),
+                format(
+                    "spark.sql.catalog.spark_catalog.s3.endpoint=http://object-store:%s", S3_PORT),
                 "--conf",
                 format("spark.sql.catalog.spark_catalog.s3.access-key-id=%s", AWS_ACCESS_KEY),
                 "--conf",
