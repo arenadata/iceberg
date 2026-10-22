@@ -130,13 +130,11 @@ public class TestOpenMetadata extends AbstractTestBase {
         Map.of(testTopic(), getEvents(TABLE_EVENTS_PACK_1, TABLE_IDENTIFIER_1)));
     String icebergFullTestTable1Name = getIcebergTableFullName(TABLE_IDENTIFIER_1);
     List<Edge> icebergTableLineageUpstreamEdges =
-        openMetadataService.extractNonEmptyUpstreamEdges("table", icebergFullTestTable1Name);
-    assertThat(icebergTableLineageUpstreamEdges.size()).isEqualTo(1);
+        openMetadataService.extractNonEmptyUpstreamEdges("table", icebergFullTestTable1Name, 1);
     assertIcebergKafkaEdge(icebergTableLineageUpstreamEdges.get(0));
     String fullKafkaTopicName = getKafkaTopicFullName(kafkaServiceName, testTopic());
     List<Edge> kafkaTopicLineageDownstreamEdges =
-        openMetadataService.extractNonEmptyDownstreamEdges("topic", fullKafkaTopicName);
-    assertThat(kafkaTopicLineageDownstreamEdges.size()).isEqualTo(1);
+        openMetadataService.extractNonEmptyDownstreamEdges("topic", fullKafkaTopicName, 1);
     assertIcebergKafkaEdge(kafkaTopicLineageDownstreamEdges.get(0));
     assertMessageService();
   }
@@ -163,14 +161,12 @@ public class TestOpenMetadata extends AbstractTestBase {
     icebergFullTablesNames.forEach(
         icebergFullTableName -> {
           List<Edge> icebergTableLineageUpstreamEdges =
-              openMetadataService.extractNonEmptyUpstreamEdges("table", icebergFullTableName);
-          assertThat(icebergTableLineageUpstreamEdges.size()).isEqualTo(1);
+              openMetadataService.extractNonEmptyUpstreamEdges("table", icebergFullTableName, 1);
           assertIcebergKafkaEdge(icebergTableLineageUpstreamEdges.get(0));
         });
 
     List<Edge> kafkaTopicLineageDownstreamEdges =
-        openMetadataService.extractNonEmptyDownstreamEdges("topic", fullKafkaTopicName);
-    assertThat(kafkaTopicLineageDownstreamEdges.size()).isEqualTo(2);
+        openMetadataService.extractNonEmptyDownstreamEdges("topic", fullKafkaTopicName, 2);
     kafkaTopicLineageDownstreamEdges.forEach(this::assertIcebergKafkaEdge);
     assertMessageService();
   }
@@ -191,8 +187,7 @@ public class TestOpenMetadata extends AbstractTestBase {
     String icebergFullTableName = getIcebergTableFullName(TABLE_IDENTIFIER_1);
 
     List<Edge> icebergTableLineageUpstreamEdges =
-        openMetadataService.extractNonEmptyUpstreamEdges("table", icebergFullTableName);
-    assertThat(icebergTableLineageUpstreamEdges.size()).isEqualTo(2);
+        openMetadataService.extractNonEmptyUpstreamEdges("table", icebergFullTableName, 2);
     icebergTableLineageUpstreamEdges.forEach(
         icebergTableLineageUpstreamEdge -> assertIcebergKafkaEdge(icebergTableLineageUpstreamEdge));
 
@@ -203,8 +198,7 @@ public class TestOpenMetadata extends AbstractTestBase {
     kafkaTopicsList.forEach(
         fullKafkaTopicName -> {
           List<Edge> kafkaTopicLineageDownstreamEdges =
-              openMetadataService.extractNonEmptyDownstreamEdges("topic", fullKafkaTopicName);
-          assertThat(kafkaTopicLineageDownstreamEdges.size()).isEqualTo(1);
+              openMetadataService.extractNonEmptyDownstreamEdges("topic", fullKafkaTopicName, 1);
           Edge kafkaTopicLineageDownstreamEdge = kafkaTopicLineageDownstreamEdges.get(0);
           assertIcebergKafkaEdge(kafkaTopicLineageDownstreamEdge);
         });
@@ -291,8 +285,7 @@ public class TestOpenMetadata extends AbstractTestBase {
             assertThat(icebergCol.replace(format("%s.", icebergFullTableName), ""))
                 .isEqualTo(kafkaColumns.get(0).replace(format("%s.", fullKafkaTopicName), "")));
     List<Edge> kafkaServiceEdges =
-        openMetadataService.extractNonEmptyDownstreamEdges("messagingService", kafkaServiceName);
-    assertThat(kafkaServiceEdges.size()).isEqualTo(2);
+        openMetadataService.extractNonEmptyDownstreamEdges("messagingService", kafkaServiceName, 2);
     List<String> toEntities =
         kafkaServiceEdges.stream().map(edge -> edge.getToEntity().toString()).toList();
     assertThat(toEntities)
@@ -306,8 +299,7 @@ public class TestOpenMetadata extends AbstractTestBase {
 
   private void assertMessageService() {
     List<Edge> kafkaServiceEdges =
-        openMetadataService.extractNonEmptyDownstreamEdges("messagingService", kafkaServiceName);
-    assertThat(kafkaServiceEdges.size()).isEqualTo(2);
+        openMetadataService.extractNonEmptyDownstreamEdges("messagingService", kafkaServiceName, 2);
     List<String> toEntities =
         kafkaServiceEdges.stream().map(edge -> edge.getToEntity().toString()).toList();
     assertThat(toEntities)
@@ -327,6 +319,7 @@ public class TestOpenMetadata extends AbstractTestBase {
   protected void dropTables() {
     catalog().dropTable(TABLE_IDENTIFIER_1);
     catalog().dropTable(TABLE_IDENTIFIER_2);
+    deleteTopic(spareTopic);
     openMetadataService.clearIcebergService(icebergIngestionPipelineId, icebergServiceId);
     openMetadataService.clearKafkaService(kafkaIngestionPipelineId, kafkaServiceId);
     openMetadataService.clearKafkaConnectService(kafkaConnectServiceId);

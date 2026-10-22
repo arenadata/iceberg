@@ -418,9 +418,9 @@ public class OpenMetadataIcebergKafkaDeployService {
 
   public void assertKafkaServiceTopics(String kafkaServiceName, List<String> kafkaServiceTopics) {
     TopicsApi.ListTopicsQueryParams topicsSearchParam =
-        new TopicsApi.ListTopicsQueryParams().service(kafkaServiceName).fields("").limit(10);
+        new TopicsApi.ListTopicsQueryParams().service(kafkaServiceName).fields("").limit(20);
     await()
-        .atMost(15, SECONDS)
+        .atMost(30, SECONDS)
         .pollInterval(1, SECONDS)
         .until(
             () -> {
@@ -512,7 +512,7 @@ public class OpenMetadataIcebergKafkaDeployService {
     pipelineServicesApi.deletePipelineService(kafkaConnectServiceId, true, true);
   }
 
-  public List<Edge> extractNonEmptyUpstreamEdges(String entity, String fqn) {
+  public List<Edge> extractNonEmptyUpstreamEdges(String entity, String fqn, int edgesCount) {
     AtomicReference<EntityLineage> lineageRef = new AtomicReference<>();
     await()
         .atMost(5, SECONDS)
@@ -523,7 +523,7 @@ public class OpenMetadataIcebergKafkaDeployService {
                 EntityLineage lineage = lineageApi.getLineageByFQN(entity, fqn, 1, 1);
                 if (lineage != null
                     && lineage.getUpstreamEdges() != null
-                    && !lineage.getUpstreamEdges().isEmpty()) {
+                    && lineage.getUpstreamEdges().size() == edgesCount) {
                   lineageRef.set(lineage);
                   return true;
                 }
@@ -536,7 +536,7 @@ public class OpenMetadataIcebergKafkaDeployService {
     return lineage.getUpstreamEdges();
   }
 
-  public List<Edge> extractNonEmptyDownstreamEdges(String entity, String fqn) {
+  public List<Edge> extractNonEmptyDownstreamEdges(String entity, String fqn, int edgesCount) {
     AtomicReference<EntityLineage> lineageRef = new AtomicReference<>();
     await()
         .atMost(5, SECONDS)
@@ -547,7 +547,7 @@ public class OpenMetadataIcebergKafkaDeployService {
                 EntityLineage lineage = lineageApi.getLineageByFQN(entity, fqn, 1, 1);
                 if (lineage != null
                     && lineage.getDownstreamEdges() != null
-                    && !lineage.getDownstreamEdges().isEmpty()) {
+                    && lineage.getDownstreamEdges().size() == edgesCount) {
                   lineageRef.set(lineage);
                   return true;
                 }
