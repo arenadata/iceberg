@@ -101,7 +101,7 @@ import org.openmetadata.schema.type.OwnerConfig;
 public class OpenMetadataIcebergKafkaDeployService {
   public static final int OPENMETADATA_PORT = 8585;
   public static final String KAFKA_CONNECT_HOST_PORT = "http://connect:8083";
-  private String token;
+  private final String token;
   private final UUID userId;
   private final IngestionPipelinesApi pipelineApi;
   private final TopicsApi topicsApi;
@@ -114,10 +114,10 @@ public class OpenMetadataIcebergKafkaDeployService {
   private final MessagingServicesApi messagingServicesApi;
   private final PipelineServicesApi pipelineServicesApi;
   private final PipelinesApi pipelinesApi;
-  private final HttpClient HTTP;
+  private final HttpClient http;
 
   public OpenMetadataIcebergKafkaDeployService() throws IOException {
-    this.HTTP = HttpClients.createDefault();
+    this.http = HttpClients.createDefault();
     this.token = setAdminAuthToken();
     OpenMetadataJWTClientConfig openMetadataJWTClientConfig =
         new OpenMetadataJWTClientConfig().withJwtToken(token);
@@ -154,7 +154,7 @@ public class OpenMetadataIcebergKafkaDeployService {
     String body = TestContext.MAPPER.writeValueAsString(config);
     loginRequest.setHeader("Content-Type", "application/json");
     loginRequest.setEntity(new StringEntity(body));
-    return HTTP.execute(
+    return http.execute(
         loginRequest,
         response ->
             TestContext.MAPPER
