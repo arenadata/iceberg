@@ -171,16 +171,13 @@ public class OpenMetadataIcebergKafkaDeployService {
     return token;
   }
 
-  public Pair<UUID, UUID> deployIcebergService(
-      String icebergServiceName, String databaseName, String schemaName, List<String> icebergTables)
+  public Pair<UUID, UUID> deployIcebergService(String icebergServiceName)
       throws URISyntaxException {
     UUID icebergServiceId = createIcebergService(icebergServiceName);
     UUID icebergIngestionPipelineId =
         createIcebergIngestionPipeline(icebergServiceName, icebergServiceId);
     deployIngestionPipeline(icebergIngestionPipelineId);
     triggerPipelineRun(icebergIngestionPipelineId);
-    assertIcebergServiceDatabases(icebergServiceName, databaseName);
-    assertIcebergServiceTables(icebergServiceName, databaseName, schemaName, icebergTables);
     return Pair.of(icebergServiceId, icebergIngestionPipelineId);
   }
 
@@ -326,7 +323,7 @@ public class OpenMetadataIcebergKafkaDeployService {
         ingestionPipelineId, "pipelineStatuses", "non-deleted", "all");
   }
 
-  private void assertIcebergServiceDatabases(String icebergServiceName, String databaseName) {
+  public void assertIcebergServiceDatabases(String icebergServiceName, String databaseName) {
     await()
         .atMost(15, SECONDS)
         .pollInterval(1, SECONDS)
@@ -340,6 +337,21 @@ public class OpenMetadataIcebergKafkaDeployService {
                     .map(Database::getName)
                     .toList()
                     .contains(databaseName);
+              } catch (Exception e) {
+                return false;
+              }
+            });
+  }
+
+  public void assertTable(String icebergTableName) {
+    await()
+        .atMost(15, SECONDS)
+        .pollInterval(1, SECONDS)
+        .until(
+            () -> {
+              try {
+                Table table = tablesApi.getTableByFQN(icebergTableName, null, "non-deleted", null);
+                return table != null;
               } catch (Exception e) {
                 return false;
               }
@@ -498,13 +510,15 @@ public class OpenMetadataIcebergKafkaDeployService {
     return pipelinesApi.createOrUpdatePipeline(createPipeline).getId();
   }
 
-  public void clearIcebergService(UUID icebergIngestionPipelineId, UUID icebergServiceId) {
-    ingestionPipelinesApi.deleteIngestionPipeline(icebergIngestionPipelineId, true);
+  public void clearIngestionPipeline(UUID ingestionPipelineId) {
+    ingestionPipelinesApi.deleteIngestionPipeline(ingestionPipelineId, true);
+  }
+
+  public void clearIcebergService(UUID icebergServiceId) {
     databaseServicesApi.deleteDatabaseService(icebergServiceId, true, true);
   }
 
-  public void clearKafkaService(UUID kafkaIngestionPipelineId, UUID kafkaServiceId) {
-    ingestionPipelinesApi.deleteIngestionPipeline(kafkaIngestionPipelineId, true);
+  public void clearKafkaService(UUID kafkaServiceId) {
     messagingServicesApi.deleteMessagingService(kafkaServiceId, true, true);
   }
 
@@ -544,7 +558,7 @@ public class OpenMetadataIcebergKafkaDeployService {
         .until(
             () -> {
               try {
-                EntityLineage lineage = lineageApi.getLineageByFQN(entity, fqn, 1, 1);
+                EntityLineage lineage = getEntityLineage(entity, fqn);
                 if (lineage != null
                     && lineage.getDownstreamEdges() != null
                     && lineage.getDownstreamEdges().size() == edgesCount) {
@@ -558,5 +572,9 @@ public class OpenMetadataIcebergKafkaDeployService {
             });
     EntityLineage lineage = lineageRef.get();
     return lineage.getDownstreamEdges();
+  }
+
+  public EntityLineage getEntityLineage(String entity, String fqn) {
+    return lineageApi.getLineageByFQN(entity, fqn, 1, 1);
   }
 }

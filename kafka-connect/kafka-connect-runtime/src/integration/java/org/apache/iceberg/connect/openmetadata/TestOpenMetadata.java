@@ -19,6 +19,7 @@
 package org.apache.iceberg.connect.openmetadata;
 
 import static java.lang.String.format;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.AssertionsForInterfaceTypes.assertThat;
 
 import java.io.IOException;
@@ -42,6 +43,7 @@ import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableSet;
 import org.apache.iceberg.types.Types;
 import org.awaitility.Awaitility;
+import org.awaitility.core.ConditionTimeoutException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -94,54 +96,48 @@ public class TestOpenMetadata extends AbstractTestBase {
   private String spareTopic;
 
   @BeforeEach
-  public void beforeEach() throws IOException, URISyntaxException {
-    catalog().createTable(TABLE_IDENTIFIER_1, TABLE_SCHEMA, SPEC, Map.of());
-    catalog().createTable(TABLE_IDENTIFIER_2, TABLE_SCHEMA, SPEC, Map.of());
+  public void beforeEach() throws IOException {
     spareTopic = "test-topic-" + UUID.randomUUID();
     createTopic(spareTopic, TEST_TOPIC_PARTITIONS);
     openMetadataService = new OpenMetadataIcebergKafkaDeployService();
-    Pair<UUID, UUID> icebergServiceData =
-        openMetadataService.deployIcebergService(
-            icebergServiceName,
-            ICEBERG_DATABASE_NAME,
-            TEST_DB,
-            List.of(TEST_TABLE_1, TEST_TABLE_2));
-    icebergServiceId = icebergServiceData.getLeft();
-    icebergIngestionPipelineId = icebergServiceData.getRight();
-    Pair<UUID, UUID> kafkaServiceData =
-        openMetadataService.deployKafkaService(kafkaServiceName, List.of(testTopic(), spareTopic));
-    kafkaServiceId = kafkaServiceData.getLeft();
-    kafkaIngestionPipelineId = kafkaServiceData.getRight();
-    openMetadataService.updateTopicSchema(kafkaServiceName, testTopic(), TOPIC_SCHEMA);
-    openMetadataService.updateTopicSchema(kafkaServiceName, spareTopic, TOPIC_SCHEMA);
-    kafkaConnectServiceId =
-        openMetadataService.deployKafkaConnectService(
-            kafkaConnectServiceName, kafkaServiceName, kafkaConnectPipelineName);
   }
 
   @ParameterizedTest
   @CsvSource({"true", "false"})
-  public void testOpenMetadataOneToOne(boolean useSchema) {
+  public void testOpenMetadataOneToOne(boolean useSchema) throws URISyntaxException {
+    catalog().createTable(TABLE_IDENTIFIER_1, TABLE_SCHEMA, SPEC, Map.of());
+    deployFullEnv();
     runTest(
         useSchema,
         createConfig(useSchema),
         Map.of(),
         List.of(TABLE_IDENTIFIER_1),
         Map.of(testTopic(), getEvents(TABLE_EVENTS_PACK_1, TABLE_IDENTIFIER_1)));
+    openMetadataService.assertIcebergServiceDatabases(icebergServiceName, ICEBERG_DATABASE_NAME);
+    openMetadataService.assertIcebergServiceTables(
+        icebergServiceName, ICEBERG_DATABASE_NAME, TEST_DB, List.of(TEST_TABLE_1));
+
     String icebergFullTestTable1Name = getIcebergTableFullName(TABLE_IDENTIFIER_1);
     List<Edge> icebergTableLineageUpstreamEdges =
         openMetadataService.extractNonEmptyUpstreamEdges("table", icebergFullTestTable1Name, 1);
-    assertIcebergKafkaEdge(icebergTableLineageUpstreamEdges.get(0));
+    checkEdgeLineageData(icebergTableLineageUpstreamEdges.get(0));
     String fullKafkaTopicName = getKafkaTopicFullName(kafkaServiceName, testTopic());
     List<Edge> kafkaTopicLineageDownstreamEdges =
         openMetadataService.extractNonEmptyDownstreamEdges("topic", fullKafkaTopicName, 1);
-    assertIcebergKafkaEdge(kafkaTopicLineageDownstreamEdges.get(0));
-    assertMessageService();
+    checkEdgeLineageData(kafkaTopicLineageDownstreamEdges.get(0));
+    checkMessageService();
   }
 
   @ParameterizedTest
   @CsvSource({"true", "false"})
-  public void testOpenMetadataOneToMany(boolean useSchema) {
+  public void testOpenMetadataOneToMany(boolean useSchema) throws URISyntaxException {
+    catalog().createTable(TABLE_IDENTIFIER_1, TABLE_SCHEMA, SPEC, Map.of());
+    catalog().createTable(TABLE_IDENTIFIER_2, TABLE_SCHEMA, SPEC, Map.of());
+    deployFullEnv();
+    openMetadataService.assertIcebergServiceDatabases(icebergServiceName, ICEBERG_DATABASE_NAME);
+    openMetadataService.assertIcebergServiceTables(
+        icebergServiceName, ICEBERG_DATABASE_NAME, TEST_DB, List.of(TEST_TABLE_1, TEST_TABLE_2));
+
     runTest(
         useSchema,
         createConfig(useSchema),
@@ -157,23 +153,29 @@ public class TestOpenMetadata extends AbstractTestBase {
         List.of(
             getIcebergTableFullName(TABLE_IDENTIFIER_1),
             getIcebergTableFullName(TABLE_IDENTIFIER_2));
-    String fullKafkaTopicName = format("%s.%s", kafkaServiceName, testTopic());
+    String fullKafkaTopicName = getKafkaTopicFullName(kafkaServiceName, testTopic());
     icebergFullTablesNames.forEach(
         icebergFullTableName -> {
           List<Edge> icebergTableLineageUpstreamEdges =
               openMetadataService.extractNonEmptyUpstreamEdges("table", icebergFullTableName, 1);
-          assertIcebergKafkaEdge(icebergTableLineageUpstreamEdges.get(0));
+          checkEdgeLineageData(icebergTableLineageUpstreamEdges.get(0));
         });
 
     List<Edge> kafkaTopicLineageDownstreamEdges =
         openMetadataService.extractNonEmptyDownstreamEdges("topic", fullKafkaTopicName, 2);
-    kafkaTopicLineageDownstreamEdges.forEach(this::assertIcebergKafkaEdge);
-    assertMessageService();
+    kafkaTopicLineageDownstreamEdges.forEach(this::checkEdgeLineageData);
+    checkMessageService();
   }
 
   @ParameterizedTest
   @CsvSource({"true", "false"})
-  public void testOpenMetadataManyToOne(boolean useSchema) {
+  public void testOpenMetadataManyToOne(boolean useSchema) throws URISyntaxException {
+    catalog().createTable(TABLE_IDENTIFIER_1, TABLE_SCHEMA, SPEC, Map.of());
+    deployFullEnv();
+    openMetadataService.assertIcebergServiceDatabases(icebergServiceName, ICEBERG_DATABASE_NAME);
+    openMetadataService.assertIcebergServiceTables(
+        icebergServiceName, ICEBERG_DATABASE_NAME, TEST_DB, List.of(TEST_TABLE_1));
+
     runTest(
         useSchema,
         createCustomConfig(useSchema, format("%s,%s", testTopic(), spareTopic)),
@@ -189,7 +191,7 @@ public class TestOpenMetadata extends AbstractTestBase {
     List<Edge> icebergTableLineageUpstreamEdges =
         openMetadataService.extractNonEmptyUpstreamEdges("table", icebergFullTableName, 2);
     icebergTableLineageUpstreamEdges.forEach(
-        icebergTableLineageUpstreamEdge -> assertIcebergKafkaEdge(icebergTableLineageUpstreamEdge));
+        icebergTableLineageUpstreamEdge -> checkEdgeLineageData(icebergTableLineageUpstreamEdge));
 
     List<String> kafkaTopicsList =
         List.of(
@@ -200,9 +202,95 @@ public class TestOpenMetadata extends AbstractTestBase {
           List<Edge> kafkaTopicLineageDownstreamEdges =
               openMetadataService.extractNonEmptyDownstreamEdges("topic", fullKafkaTopicName, 1);
           Edge kafkaTopicLineageDownstreamEdge = kafkaTopicLineageDownstreamEdges.get(0);
-          assertIcebergKafkaEdge(kafkaTopicLineageDownstreamEdge);
+          checkEdgeLineageData(kafkaTopicLineageDownstreamEdge);
         });
-    assertMessageService();
+    checkMessageService();
+  }
+
+  @ParameterizedTest
+  @CsvSource({"true", "false"})
+  public void testOpenMetadataNegative(boolean useSchema) throws URISyntaxException {
+    catalog().createTable(TABLE_IDENTIFIER_1, TABLE_SCHEMA, SPEC, Map.of());
+    icebergServiceId = openMetadataService.createIcebergService(icebergServiceName);
+    Pair<UUID, UUID> kafkaServiceData =
+        openMetadataService.deployKafkaService(kafkaServiceName, List.of(testTopic(), spareTopic));
+    kafkaServiceId = kafkaServiceData.getLeft();
+    kafkaIngestionPipelineId = kafkaServiceData.getRight();
+    kafkaConnectServiceId =
+        openMetadataService.deployKafkaConnectService(
+            kafkaConnectServiceName, kafkaServiceName, kafkaConnectPipelineName);
+    runTest(
+        useSchema,
+        createConfig(useSchema),
+        Map.of(),
+        List.of(TABLE_IDENTIFIER_1),
+        Map.of(testTopic(), getEvents(TABLE_EVENTS_PACK_1, TABLE_IDENTIFIER_1)));
+    assertThatThrownBy(
+            () ->
+                openMetadataService.extractNonEmptyDownstreamEdges(
+                    "messagingService", kafkaServiceName, 2))
+        .isInstanceOf(ConditionTimeoutException.class)
+        .hasMessage(
+            "Condition with Lambda expression in org.apache.iceberg.connect.service.OpenMetadataIcebergKafkaDeployService was not fulfilled within 5 seconds.");
+    assertThat(
+            openMetadataService
+                .getEntityLineage("messagingService", kafkaServiceName)
+                .getDownstreamEdges())
+        .isEmpty();
+    String fullKafkaTopicName = getKafkaTopicFullName(kafkaServiceName, testTopic());
+    assertThatThrownBy(
+            () ->
+                openMetadataService.extractNonEmptyDownstreamEdges("topic", fullKafkaTopicName, 1))
+        .isInstanceOf(ConditionTimeoutException.class)
+        .hasMessage(
+            "Condition with Lambda expression in org.apache.iceberg.connect.service.OpenMetadataIcebergKafkaDeployService was not fulfilled within 5 seconds.");
+    assertThat(
+            openMetadataService.getEntityLineage("topic", fullKafkaTopicName).getDownstreamEdges())
+        .isEmpty();
+  }
+
+  @ParameterizedTest
+  @CsvSource({"true", "false"})
+  public void testOpenMetadataWithAutoCreateTable(boolean useSchema) throws URISyntaxException {
+    deployFullEnv();
+    runTest(
+        useSchema,
+        createConfig(useSchema),
+        Map.of("iceberg.tables.auto-create-enabled", "true"),
+        List.of(TABLE_IDENTIFIER_1),
+        Map.of(testTopic(), getEvents(TABLE_EVENTS_PACK_1, TABLE_IDENTIFIER_1)));
+    assertThatThrownBy(
+            () ->
+                openMetadataService.extractNonEmptyDownstreamEdges(
+                    "messagingService", kafkaServiceName, 2))
+        .isInstanceOf(ConditionTimeoutException.class)
+        .hasMessage(
+            "Condition with Lambda expression in org.apache.iceberg.connect.service.OpenMetadataIcebergKafkaDeployService was not fulfilled within 5 seconds.");
+    assertThat(
+            openMetadataService
+                .getEntityLineage("messagingService", kafkaServiceName)
+                .getDownstreamEdges())
+        .isEmpty();
+    String fullKafkaTopicName = getKafkaTopicFullName(kafkaServiceName, testTopic());
+    assertThatThrownBy(
+            () ->
+                openMetadataService.extractNonEmptyDownstreamEdges("topic", fullKafkaTopicName, 1))
+        .isInstanceOf(ConditionTimeoutException.class)
+        .hasMessage(
+            "Condition with Lambda expression in org.apache.iceberg.connect.service.OpenMetadataIcebergKafkaDeployService was not fulfilled within 5 seconds.");
+    assertThat(
+            openMetadataService.getEntityLineage("topic", fullKafkaTopicName).getDownstreamEdges())
+        .isEmpty();
+    openMetadataService.triggerPipelineRun(icebergIngestionPipelineId);
+    openMetadataService.assertTable(getIcebergTableFullName(TABLE_IDENTIFIER_1));
+    List<Edge> icebergTableLineageUpstreamEdges =
+        openMetadataService.extractNonEmptyUpstreamEdges(
+            "table", getIcebergTableFullName(TABLE_IDENTIFIER_1), 1);
+    checkEdgeLineageData(icebergTableLineageUpstreamEdges.get(0));
+    List<Edge> kafkaTopicLineageDownstreamEdges =
+        openMetadataService.extractNonEmptyDownstreamEdges("topic", fullKafkaTopicName, 1);
+    checkEdgeLineageData(kafkaTopicLineageDownstreamEdges.get(0));
+    checkMessageService();
   }
 
   protected void runTest(
@@ -259,10 +347,10 @@ public class TestOpenMetadata extends AbstractTestBase {
     return format("%s.%s.%s", icebergServiceName, ICEBERG_DATABASE_NAME, tableName);
   }
 
-  private void assertIcebergKafkaEdge(Edge icebergKafkaEdge) {
-    assertThat(icebergKafkaEdge.getLineageDetails().getColumnsLineage().size()).isEqualTo(3);
+  private void checkEdgeLineageData(Edge edge) {
+    assertThat(edge.getLineageDetails().getColumnsLineage().size()).isEqualTo(3);
     Map<String, List<String>> columnLineageMap =
-        icebergKafkaEdge.getLineageDetails().getColumnsLineage().stream()
+        edge.getLineageDetails().getColumnsLineage().stream()
             .map(
                 columnLineage ->
                     Map.entry(columnLineage.getToColumn(), columnLineage.getFromColumns()))
@@ -286,18 +374,19 @@ public class TestOpenMetadata extends AbstractTestBase {
                 .isEqualTo(kafkaColumns.get(0).replace(format("%s.", fullKafkaTopicName), "")));
     List<Edge> kafkaServiceEdges =
         openMetadataService.extractNonEmptyDownstreamEdges("messagingService", kafkaServiceName, 2);
-    List<String> toEntities =
-        kafkaServiceEdges.stream().map(edge -> edge.getToEntity().toString()).toList();
+    List<UUID> toEntities = kafkaServiceEdges.stream().map(Edge::getToEntity).toList();
     assertThat(toEntities)
-        .containsExactlyInAnyOrderElementsOf(
-            List.of(icebergServiceId.toString(), kafkaConnectServiceId.toString()));
+        .containsExactlyInAnyOrderElementsOf(List.of(icebergServiceId, kafkaConnectServiceId));
+    List<UUID> fromEntities = kafkaServiceEdges.stream().map(Edge::getFromEntity).toList();
+    assertThat(fromEntities)
+        .containsExactlyInAnyOrderElementsOf(List.of(kafkaServiceId, kafkaServiceId));
   }
 
   private String extractNameFromColumn(String columnName) {
     return columnName.substring(0, columnName.lastIndexOf("."));
   }
 
-  private void assertMessageService() {
+  private void checkMessageService() {
     List<Edge> kafkaServiceEdges =
         openMetadataService.extractNonEmptyDownstreamEdges("messagingService", kafkaServiceName, 2);
     List<String> toEntities =
@@ -315,13 +404,34 @@ public class TestOpenMetadata extends AbstractTestBase {
     return format("%s_%s", baseServiceName, suffix);
   }
 
+  private void deployFullEnv() throws URISyntaxException {
+    Pair<UUID, UUID> icebergServiceData =
+        openMetadataService.deployIcebergService(icebergServiceName);
+
+    icebergServiceId = icebergServiceData.getLeft();
+    icebergIngestionPipelineId = icebergServiceData.getRight();
+    Pair<UUID, UUID> kafkaServiceData =
+        openMetadataService.deployKafkaService(kafkaServiceName, List.of(testTopic(), spareTopic));
+    kafkaServiceId = kafkaServiceData.getLeft();
+    kafkaIngestionPipelineId = kafkaServiceData.getRight();
+    openMetadataService.updateTopicSchema(kafkaServiceName, testTopic(), TOPIC_SCHEMA);
+    openMetadataService.updateTopicSchema(kafkaServiceName, spareTopic, TOPIC_SCHEMA);
+    kafkaConnectServiceId =
+        openMetadataService.deployKafkaConnectService(
+            kafkaConnectServiceName, kafkaServiceName, kafkaConnectPipelineName);
+  }
+
   @Override
   protected void dropTables() {
     catalog().dropTable(TABLE_IDENTIFIER_1);
     catalog().dropTable(TABLE_IDENTIFIER_2);
     deleteTopic(spareTopic);
-    openMetadataService.clearIcebergService(icebergIngestionPipelineId, icebergServiceId);
-    openMetadataService.clearKafkaService(kafkaIngestionPipelineId, kafkaServiceId);
+    if (icebergIngestionPipelineId != null) {
+      openMetadataService.clearIngestionPipeline(icebergIngestionPipelineId);
+    }
+    openMetadataService.clearIcebergService(icebergServiceId);
+    openMetadataService.clearIngestionPipeline(kafkaIngestionPipelineId);
+    openMetadataService.clearKafkaService(kafkaServiceId);
     openMetadataService.clearKafkaConnectService(kafkaConnectServiceId);
   }
 
