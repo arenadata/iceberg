@@ -236,3 +236,100 @@ services:
       timeout: 10s
       retries: 40
       start_period: 10s
+
+  openmetadata-db:
+    image: openmetadata/postgresql:1.13.0
+    environment:
+      POSTGRES_USER: test
+      POSTGRES_PASSWORD: test
+    healthcheck:
+      test: psql -d openmetadata_db -U test -Atc 'SELECT 1;'
+      interval: 30s
+      timeout: 15s
+      retries: 3
+    ports:
+      - "5432:5432"
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.3.0
+    restart: always
+    environment:
+      - discovery.type=single-node
+      - ES_JAVA_OPTS=-Xms1024m -Xmx1024m
+      - xpack.security.enabled=false
+    healthcheck:
+      test: "curl -s http://localhost:9200/_cluster/health?pretty | grep status | grep -qE 'green|yellow' || exit 1"
+      interval: 15s
+      timeout: 10s
+      retries: 10
+    ports:
+      - "9200:9200"
+
+  openmetadata:
+    image: openmetadata/server:1.12.12
+    restart: always
+    ports:
+      - "8585:8585"
+    command:
+      - "-c"
+      - "./bootstrap/openmetadata-ops.sh migrate && ./bin/openmetadata-server-start.sh conf/openmetadata.yaml"
+    environment:
+      DB_DRIVER_CLASS: org.postgresql.Driver
+      DB_SCHEME: postgresql
+      DB_HOST: openmetadata-db
+      DB_PORT: 5432
+      DB_USER: test
+      DB_USER_PASSWORD: test
+      DB_DATABASE: openmetadata_db
+      SEARCH_TYPE: elasticsearch
+      ELASTICSEARCH_HOST: elasticsearch
+      ELASTICSEARCH_PORT: 9200
+      ELASTICSEARCH_SCHEME: http
+      SEMANTIC_SEARCH_ENABLED: "false"
+      FORCE_REINDEX: "false"
+      OPENMETADATA_OPERATIONS_OPTS: "-Dopenmetadata.search.semantic.enabled=false"
+      PIPELINE_SERVICE_CLIENT_ENDPOINT: http://ingestion:8080
+      SERVER_HOST_API_URL: http://openmetadata:8585/api
+    healthcheck:
+      test: [ "CMD", "wget", "-q", "--spider", "http://localhost:8586/healthcheck" ]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+    depends_on:
+      openmetadata-db:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+
+  ingestion:
+    image: openmetadata/ingestion:1.12.12
+    environment:
+      AIRFLOW__API__AUTH_BACKENDS: "airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session"
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__OPENMETADATA_AIRFLOW_APIS__DAG_GENERATED_CONFIGS: "/opt/airflow/dag_generated_configs"
+      OPENMETADATA_SERVER_URL: http://openmetadata:8585
+      AIRFLOW__OPENMETADATA_AIRFLOW_APIS__OPENMETADATA_API_ENDPOINT: http://openmetadata:8585/api
+      AIRFLOW__OPENMETADATA_AIRFLOW_APIS__AUTH_PROVIDER: no-auth
+      AIRFLOW__LINEAGE__OPENMETADATA_API_ENDPOINT: http://openmetadata:8585/api
+      AIRFLOW__LINEAGE__AUTH_PROVIDER_TYPE: no-auth
+
+      DB_HOST: openmetadata-db
+      DB_PORT: 5432
+      AIRFLOW_DB: airflow_db
+      DB_USER: test
+      DB_PASSWORD: test
+      DB_SCHEME: postgresql+psycopg2
+      DB_PROPERTIES: ""
+
+    entrypoint: /bin/bash
+    command:
+      - "/opt/airflow/ingestion_dependency.sh"
+
+    ports:
+      - "8080:8080"
+
+    depends_on:
+      openmetadata-db:
+        condition: service_healthy
+      openmetadata:
+        condition: service_healthy

@@ -27,7 +27,6 @@ import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import java.util.stream.IntStream;
 import org.apache.iceberg.DataFile;
 import org.apache.iceberg.DeleteFile;
 import org.apache.iceberg.Snapshot;
@@ -60,7 +59,7 @@ public abstract class AbstractTestBase {
   private KafkaProducer<String, String> producer;
 
   protected static final int TEST_TOPIC_PARTITIONS = 2;
-  protected static final String TEST_DB = "test";
+  public static final String TEST_DB = "test";
 
   protected abstract KafkaConnectUtils.Config createConfig(boolean useSchema);
 
@@ -96,7 +95,7 @@ public abstract class AbstractTestBase {
     this.catalog = initCatalog();
     this.producer = context.initLocalProducer();
     this.admin = context.initLocalAdmin();
-    this.connectorName = "test_connector-" + UUID.randomUUID();
+    this.connectorName = initConnectorName();
     this.testTopic = "test-topic-" + UUID.randomUUID();
     createTopic(testTopic(), TEST_TOPIC_PARTITIONS);
     createNamespace();
@@ -117,6 +116,10 @@ public abstract class AbstractTestBase {
     }
     producer.close();
     admin.close();
+  }
+
+  protected String initConnectorName() {
+    return "test_connector-" + UUID.randomUUID();
   }
 
   protected void clearNamespace() {
@@ -187,26 +190,19 @@ public abstract class AbstractTestBase {
     }
   }
 
-  protected void testSend() {
-    IntStream.range(0, 1000)
-        .forEach(
-            i -> {
-              try {
-                producer.send(new ProducerRecord<>(testTopic(), "key-" + i, "value-" + i)).get();
-              } catch (InterruptedException | ExecutionException e) {
-                throw new RuntimeException(e);
-              }
-            });
-  }
-
   protected void flush() {
     producer.flush();
   }
 
   protected KafkaConnectUtils.Config createCommonConfig(boolean useSchema) {
     // set offset reset to the earliest, so we don't miss any test messages
-    return new KafkaConnectUtils.Config(connectorName())
-        .config("topics", testTopic())
+    return createKafkaConnectConfig(useSchema, testTopic());
+  }
+
+  protected KafkaConnectUtils.Config createKafkaConnectConfig(boolean useSchema, String topicName) {
+    // set offset reset to the earliest, so we don't miss any test messages
+    return new KafkaConnectUtils.Config(connectorName)
+        .config("topics", topicName)
         .config("connector.class", IcebergSinkConnector.class.getName())
         .config("tasks.max", 2)
         .config("consumer.override.auto.offset.reset", "earliest")
@@ -228,5 +224,12 @@ public abstract class AbstractTestBase {
         fail("Table should exist");
       }
     }
+  }
+
+  protected KafkaConnectUtils.Config initConnectorConfig(
+      KafkaConnectUtils.Config connectorConfig, Map<String, Object> extraConfig) {
+    context().connectorCatalogProperties().forEach(connectorConfig::config);
+    extraConfig.forEach(connectorConfig::config);
+    return connectorConfig;
   }
 }

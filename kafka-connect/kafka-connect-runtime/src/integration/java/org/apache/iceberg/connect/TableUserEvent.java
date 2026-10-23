@@ -16,14 +16,12 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.iceberg.connect.routingstrategy.dto;
+package org.apache.iceberg.connect;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.common.DynMethods;
-import org.apache.iceberg.connect.BaseTestEvent;
-import org.apache.iceberg.connect.TestContext;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableSet;
 import org.apache.iceberg.types.Types;
@@ -33,7 +31,7 @@ import org.apache.kafka.connect.json.JsonConverter;
 
 public class TableUserEvent extends BaseTestEvent {
   private final String username;
-  private final String table;
+  private String table;
 
   public static final org.apache.kafka.connect.data.Schema USER_CONNECT_SCHEMA =
       SchemaBuilder.struct()
@@ -54,6 +52,16 @@ public class TableUserEvent extends BaseTestEvent {
     super(id);
     this.username = username;
     this.table = table;
+  }
+
+  public TableUserEvent(long id, String username) {
+    super(id);
+    this.username = username;
+  }
+
+  public TableUserEvent setTable(String table) {
+    this.table = table;
+    return this;
   }
 
   public String castToString() {
