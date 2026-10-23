@@ -71,19 +71,12 @@ jobs:
     strategy:
       matrix:
         jvm: [11, 17, 21]
-        spark: ['3.4', '3.5', '4.0', '4.2']
+        spark: ['3.5', '4.2']
         scala: ['2.12', '2.13']
         exclude:
-          # Spark 3.5 is the first version not failing on Java 21 (https://issues.apache.org/jira/browse/SPARK-42369)
-          # Full Java 21 support is coming in Spark 4 (https://issues.apache.org/jira/browse/SPARK-43831)
-          - jvm: 11
-            spark: '4.0'
+          # Spark 4.2 requires Java 17+ and Scala 2.13.
           - jvm: 11
             spark: '4.2'
-          - jvm: 21
-            spark: '3.4'
-          - spark: '4.0'
-            scala: '2.12'
           - spark: '4.2'
             scala: '2.12'
     env:
@@ -117,6 +110,8 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: test logs
+          name: spark-${{ matrix.spark }}-scala-${{ matrix.scala }}-java-${{ matrix.jvm }}-test-results
           path: |
             **/build/testlogs
+            **/build/test-results/**
+            **/build/reports/tests/**

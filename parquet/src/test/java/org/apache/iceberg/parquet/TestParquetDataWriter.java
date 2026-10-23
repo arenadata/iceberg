@@ -20,15 +20,19 @@ package org.apache.iceberg.parquet;
 
 import static org.apache.iceberg.parquet.ParquetWritingTestUtils.createTempFile;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Path;
+import java.security.SecureRandom;
 import java.util.List;
+import java.util.Optional;
 import org.apache.iceberg.DataFile;
 import org.apache.iceberg.FileContent;
 import org.apache.iceberg.FileFormat;
 import org.apache.iceberg.Files;
+import org.apache.iceberg.InternalTestHelpers;
 import org.apache.iceberg.MetricsConfig;
 import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.Schema;
@@ -47,6 +51,16 @@ import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.types.Types;
+import org.apache.iceberg.variants.Variant;
+import org.apache.iceberg.variants.VariantMetadata;
+import org.apache.iceberg.variants.VariantTestUtil;
+import org.apache.iceberg.variants.Variants;
+import org.apache.parquet.ParquetReadOptions;
+import org.apache.parquet.crypto.FileDecryptionProperties;
+import org.apache.parquet.crypto.ParquetCryptoRuntimeException;
+import org.apache.parquet.hadoop.ParquetFileReader;
+import org.apache.parquet.schema.GroupType;
+import org.apache.parquet.schema.MessageType;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -78,25 +92,29 @@ public class TestParquetDataWriter {
 
   @Test
   public void testDataWriter() throws IOException {
+    testDataWriter(SCHEMA, (id, name) -> null);
+  }
+
+  private void testDataWriter(Schema schema, VariantShreddingFunction variantShreddingFunc)
+      throws IOException {
     OutputFile file = Files.localOutput(createTempFile(temp));
 
-    SortOrder sortOrder = SortOrder.builderFor(SCHEMA).withOrderId(10).asc("id").build();
+    SortOrder sortOrder = SortOrder.builderFor(schema).withOrderId(10).asc("id").build();
 
     DataWriter<Record> dataWriter =
         Parquet.writeData(file)
-            .schema(SCHEMA)
+            .schema(schema)
             .createWriterFunc(GenericParquetWriter::create)
+            .variantShreddingFunc(variantShreddingFunc)
             .overwrite()
             .withSpec(PartitionSpec.unpartitioned())
             .withSortOrder(sortOrder)
             .build();
 
-    try {
+    try (dataWriter) {
       for (Record record : records) {
         dataWriter.write(record);
       }
-    } finally {
-      dataWriter.close();
     }
 
     DataFile dataFile = dataWriter.toDataFile();
@@ -113,13 +131,32 @@ public class TestParquetDataWriter {
     List<Record> writtenRecords;
     try (CloseableIterable<Record> reader =
         Parquet.read(file.toInputFile())
-            .project(SCHEMA)
-            .createReaderFunc(fileSchema -> GenericParquetReaders.buildReader(SCHEMA, fileSchema))
+            .project(schema)
+            .createReaderFunc(fileSchema -> GenericParquetReaders.buildReader(schema, fileSchema))
             .build()) {
       writtenRecords = Lists.newArrayList(reader);
     }
 
-    assertThat(writtenRecords).as("Written records should match").isEqualTo(records);
+    assertThat(writtenRecords).hasSameSizeAs(records);
+
+    for (int i = 0; i < records.size(); i++) {
+      InternalTestHelpers.assertEquals(schema.asStruct(), records.get(i), writtenRecords.get(i));
+    }
+
+    // Check physical Parquet schema if variant shredding function is provided
+    Optional<Types.NestedField> variantField =
+        schema.columns().stream()
+            .filter(field -> field.type().equals(Types.VariantType.get()))
+            .findFirst();
+
+    if (variantField.isPresent() && variantShreddingFunc != null) {
+      try (ParquetFileReader reader = ParquetFileReader.open(ParquetIO.file(file.toInputFile()))) {
+        MessageType parquetSchema = reader.getFooter().getFileMetaData().getSchema();
+        GroupType variantType = parquetSchema.getType(variantField.get().name()).asGroupType();
+
+        assertThat(variantType.containsField("typed_value")).isTrue();
+      }
+    }
   }
 
   @SuppressWarnings("checkstyle:AvoidEscapedUnicodeCharacters")
@@ -265,5 +302,119 @@ public class TestParquetDataWriter {
     assertThat(dataFile.upperBounds()).as("Should have a valid upper bound").containsKey(1);
     assertThat(dataFile.lowerBounds()).as("Should have a valid lower bound").containsKey(3);
     assertThat(dataFile.upperBounds()).as("Should have a null upper bound").doesNotContainKey(3);
+  }
+
+  @Test
+  public void testDataWriterWithVariantShredding() throws IOException {
+    Schema variantSchema =
+        new Schema(
+            ImmutableList.<Types.NestedField>builder()
+                .addAll(SCHEMA.columns())
+                .add(Types.NestedField.optional(4, "variant", Types.VariantType.get()))
+                .build());
+
+    ByteBuffer metadataBuffer = VariantTestUtil.createMetadata(ImmutableList.of("a", "b"), true);
+    VariantMetadata metadata = Variants.metadata(metadataBuffer);
+
+    ByteBuffer objectBuffer =
+        VariantTestUtil.createObject(
+            metadataBuffer,
+            ImmutableMap.of(
+                "a", Variants.of(123456789),
+                "b", Variants.of("string")));
+
+    Variant variant = Variant.of(metadata, Variants.value(metadata, objectBuffer));
+
+    // Create records with variant data
+    GenericRecord record = GenericRecord.create(variantSchema);
+
+    records =
+        ImmutableList.of(
+            record.copy(ImmutableMap.of("id", 1L, "variant", variant)),
+            record.copy(ImmutableMap.of("id", 2L, "variant", variant)));
+
+    testDataWriter(
+        variantSchema, (id, name) -> ParquetVariantUtil.toParquetSchema(variant.value()));
+  }
+
+  @Test
+  public void testDataWriterWithEncryptedVariantShredding() throws IOException {
+    Schema variantSchema =
+        new Schema(
+            Types.NestedField.required(1, "id", Types.LongType.get()),
+            Types.NestedField.optional(2, "variant", Types.VariantType.get()));
+    Variant variant =
+        VariantTestUtil.variant(
+            ImmutableMap.of("a", Variants.of(123456789), "b", Variants.of("string")));
+    GenericRecord record = GenericRecord.create(variantSchema);
+    List<Record> variantRecords =
+        ImmutableList.of(
+            record.copy(ImmutableMap.of("id", 1L, "variant", variant)),
+            record.copy(ImmutableMap.of("id", 2L, "variant", variant)));
+
+    ByteBuffer fileDek = ByteBuffer.allocate(16);
+    ByteBuffer aadPrefix = ByteBuffer.allocate(16);
+    SecureRandom random = new SecureRandom();
+    random.nextBytes(fileDek.array());
+    random.nextBytes(aadPrefix.array());
+
+    OutputFile file = Files.localOutput(createTempFile(temp));
+    try (DataWriter<Record> writer =
+        Parquet.writeData(file)
+            .schema(variantSchema)
+            .createWriterFunc(GenericParquetWriter::create)
+            .variantShreddingFunc((id, name) -> ParquetVariantUtil.toParquetSchema(variant.value()))
+            .withFileEncryptionKey(fileDek)
+            .withAADPrefix(aadPrefix)
+            .overwrite()
+            .withSpec(PartitionSpec.unpartitioned())
+            .build()) {
+      for (Record variantRecord : variantRecords) {
+        writer.write(variantRecord);
+      }
+    }
+
+    assertThatThrownBy(
+            () ->
+                Parquet.read(file.toInputFile())
+                    .project(variantSchema)
+                    .createReaderFunc(
+                        fileSchema -> GenericParquetReaders.buildReader(variantSchema, fileSchema))
+                    .build()
+                    .iterator())
+        .isInstanceOf(ParquetCryptoRuntimeException.class)
+        .hasMessage("Trying to read file with encrypted footer. No keys available");
+
+    FileDecryptionProperties decryption =
+        FileDecryptionProperties.builder()
+            .withFooterKey(fileDek.array())
+            .withAADPrefix(aadPrefix.array())
+            .build();
+    try (ParquetFileReader reader =
+        ParquetFileReader.open(
+            ParquetIO.file(file.toInputFile()),
+            ParquetReadOptions.builder().withDecryption(decryption).build())) {
+      GroupType variantType =
+          reader.getFooter().getFileMetaData().getSchema().getType("variant").asGroupType();
+      assertThat(variantType.containsField("typed_value")).isTrue();
+    }
+
+    List<Record> actual;
+    try (CloseableIterable<Record> reader =
+        Parquet.read(file.toInputFile())
+            .withFileEncryptionKey(fileDek)
+            .withAADPrefix(aadPrefix)
+            .project(variantSchema)
+            .createReaderFunc(
+                fileSchema -> GenericParquetReaders.buildReader(variantSchema, fileSchema))
+            .build()) {
+      actual = Lists.newArrayList(reader);
+    }
+
+    assertThat(actual).hasSameSizeAs(variantRecords);
+    for (int i = 0; i < variantRecords.size(); i += 1) {
+      InternalTestHelpers.assertEquals(
+          variantSchema.asStruct(), variantRecords.get(i), actual.get(i));
+    }
   }
 }

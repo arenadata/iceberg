@@ -106,4 +106,11 @@ public class SparkSQLProperties {
   // Controls whether to report available column statistics to Spark for query optimization.
   public static final String REPORT_COLUMN_STATS = "spark.sql.iceberg.report-column-stats";
   public static final boolean REPORT_COLUMN_STATS_DEFAULT = true;
+
+  // Controls whether to shred variant columns during write operations
+  public static final String SHRED_VARIANTS = "spark.sql.iceberg.shred-variants";
+
+  // Controls how many rows to buffer before inferring shredded variant schemas
+  public static final String VARIANT_INFERENCE_BUFFER_SIZE =
+      "spark.sql.iceberg.variant-inference-buffer-size";
 }

@@ -22,14 +22,26 @@ import static org.apache.iceberg.MetadataColumns.DELETE_FILE_ROW_FIELD_NAME;
 import static org.apache.iceberg.TableProperties.DEFAULT_FILE_FORMAT;
 import static org.apache.iceberg.TableProperties.DEFAULT_FILE_FORMAT_DEFAULT;
 import static org.apache.iceberg.TableProperties.DELETE_DEFAULT_FILE_FORMAT;
+import static org.apache.iceberg.TableProperties.PARQUET_SHRED_VARIANTS;
+import static org.apache.iceberg.TableProperties.PARQUET_SHRED_VARIANTS_DEFAULT;
+import static org.apache.iceberg.TableProperties.PARQUET_VARIANT_BUFFER_SIZE;
+import static org.apache.iceberg.TableProperties.PARQUET_VARIANT_BUFFER_SIZE_DEFAULT;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.Map;
 import org.apache.iceberg.FileFormat;
+import org.apache.iceberg.MetricsConfig;
+import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.SortOrder;
+import org.apache.iceberg.StructLike;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.avro.Avro;
 import org.apache.iceberg.data.BaseFileWriterFactory;
+import org.apache.iceberg.encryption.EncryptedOutputFile;
+import org.apache.iceberg.io.BufferedFileAppender;
+import org.apache.iceberg.io.DataWriter;
 import org.apache.iceberg.io.DeleteSchemaUtil;
 import org.apache.iceberg.orc.ORC;
 import org.apache.iceberg.parquet.Parquet;
@@ -39,12 +51,16 @@ import org.apache.iceberg.spark.SparkSchemaUtil;
 import org.apache.iceberg.spark.data.SparkAvroWriter;
 import org.apache.iceberg.spark.data.SparkOrcWriter;
 import org.apache.iceberg.spark.data.SparkParquetWriters;
+import org.apache.parquet.schema.Type;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.unsafe.types.UTF8String;
 
 class SparkFileWriterFactory extends BaseFileWriterFactory<InternalRow> {
+  private final Table table;
+  private final FileFormat dataFileFormat;
+  private final SortOrder dataSortOrder;
   private StructType dataSparkType;
   private StructType equalityDeleteSparkType;
   private StructType positionDeleteSparkType;
@@ -76,6 +92,9 @@ class SparkFileWriterFactory extends BaseFileWriterFactory<InternalRow> {
         equalityDeleteSortOrder,
         positionDeleteRowSchema);
 
+    this.table = table;
+    this.dataFileFormat = dataFileFormat;
+    this.dataSortOrder = dataSortOrder;
     this.dataSparkType = dataSparkType;
     this.equalityDeleteSparkType = equalityDeleteSparkType;
     this.positionDeleteSparkType = positionDeleteSparkType;
@@ -152,6 +171,59 @@ class SparkFileWriterFactory extends BaseFileWriterFactory<InternalRow> {
     builder.setAll(writeProperties);
   }
 
+  @Override
+  public DataWriter<InternalRow> newDataWriter(
+      EncryptedOutputFile file, PartitionSpec spec, StructLike partition) {
+    if (!shouldUseVariantShredding()) {
+      return super.newDataWriter(file, spec, partition);
+    }
+
+    Preconditions.checkArgument(spec != null, "Cannot create data writer without spec");
+    Preconditions.checkArgument(
+        spec.isUnpartitioned() || partition != null,
+        "Partition must not be null when creating data writer for partitioned spec");
+
+    Schema schema = dataSchema();
+    StructType sparkType = dataSparkType();
+    Map<String, String> tableProperties = table != null ? table.properties() : ImmutableMap.of();
+    MetricsConfig metricsConfig =
+        table != null ? MetricsConfig.forTable(table) : MetricsConfig.getDefault();
+    SparkVariantShreddingAnalyzer analyzer = new SparkVariantShreddingAnalyzer();
+
+    BufferedFileAppender<InternalRow> bufferedAppender =
+        new BufferedFileAppender<>(
+            variantInferenceBufferSize(),
+            bufferedRows -> {
+              Map<Integer, Type> shreddedTypes =
+                  analyzer.analyzeVariantColumns(bufferedRows, schema, sparkType);
+
+              try {
+                return Parquet.write(file)
+                    .schema(schema)
+                    .variantShreddingFunc((fieldId, name) -> shreddedTypes.get(fieldId))
+                    .createWriterFunc(
+                        messageType -> SparkParquetWriters.buildWriter(sparkType, messageType))
+                    .setAll(tableProperties)
+                    .setAll(writeProperties)
+                    .metricsConfig(metricsConfig)
+                    .overwrite()
+                    .build();
+              } catch (IOException e) {
+                throw new UncheckedIOException("Failed to create shredded variant writer", e);
+              }
+            },
+            InternalRow::copy);
+
+    return new DataWriter<>(
+        bufferedAppender,
+        dataFileFormat,
+        file.encryptingOutputFile().location(),
+        spec,
+        partition,
+        file.keyMetadata(),
+        dataSortOrder);
+  }
+
   private StructType dataSparkType() {
     if (dataSparkType == null) {
       Preconditions.checkNotNull(dataSchema(), "Data schema must not be null");
@@ -179,6 +251,30 @@ class SparkFileWriterFactory extends BaseFileWriterFactory<InternalRow> {
     }
 
     return positionDeleteSparkType;
+  }
+
+  private boolean shouldUseVariantShredding() {
+    if (dataFileFormat != FileFormat.PARQUET || dataSchema() == null) {
+      return false;
+    }
+
+    String tableValue = table != null ? table.properties().get(PARQUET_SHRED_VARIANTS) : null;
+    String configuredValue = writeProperties.getOrDefault(PARQUET_SHRED_VARIANTS, tableValue);
+    boolean enabled =
+        configuredValue != null
+            ? Boolean.parseBoolean(configuredValue)
+            : PARQUET_SHRED_VARIANTS_DEFAULT;
+
+    return enabled
+        && dataSchema().columns().stream().anyMatch(field -> field.type().isVariantType());
+  }
+
+  private int variantInferenceBufferSize() {
+    String tableValue = table != null ? table.properties().get(PARQUET_VARIANT_BUFFER_SIZE) : null;
+    String configuredValue = writeProperties.getOrDefault(PARQUET_VARIANT_BUFFER_SIZE, tableValue);
+    return configuredValue != null
+        ? Integer.parseInt(configuredValue)
+        : PARQUET_VARIANT_BUFFER_SIZE_DEFAULT;
   }
 
   static class Builder {

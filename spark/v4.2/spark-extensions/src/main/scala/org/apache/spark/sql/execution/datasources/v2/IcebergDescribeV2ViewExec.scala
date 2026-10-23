@@ -63,7 +63,7 @@ case class IcebergDescribeV2ViewExec(
   private def describeExtended: Seq[InternalRow] = {
     val outputColumns = view.queryColumnNames.mkString("[", ", ", "]")
     val properties: Map[String, String] =
-      view.properties.asScala.toMap -- ViewUtil.RESERVED_PROPERTIES
+      conf.redactOptions(view.properties.asScala.toMap -- ViewUtil.RESERVED_PROPERTIES)
     val viewCatalogAndNamespace: Seq[String] = catalogName +: ident.namespace().toIndexedSeq
     val viewProperties = properties.toSeq
       .sortBy(_._1)
