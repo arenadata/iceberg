@@ -25,7 +25,7 @@ interface RecordWriter extends Cloneable {
 
   void write(SinkRecord record);
 
-  List<IcebergWriterResult> complete();
+  List<RecordWriteResult> complete();
 
   void close();
 }

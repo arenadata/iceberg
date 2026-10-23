@@ -33,6 +33,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.regex.Pattern;
 import org.apache.iceberg.DataFile;
+import org.apache.iceberg.RowLevelOperationMode;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.TableIdentifier;
@@ -89,9 +90,9 @@ public class TestSinkWriter {
     when(config.tables()).thenReturn(ImmutableList.of(TABLE_IDENTIFIER.toString()));
     Map<String, Object> value = ImmutableMap.of();
 
-    List<IcebergWriterResult> writerResults = sinkWriterTest(value, config);
+    List<RecordWriteResult> writerResults = sinkWriterTest(value, config);
     assertThat(writerResults).hasSize(1);
-    IcebergWriterResult writerResult = writerResults.get(0);
+    IcebergWriterResult writerResult = (IcebergWriterResult) writerResults.get(0);
     assertThat(writerResult.tableIdentifier()).isEqualTo(TABLE_IDENTIFIER);
   }
 
@@ -103,7 +104,7 @@ public class TestSinkWriter {
     when(config.tables()).thenReturn(ImmutableList.of());
     Map<String, Object> value = ImmutableMap.of();
 
-    List<IcebergWriterResult> writerResults = sinkWriterTest(value, config);
+    List<RecordWriteResult> writerResults = sinkWriterTest(value, config);
     assertThat(writerResults).isEmpty();
   }
 
@@ -119,9 +120,9 @@ public class TestSinkWriter {
     when(config.tablesRouteField()).thenReturn(ROUTE_FIELD);
 
     Map<String, Object> value = ImmutableMap.of(ROUTE_FIELD, "val");
-    List<IcebergWriterResult> writerResults = sinkWriterTest(value, config);
+    List<RecordWriteResult> writerResults = sinkWriterTest(value, config);
     assertThat(writerResults).hasSize(1);
-    IcebergWriterResult writerResult = writerResults.get(0);
+    IcebergWriterResult writerResult = (IcebergWriterResult) writerResults.get(0);
     assertThat(writerResult.tableIdentifier()).isEqualTo(TABLE_IDENTIFIER);
   }
 
@@ -137,7 +138,7 @@ public class TestSinkWriter {
     when(config.tablesRouteField()).thenReturn(ROUTE_FIELD);
 
     Map<String, Object> value = ImmutableMap.of(ROUTE_FIELD, "foobar");
-    List<IcebergWriterResult> writerResults = sinkWriterTest(value, config);
+    List<RecordWriteResult> writerResults = sinkWriterTest(value, config);
     assertThat(writerResults).hasSize(0);
   }
 
@@ -152,9 +153,9 @@ public class TestSinkWriter {
 
     Map<String, Object> value = ImmutableMap.of(ROUTE_FIELD, TABLE_IDENTIFIER.toString());
 
-    List<IcebergWriterResult> writerResults = sinkWriterTest(value, config);
+    List<RecordWriteResult> writerResults = sinkWriterTest(value, config);
     assertThat(writerResults).hasSize(1);
-    IcebergWriterResult writerResult = writerResults.get(0);
+    IcebergWriterResult writerResult = (IcebergWriterResult) writerResults.get(0);
     assertThat(writerResult.tableIdentifier()).isEqualTo(TABLE_IDENTIFIER);
   }
 
@@ -169,11 +170,11 @@ public class TestSinkWriter {
 
     Map<String, Object> value = ImmutableMap.of(ROUTE_FIELD, "db.foobar");
 
-    List<IcebergWriterResult> writerResults = sinkWriterTest(value, config);
+    List<RecordWriteResult> writerResults = sinkWriterTest(value, config);
     assertThat(writerResults).hasSize(0);
   }
 
-  private List<IcebergWriterResult> sinkWriterTest(
+  private List<RecordWriteResult> sinkWriterTest(
       Map<String, Object> value, IcebergSinkConfig config) {
     IcebergWriterResult writeResult =
         new IcebergWriterResult(
@@ -182,10 +183,14 @@ public class TestSinkWriter {
             ImmutableList.of(),
             Types.StructType.of());
     IcebergWriter writer = mock(IcebergWriter.class);
-    when(writer.complete()).thenReturn(ImmutableList.of(writeResult));
+    when(writer.complete()).thenReturn(ImmutableList.<RecordWriteResult>of(writeResult));
 
     IcebergWriterFactory writerFactory = mock(IcebergWriterFactory.class);
     when(writerFactory.createWriter(any(), any(), anyBoolean())).thenReturn(writer);
+
+    // SinkWriter builds its own real IcebergWriterFactory rather than taking the mock above, so
+    // it exercises the real row-level-mode check added for copy-on-write
+    when(config.rowLevelMode()).thenReturn(RowLevelOperationMode.MERGE_ON_READ);
 
     SinkWriter sinkWriter = new SinkWriter(catalog, config);
 

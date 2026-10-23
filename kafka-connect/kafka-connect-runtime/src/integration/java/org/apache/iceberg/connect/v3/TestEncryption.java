@@ -21,7 +21,7 @@ package org.apache.iceberg.connect.v3;
 import static org.apache.iceberg.connect.service.ConnectorService.AWS_ACCESS_KEY;
 import static org.apache.iceberg.connect.service.ConnectorService.AWS_REGION;
 import static org.apache.iceberg.connect.service.ConnectorService.AWS_SECRET_KEY;
-import static org.apache.iceberg.connect.service.ConnectorService.MINIO_PORT;
+import static org.apache.iceberg.connect.service.ConnectorService.S3_PORT;
 import static org.apache.iceberg.connect.service.ConnectorService.V3_AUTO_CREATE_CONNECTOR_CONFIGS;
 import static org.apache.iceberg.connect.service.ConnectorService.addConnectorConfigs;
 import static org.apache.iceberg.connect.service.IcebergTableClient.S3_CLIENT;
@@ -59,7 +59,7 @@ import software.amazon.awssdk.services.s3.model.DeleteBucketRequest;
 public class TestEncryption extends IntegrationTestBaseV3 {
   private static final String HIVE_METASTORE_PORT = "9083";
   private static final String HIVE_WAREHOUSE_LOCATION = "s3://bucket/warehouse";
-  private static final String MINIO_CONNECTOR_ENDPOINT = "http://minio:" + MINIO_PORT;
+  private static final String OBJECT_STORE_CONNECTOR_ENDPOINT = "http://object-store:" + S3_PORT;
   private static final String TEST_DATABASE = "test_db";
   private static final TableIdentifier HIVE_TABLE_IDENTIFIER =
       TableIdentifier.of(TEST_DATABASE, TEST_TABLE_V3);
@@ -134,7 +134,7 @@ public class TestEncryption extends IntegrationTestBaseV3 {
         "hive.metastore.warehouse.dir",
         HIVE_WAREHOUSE_LOCATION,
         "s3.endpoint",
-        "http://localhost:" + MINIO_PORT,
+        "http://localhost:" + S3_PORT,
         "s3.access-key-id",
         AWS_ACCESS_KEY,
         "s3.secret-access-key",
@@ -155,13 +155,13 @@ public class TestEncryption extends IntegrationTestBaseV3 {
         Map.entry("iceberg.catalog.warehouse", HIVE_WAREHOUSE_LOCATION),
         Map.entry("iceberg.tables.auto-create-props.write.object-storage.enabled", "true"),
         Map.entry("io-impl", "org.apache.iceberg.aws.s3.S3FileIO"),
-        Map.entry("s3.endpoint", MINIO_CONNECTOR_ENDPOINT),
+        Map.entry("s3.endpoint", OBJECT_STORE_CONNECTOR_ENDPOINT),
         Map.entry("s3.access-key-id", AWS_ACCESS_KEY),
         Map.entry("s3.secret-access-key", AWS_SECRET_KEY),
         Map.entry("s3.path-style-access", "true"),
         Map.entry("s3.region", AWS_REGION),
         Map.entry("iceberg.hadoop.fs.s3.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem"),
-        Map.entry("iceberg.hadoop.fs.s3a.endpoint", MINIO_CONNECTOR_ENDPOINT),
+        Map.entry("iceberg.hadoop.fs.s3a.endpoint", OBJECT_STORE_CONNECTOR_ENDPOINT),
         Map.entry("iceberg.hadoop.fs.s3a.access.key", AWS_ACCESS_KEY),
         Map.entry("iceberg.hadoop.fs.s3a.secret.key", AWS_SECRET_KEY),
         Map.entry("iceberg.hadoop.fs.s3a.path.style.access", "true"),

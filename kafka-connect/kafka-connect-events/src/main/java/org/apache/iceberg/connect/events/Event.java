@@ -146,7 +146,8 @@ public class Event implements IndexedRecord {
       case PAYLOAD:
         return payload;
       default:
-        throw new UnsupportedOperationException("Unknown field ordinal: " + i);
+        // a newer version's field: the reader gets it for reuse before put() ignores it
+        return null;
     }
   }
 }

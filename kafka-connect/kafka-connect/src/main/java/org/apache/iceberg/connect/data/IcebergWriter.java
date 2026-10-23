@@ -23,10 +23,8 @@ import java.io.UncheckedIOException;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.stream.Stream;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.connect.IcebergSinkConfig;
 import org.apache.iceberg.connect.events.TableReference;
@@ -34,7 +32,6 @@ import org.apache.iceberg.data.Record;
 import org.apache.iceberg.io.TaskWriter;
 import org.apache.iceberg.io.WriteResult;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
-import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.relocated.com.google.common.collect.Sets;
 import org.apache.kafka.connect.errors.DataException;
 import org.apache.kafka.connect.sink.SinkRecord;
@@ -44,8 +41,7 @@ class IcebergWriter implements RecordWriter {
   private final TableReference tableReference;
   private final IcebergSinkConfig config;
   private final List<IcebergWriterResult> writerResults;
-  private final Map<String, Operation> operationMappings;
-  private final Set<String> ignoredOperations;
+  private final CdcOperations cdcOperations;
   private final Set<String> sourceTopics;
 
   private RecordConverter recordConverter;
@@ -68,12 +64,10 @@ class IcebergWriter implements RecordWriter {
     this.tableReference = tableReference;
     this.config = config;
     this.writerResults = Lists.newArrayList();
-    this.operationMappings = Maps.newHashMap();
-    this.ignoredOperations = Sets.newHashSet();
+    this.cdcOperations = new CdcOperations(config);
     this.sourceTopics = Sets.newHashSet();
     this.writer = writer;
     this.recordConverter = new RecordConverter(table, config);
-    initOperationMappings();
   }
 
   @Override
@@ -84,8 +78,8 @@ class IcebergWriter implements RecordWriter {
         return;
       }
 
-      Optional<String> rawOperation = extractRawOperation(record);
-      if (rawOperation.filter(ignoredOperations::contains).isPresent()) {
+      Optional<String> rawOperation = cdcOperations.rawOperation(record);
+      if (rawOperation.filter(cdcOperations::isIgnored).isPresent()) {
         // skip ignored operation
         return;
       }
@@ -112,16 +106,8 @@ class IcebergWriter implements RecordWriter {
   }
 
   private Optional<Record> convertToRowWithOp(SinkRecord record, String rawOperation) {
-    return Optional.ofNullable(operationMappings.get(rawOperation))
+    return Optional.ofNullable(cdcOperations.operation(rawOperation))
         .map(operation -> new RecordWrapper(convertToRow(record), operation));
-  }
-
-  private Optional<String> extractRawOperation(SinkRecord record) {
-    return Optional.ofNullable(config.tablesCdcField())
-        .map(operationField -> RecordUtils.extractFromRecordValue(record.value(), operationField))
-        .map(Object::toString)
-        .map(String::trim)
-        .map(String::toLowerCase);
   }
 
   private Record convertToRow(SinkRecord record) {
@@ -170,10 +156,10 @@ class IcebergWriter implements RecordWriter {
   }
 
   @Override
-  public List<IcebergWriterResult> complete() {
+  public List<RecordWriteResult> complete() {
     flush();
 
-    List<IcebergWriterResult> result = Lists.newArrayList(writerResults);
+    List<RecordWriteResult> result = Lists.newArrayList(writerResults);
     writerResults.clear();
 
     return result;
@@ -186,25 +172,5 @@ class IcebergWriter implements RecordWriter {
     } catch (IOException e) {
       throw new UncheckedIOException(e);
     }
-  }
-
-  private void initOperationMappings() {
-    insertOperationMappings(config.tablesCdcOpsInsert(), Operation.INSERT);
-    insertOperationMappings(config.tablesCdcOpsUpdate(), Operation.UPDATE);
-    insertOperationMappings(config.tablesCdcOpsDelete(), Operation.DELETE);
-
-    normalize(config.tablesCdcIgnoredOps()).forEach(ignoredOperations::add);
-  }
-
-  private void insertOperationMappings(List<String> cdcOperations, Operation operation) {
-    normalize(cdcOperations).forEach(cdcOp -> operationMappings.put(cdcOp, operation));
-  }
-
-  private Stream<String> normalize(List<String> operations) {
-    if (operations == null || operations.isEmpty()) {
-      return Stream.empty();
-    }
-
-    return operations.stream().map(String::toLowerCase);
   }
 }

@@ -187,7 +187,8 @@ public class DataWritten implements Payload {
       case SOURCE_TOPICS:
         return sourceTopics;
       default:
-        throw new UnsupportedOperationException("Unknown field ordinal: " + i);
+        // a newer version's field: the reader gets it for reuse before put() ignores it
+        return null;
     }
   }
 }

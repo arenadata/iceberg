@@ -29,7 +29,7 @@ class NoOpWriter implements RecordWriter {
   }
 
   @Override
-  public List<IcebergWriterResult> complete() {
+  public List<RecordWriteResult> complete() {
     // NO-OP
     return ImmutableList.of();
   }

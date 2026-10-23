@@ -120,7 +120,8 @@ public class TopicPartitionOffset implements IndexedRecord {
       case TIMESTAMP:
         return timestamp == null ? null : DateTimeUtil.microsFromTimestamptz(timestamp);
       default:
-        throw new UnsupportedOperationException("Unknown field ordinal: " + i);
+        // a newer version's field: the reader gets it for reuse before put() ignores it
+        return null;
     }
   }
 }

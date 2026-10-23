@@ -18,10 +18,14 @@
  */
 package org.apache.iceberg.connect.channel;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
+import java.util.Arrays;
+import org.apache.avro.generic.IndexedRecord;
 import org.apache.iceberg.DataFile;
 import org.apache.iceberg.DataFiles;
 import org.apache.iceberg.DeleteFile;
@@ -34,6 +38,9 @@ import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.SortDirection;
 import org.apache.iceberg.SortOrder;
+import org.apache.iceberg.avro.AvroEncoderUtil;
+import org.apache.iceberg.connect.events.AvroUtil;
+import org.apache.iceberg.connect.events.Event;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
 import org.apache.iceberg.types.Types;
@@ -94,5 +101,39 @@ class EventTestUtil {
         .withSortOrder(ORDER)
         .withSplitOffsets(ImmutableList.of(4L))
         .build();
+  }
+
+  /** Returns the event's bytes cut short inside the payload: the fields before it still decode. */
+  static byte[] withTruncatedPayload(Event event) {
+    byte[] bytes = AvroUtil.encode(event);
+    return Arrays.copyOf(bytes, bytes.length - 1);
+  }
+
+  /** Returns the event's bytes with a payload type id written in place of its own. */
+  static byte[] withPayloadTypeId(Event event, int typeId) {
+    int typePosition = event.getSchema().getField("type").pos();
+    IndexedRecord record =
+        new IndexedRecord() {
+          @Override
+          public void put(int i, Object v) {
+            throw new UnsupportedOperationException("Write only");
+          }
+
+          @Override
+          public Object get(int i) {
+            return i == typePosition ? typeId : event.get(i);
+          }
+
+          @Override
+          public org.apache.avro.Schema getSchema() {
+            return event.getSchema();
+          }
+        };
+
+    try {
+      return AvroEncoderUtil.encode(record, event.getSchema());
+    } catch (IOException e) {
+      throw new UncheckedIOException(e);
+    }
   }
 }

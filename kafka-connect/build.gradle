@@ -54,6 +54,24 @@ project(':iceberg-kafka-connect:iceberg-kafka-connect') {
     compileOnly libs.kafka.clients
     compileOnly libs.kafka.connect.api
     compileOnly libs.kafka.connect.json
+    // CopyOnWriteRewriter calls Parquet.read / ORC.read / Avro.read directly; the runtime bundle
+    // already carries parquet and orc, so compileOnly rather than implementation (6.14). The
+    // format-specific reader builders expose parquet-column / orc-core types (MessageType,
+    // TypeDescription) directly in their public signatures, so those are needed too -- iceberg-data
+    // needs the equivalent pair for its own GenericReader, for the same reason.
+    compileOnly project(':iceberg-parquet')
+    compileOnly project(':iceberg-orc')
+    compileOnly(libs.parquet.avro) {
+      exclude group: 'org.apache.avro', module: 'avro'
+      exclude group: 'it.unimi.dsi'
+      exclude group: 'org.codehaus.jackson'
+    }
+    compileOnly("${libs.orc.core.get().module}:${libs.versions.orc.get()}:nohive") {
+      exclude group: 'org.apache.hadoop'
+      exclude group: 'commons-lang'
+      exclude group: 'com.google.protobuf', module: 'protobuf-java'
+      exclude group: 'org.apache.hive', module: 'hive-storage-api'
+    }
 
     testImplementation libs.hadoop3.client
     testRuntimeOnly project(':iceberg-parquet')

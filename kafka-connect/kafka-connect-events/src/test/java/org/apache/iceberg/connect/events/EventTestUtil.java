@@ -95,4 +95,16 @@ class EventTestUtil {
         .withSplitOffsets(ImmutableList.of(4L))
         .build();
   }
+
+  static StagedChangeFile createStagedChangeFile() {
+    return new StagedChangeFile(
+        "path/to/staged.avro",
+        100L,
+        5L,
+        0,
+        1,
+        ImmutableMap.of(1, ByteBuffer.wrap(new byte[] {0})),
+        ImmutableMap.of(1, ByteBuffer.wrap(new byte[] {9})),
+        ImmutableList.of(1));
+  }
 }
