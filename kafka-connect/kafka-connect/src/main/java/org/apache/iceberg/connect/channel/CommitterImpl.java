@@ -21,6 +21,7 @@ package org.apache.iceberg.connect.channel;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Function;
 import org.apache.iceberg.catalog.Catalog;
 import org.apache.iceberg.connect.Committer;
 import org.apache.iceberg.connect.IcebergSinkConfig;
@@ -32,6 +33,7 @@ import org.apache.kafka.clients.admin.ConsumerGroupDescription;
 import org.apache.kafka.clients.admin.MemberDescription;
 import org.apache.kafka.common.ConsumerGroupState;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.metrics.PluginMetrics;
 import org.apache.kafka.connect.errors.ConnectException;
 import org.apache.kafka.connect.sink.SinkRecord;
 import org.apache.kafka.connect.sink.SinkTaskContext;
@@ -42,6 +44,9 @@ public class CommitterImpl implements Committer {
 
   private static final Logger LOG = LoggerFactory.getLogger(CommitterImpl.class);
 
+  // copy-on-write: how long a task's poll thread may go without reading the control topic
+  private static final long CONTROL_TOPIC_READ_INTERVAL_MS = 1_000L;
+
   private CoordinatorThread coordinatorThread;
   private Worker worker;
   private Catalog catalog;
@@ -50,7 +55,30 @@ public class CommitterImpl implements Committer {
   private KafkaClientFactory clientFactory;
   private MetadataEvents metadataEvents;
   private Collection<MemberDescription> membersWhenWorkerIsCoordinator;
+  // one for the life of the committer, so that the coordinators the task elects in turn share the
+  // metrics; null without statistics
+  private StatisticsMetrics statisticsMetrics;
+  private boolean metricsUnsupportedLogged = false;
   private final AtomicBoolean isInitialized = new AtomicBoolean(false);
+  private final Function<IcebergSinkConfig, KafkaClientFactory> clientFactories;
+  // where the logs about the statistics metrics go: the tests have no log backend to read them from
+  private final Logger metricsLog;
+
+  public CommitterImpl() {
+    this(icebergSinkConfig -> new KafkaClientFactory(icebergSinkConfig.kafkaProps()));
+  }
+
+  @VisibleForTesting
+  CommitterImpl(Function<IcebergSinkConfig, KafkaClientFactory> clientFactories) {
+    this(clientFactories, LOG);
+  }
+
+  @VisibleForTesting
+  CommitterImpl(
+      Function<IcebergSinkConfig, KafkaClientFactory> clientFactories, Logger metricsLog) {
+    this.clientFactories = clientFactories;
+    this.metricsLog = metricsLog;
+  }
 
   private void initialize(
       Catalog icebergCatalog,
@@ -60,7 +88,8 @@ public class CommitterImpl implements Committer {
       this.catalog = icebergCatalog;
       this.config = icebergSinkConfig;
       this.context = sinkTaskContext;
-      this.clientFactory = new KafkaClientFactory(config.kafkaProps());
+      this.clientFactory = clientFactories.apply(config);
+      this.statisticsMetrics = config.statisticsInUse() ? new StatisticsMetrics() : null;
       this.metadataEvents =
           MetadataEvents.fromContext(
               context,
@@ -170,8 +199,25 @@ public class CommitterImpl implements Committer {
     if (sinkRecords != null && !sinkRecords.isEmpty()) {
       startWorker();
       worker.save(sinkRecords);
+    } else if (ownsPartitionsInCopyOnWrite()) {
+      // in copy-on-write a task with an idle input is still a rewrite executor, and only its
+      // DataComplete counts it among the cycle's active tasks: after a restart or a rebalance
+      // with every record already reported, no active tasks would defer the drain until new
+      // records arrive
+      startWorker();
     }
     processControlEvents();
+
+    if (worker != null && config.isCopyOnWriteMode()) {
+      // on an idle or paused input Connect polls for up to offset.flush.interval.ms before the next
+      // put(), longer than commit.timeout-ms by default; the timeout applies to the next poll only
+      context.timeout(CONTROL_TOPIC_READ_INTERVAL_MS);
+    }
+  }
+
+  private boolean ownsPartitionsInCopyOnWrite() {
+    // Connect calls put() before open() when the task has no partitions
+    return isInitialized.get() && config.isCopyOnWriteMode() && !context.assignment().isEmpty();
   }
 
   private void processControlEvents() {
@@ -187,7 +233,7 @@ public class CommitterImpl implements Committer {
     if (null == this.worker) {
       LOG.info("Starting commit worker");
       SinkWriter sinkWriter = new SinkWriter(catalog, config);
-      worker = new Worker(config, clientFactory, sinkWriter, context);
+      worker = new Worker(catalog, config, clientFactory, sinkWriter, context);
       worker.start();
     }
   }
@@ -195,17 +241,70 @@ public class CommitterImpl implements Committer {
   private void startCoordinator() {
     if (null == this.coordinatorThread) {
       LOG.info("Task elected leader, starting commit coordinator");
-      Coordinator coordinator =
-          new Coordinator(
-              catalog,
-              config,
-              membersWhenWorkerIsCoordinator,
-              clientFactory,
-              context,
-              metadataEvents);
-      coordinatorThread = new CoordinatorThread(coordinator);
-      coordinatorThread.start();
+      // before the coordinator is built: its constructor attaches the health to the metrics
+      registerStatisticsMetrics();
+      try {
+        coordinatorThread = new CoordinatorThread(newCoordinator(statisticsMetrics));
+        coordinatorThread.start();
+      } catch (RuntimeException e) {
+        // stopCoordinator() would not take the metrics off: there is no thread to stop
+        unregisterStatisticsMetrics();
+        throw e;
+      }
     }
+  }
+
+  // Registered here, not by the coordinator: a new coordinator may be built while the old one is
+  // still in terminate(), and would clash with the names the old one holds. open() and close()
+  // run on the task thread, one after the other
+  private void registerStatisticsMetrics() {
+    if (statisticsMetrics == null) {
+      return;
+    }
+
+    try {
+      PluginMetrics pluginMetrics = context.pluginMetrics();
+      if (pluginMetrics != null) {
+        statisticsMetrics.register(pluginMetrics);
+      }
+    } catch (NoSuchMethodError e) {
+      // Kafka Connect below 4.1 has no PluginMetrics (KIP-877): not supported, the connector runs
+      warnMetricsUnsupportedOnce();
+    } catch (IllegalArgumentException e) {
+      metricsLog.warn("Statistics metrics are not registered, a name is taken", e);
+    }
+  }
+
+  private void warnMetricsUnsupportedOnce() {
+    if (!metricsUnsupportedLogged) {
+      metricsUnsupportedLogged = true;
+      metricsLog.warn("statistics metrics need Kafka Connect 4.1 or later");
+    }
+  }
+
+  private void unregisterStatisticsMetrics() {
+    if (statisticsMetrics == null) {
+      return;
+    }
+
+    try {
+      statisticsMetrics.unregister();
+    } catch (IllegalStateException | IllegalArgumentException e) {
+      // the runtime closed the PluginMetrics of a task that is stopping, or dropped the metric
+      metricsLog.debug("Statistics metrics were not unregistered", e);
+    }
+  }
+
+  @VisibleForTesting
+  Coordinator newCoordinator(StatisticsMetrics metrics) {
+    return new Coordinator(
+        catalog,
+        config,
+        membersWhenWorkerIsCoordinator,
+        clientFactory,
+        context,
+        metadataEvents,
+        metrics);
   }
 
   private void stopWorker() {
@@ -219,6 +318,7 @@ public class CommitterImpl implements Committer {
     if (coordinatorThread != null) {
       coordinatorThread.terminate();
       coordinatorThread = null;
+      unregisterStatisticsMetrics();
     }
   }
 }

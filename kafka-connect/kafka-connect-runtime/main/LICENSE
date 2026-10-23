@@ -1165,6 +1165,18 @@ License (from POM): Apache License, Version 2.0 - https://www.apache.org/license
 
 --------------------------------------------------------------------------------
 
+Group: org.apache.datasketches  Name: datasketches-java  Version: 6.2.0
+Project URL (from POM): https://datasketches.apache.org/
+License (from POM): Apache License, Version 2.0 - https://www.apache.org/licenses/LICENSE-2.0.txt
+
+--------------------------------------------------------------------------------
+
+Group: org.apache.datasketches  Name: datasketches-memory  Version: 3.0.2
+Project URL (from POM): https://datasketches.apache.org/
+License (from POM): Apache License, Version 2.0 - https://www.apache.org/licenses/LICENSE-2.0.txt
+
+--------------------------------------------------------------------------------
+
 Group: org.apache.hadoop  Name: hadoop-annotations  Version: 3.4.1
 License (from POM): Apache License, Version 2.0 - https://www.apache.org/licenses/LICENSE-2.0.txt
 

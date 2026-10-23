@@ -16,22 +16,20 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.iceberg.aws.s3;
+package org.apache.iceberg.connect.channel;
 
-import org.testcontainers.containers.MinIOContainer;
-import org.testcontainers.junit.jupiter.Testcontainers;
-
-@Testcontainers
-public class TestS3FileIOWithLegacyMinIO extends TestS3FileIO {
-  @Override
-  protected MinIOContainer createMinIOContainer() {
-    MinIOContainer container = MinioUtil.createContainer(MinioUtil.LEGACY_TAG, null);
-    container.start();
-    return container;
-  }
+/**
+ * Every scenario of {@link TestCopyOnWriteTableCommitter}, rewritten by three tasks instead of one.
+ *
+ * <p>The acceptance criterion for distributing the rewrite: {@code tasks.max > 1} must produce the
+ * same table as a single task. Here that is not a similar test but literally the same assertions,
+ * with the plan split across owners, and the slice's keys emitted by whichever owner holds them
+ * rather than by whoever found the old row.
+ */
+public class TestCopyOnWriteTableCommitterMultiTask extends TestCopyOnWriteTableCommitter {
 
   @Override
-  protected boolean legacyMd5PluginEnabled() {
-    return true;
+  protected int taskCount() {
+    return 3;
   }
 }

@@ -23,16 +23,18 @@ import java.util.Set;
 import org.apache.iceberg.DataFile;
 import org.apache.iceberg.DeleteFile;
 import org.apache.iceberg.catalog.TableIdentifier;
+import org.apache.iceberg.connect.events.SketchFile;
 import org.apache.iceberg.connect.events.TableReference;
 import org.apache.iceberg.types.Types.StructType;
 
-public class IcebergWriterResult {
+public class IcebergWriterResult implements RecordWriteResult {
 
   private final TableReference tableReference;
   private final List<DataFile> dataFiles;
   private final List<DeleteFile> deleteFiles;
   private final StructType partitionStruct;
   private final Set<String> sourceTopics;
+  private final SketchFile sketchFile;
 
   public IcebergWriterResult(
       TableReference tableReference,
@@ -48,11 +50,22 @@ public class IcebergWriterResult {
       List<DeleteFile> deleteFiles,
       StructType partitionStruct,
       Set<String> sourceTopics) {
+    this(tableReference, dataFiles, deleteFiles, partitionStruct, sourceTopics, null);
+  }
+
+  public IcebergWriterResult(
+      TableReference tableReference,
+      List<DataFile> dataFiles,
+      List<DeleteFile> deleteFiles,
+      StructType partitionStruct,
+      Set<String> sourceTopics,
+      SketchFile sketchFile) {
     this.tableReference = tableReference;
     this.dataFiles = dataFiles;
     this.deleteFiles = deleteFiles;
     this.partitionStruct = partitionStruct;
     this.sourceTopics = sourceTopics;
+    this.sketchFile = sketchFile;
   }
 
   /**
@@ -68,6 +81,12 @@ public class IcebergWriterResult {
     this(TableReference.of("unknown", tableIdentifier), dataFiles, deleteFiles, partitionStruct);
   }
 
+  @Override
+  public Kind kind() {
+    return Kind.DATA_FILES;
+  }
+
+  @Override
   public TableReference tableReference() {
     return tableReference;
   }
@@ -93,7 +112,21 @@ public class IcebergWriterResult {
     return partitionStruct;
   }
 
+  @Override
   public Set<String> sourceTopics() {
     return sourceTopics;
+  }
+
+  IcebergWriterResult withSketchFile(SketchFile file) {
+    if (file == null) {
+      return this;
+    }
+
+    return new IcebergWriterResult(
+        tableReference, dataFiles, deleteFiles, partitionStruct, sourceTopics, file);
+  }
+
+  public SketchFile sketchFile() {
+    return sketchFile;
   }
 }

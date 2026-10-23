@@ -19,13 +19,14 @@
 package org.apache.iceberg.connect.data;
 
 import java.util.List;
+import java.util.UUID;
 import org.apache.kafka.connect.sink.SinkRecord;
 
 interface RecordWriter extends Cloneable {
 
   void write(SinkRecord record);
 
-  List<IcebergWriterResult> complete();
+  List<RecordWriteResult> complete(UUID commitId);
 
   void close();
 }

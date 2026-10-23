@@ -87,7 +87,8 @@ public class StartCommit implements Payload {
       case COMMIT_ID:
         return commitId;
       default:
-        throw new UnsupportedOperationException("Unknown field ordinal: " + i);
+        // a newer version's field: the reader gets it for reuse before put() ignores it
+        return null;
     }
   }
 }

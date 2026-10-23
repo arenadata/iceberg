@@ -161,7 +161,8 @@ public class TableReference implements IndexedRecord {
       case TABLE_UUID:
         return uuid;
       default:
-        throw new UnsupportedOperationException("Unknown field ordinal: " + i);
+        // a newer version's field: the reader gets it for reuse before put() ignores it
+        return null;
     }
   }
 

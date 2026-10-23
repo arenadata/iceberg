@@ -54,7 +54,7 @@ public class TestFlinkAnonymousTable extends TestBase {
             .option("warehouse", warehouseDir.getAbsolutePath())
             .build();
 
-    table.insertInto(descriptor).execute();
+    table.insertInto(descriptor).execute().await();
     Awaitility.await()
         .atMost(3, TimeUnit.SECONDS)
         .untilAsserted(

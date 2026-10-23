@@ -24,6 +24,7 @@ import java.time.ZoneOffset;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.stream.Collectors;
 import org.apache.iceberg.catalog.Catalog;
 import org.apache.iceberg.connect.IcebergSinkConfig;
@@ -48,10 +49,10 @@ public class SinkWriter {
     writers.values().forEach(RecordWriter::close);
   }
 
-  public SinkWriterResult completeWrite() {
-    List<IcebergWriterResult> writerResults =
+  public SinkWriterResult completeWrite(UUID commitId) {
+    List<RecordWriteResult> writerResults =
         writers.values().stream()
-            .flatMap(writer -> writer.complete().stream())
+            .flatMap(writer -> writer.complete(commitId).stream())
             .collect(Collectors.toList());
     Map<TopicPartition, Offset> offsets = Maps.newHashMap(sourceOffsets);
 

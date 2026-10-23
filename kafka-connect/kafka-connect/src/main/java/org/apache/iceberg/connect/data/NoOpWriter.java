@@ -19,6 +19,7 @@
 package org.apache.iceberg.connect.data;
 
 import java.util.List;
+import java.util.UUID;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.kafka.connect.sink.SinkRecord;
 
@@ -29,7 +30,7 @@ class NoOpWriter implements RecordWriter {
   }
 
   @Override
-  public List<IcebergWriterResult> complete() {
+  public List<RecordWriteResult> complete(UUID commitId) {
     // NO-OP
     return ImmutableList.of();
   }

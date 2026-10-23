@@ -22,7 +22,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import java.util.stream.Collectors;
 import org.apache.iceberg.FileFormat;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.TableProperties;
@@ -41,7 +40,6 @@ import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.relocated.com.google.common.collect.Sets;
 import org.apache.iceberg.relocated.com.google.common.primitives.Ints;
 import org.apache.iceberg.types.TypeUtil;
-import org.apache.iceberg.types.Types.NestedField;
 import org.apache.iceberg.util.PropertyUtil;
 import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Struct;
@@ -116,23 +114,7 @@ class RecordUtils {
             TableProperties.WRITE_TARGET_FILE_SIZE_BYTES,
             TableProperties.WRITE_TARGET_FILE_SIZE_BYTES_DEFAULT);
 
-    Set<Integer> identifierFieldIds = table.schema().identifierFieldIds();
-
-    // override the identifier fields if the config is set
-    List<String> idCols = config.tableConfig(tableReference.identifier().toString()).idColumns();
-    if (!idCols.isEmpty()) {
-      identifierFieldIds =
-          idCols.stream()
-              .map(
-                  colName -> {
-                    NestedField field = table.schema().findField(colName);
-                    if (field == null) {
-                      throw new IllegalArgumentException("ID column not found: " + colName);
-                    }
-                    return field.fieldId();
-                  })
-              .collect(Collectors.toSet());
-    }
+    Set<Integer> identifierFieldIds = IdentifierFields.resolve(table, tableReference, config);
 
     FileWriterFactory<Record> writerFactory;
     boolean isIdentifierFieldsDoesDotExist =

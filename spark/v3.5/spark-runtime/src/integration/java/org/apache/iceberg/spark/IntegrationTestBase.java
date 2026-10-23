@@ -23,7 +23,7 @@ import static org.apache.iceberg.spark.IcebergCatalogProperties.AWS_ACCESS_KEY;
 import static org.apache.iceberg.spark.IcebergCatalogProperties.AWS_REGION;
 import static org.apache.iceberg.spark.IcebergCatalogProperties.AWS_SECRET_KEY;
 import static org.apache.iceberg.spark.IcebergCatalogProperties.BASE_CATALOG_CONFIGS;
-import static org.apache.iceberg.spark.IcebergCatalogProperties.MINIO_PORT;
+import static org.apache.iceberg.spark.IcebergCatalogProperties.S3_PORT;
 import static org.apache.iceberg.spark.IcebergCatalogProperties.SPARK_CATALOG;
 import static org.apache.iceberg.spark.IcebergCatalogProperties.TEST_CATALOG;
 import static org.apache.iceberg.spark.IcebergCatalogProperties.TEST_DB;
@@ -126,7 +126,7 @@ public class IntegrationTestBase {
                 "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider")
             .config("spark.hadoop.fs.s3a.access.key", AWS_ACCESS_KEY)
             .config("spark.hadoop.fs.s3a.secret.key", AWS_SECRET_KEY)
-            .config("spark.hadoop.fs.s3a.endpoint", "http://localhost:" + MINIO_PORT)
+            .config("spark.hadoop.fs.s3a.endpoint", "http://localhost:" + S3_PORT)
             .config("spark.sql.warehouse.dir", WAREHOUSE_LOCATION)
             .config("spark.hadoop.fs.s3a.endpoint.region", AWS_REGION)
             .config("spark.hadoop.fs.s3a.path.style.access", "true");

@@ -109,7 +109,8 @@ public class CommitComplete implements Payload {
       case VALID_THROUGH_TS:
         return validThroughTs == null ? null : DateTimeUtil.microsFromTimestamptz(validThroughTs);
       default:
-        throw new UnsupportedOperationException("Unknown field ordinal: " + i);
+        // a newer version's field: the reader gets it for reuse before put() ignores it
+        return null;
     }
   }
 }

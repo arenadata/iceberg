@@ -35,13 +35,17 @@ import java.util.Collection;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Properties;
 import java.util.Set;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import org.apache.iceberg.CatalogProperties;
 import org.apache.iceberg.IcebergBuild;
+import org.apache.iceberg.RowLevelOperationMode;
+import org.apache.iceberg.TableProperties;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.connect.data.RecordRoutingStrategy;
 import org.apache.iceberg.relocated.com.google.common.annotations.VisibleForTesting;
@@ -49,9 +53,11 @@ import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.base.Splitter;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
+import org.apache.iceberg.relocated.com.google.common.collect.ImmutableSet;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.relocated.com.google.common.collect.Sets;
 import org.apache.iceberg.util.PropertyUtil;
+import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.common.config.AbstractConfig;
 import org.apache.kafka.common.config.ConfigDef;
 import org.apache.kafka.common.config.ConfigDef.Importance;
@@ -99,6 +105,81 @@ public class IcebergSinkConfig extends AbstractConfig {
       "iceberg.tables.topic-to-table-mapping-file";
   private static final String ROUTING_STRATEGY_PROP = "routing.strategy";
   private static final String TABLES_CDC_FIELD_PROP = "iceberg.tables.cdc-field";
+  private static final String TABLES_ROW_LEVEL_MODE_PROP = "iceberg.tables.row-level-mode";
+
+  /**
+   * Table properties that declare how SQL engines apply row-level operations. The connector reads
+   * them only to report a mismatch with its own mode; they never configure it.
+   */
+  public static final List<String> ROW_LEVEL_MODE_TABLE_PROPS =
+      ImmutableList.of(
+          TableProperties.UPDATE_MODE, TableProperties.DELETE_MODE, TableProperties.MERGE_MODE);
+
+  private static final String STAGING_LOCATION_PROP = "iceberg.tables.staging-location";
+  private static final String COPY_ON_WRITE_MAX_SLICE_KEYS_PROP =
+      "iceberg.tables.copy-on-write.max-slice-keys";
+  private static final long COPY_ON_WRITE_MAX_SLICE_KEYS_DEFAULT = 200_000L;
+  private static final String COPY_ON_WRITE_MAX_REWRITE_BYTES_PROP =
+      "iceberg.tables.copy-on-write.max-rewrite-bytes";
+  private static final long COPY_ON_WRITE_MAX_REWRITE_BYTES_DEFAULT = 10L * 1024 * 1024 * 1024;
+  private static final String COPY_ON_WRITE_PRUNING_MAX_IN_CARDINALITY_PROP =
+      "iceberg.tables.copy-on-write.pruning.max-in-cardinality";
+  // mirrors IN_PREDICATE_LIMIT, private in both ManifestEvaluator and InclusiveMetricsEvaluator:
+  // past it they stop evaluating an IN predicate and answer ROWS_MIGHT_MATCH, pruning nothing.
+  // A larger value here would build IN predicates Iceberg ignores, where the range fallback would
+  // still have pruned; see AffectedFilePlanner#columnPredicate
+  private static final int COPY_ON_WRITE_PRUNING_MAX_IN_CARDINALITY_DEFAULT = 200;
+  private static final String COPY_ON_WRITE_COMMIT_RETRIES_PROP =
+      "iceberg.tables.copy-on-write.commit-retries";
+  private static final int COPY_ON_WRITE_COMMIT_RETRIES_DEFAULT = 2;
+  private static final String COPY_ON_WRITE_REWRITE_THREADS_PROP =
+      "iceberg.tables.copy-on-write.rewrite-threads";
+  private static final String COPY_ON_WRITE_REWRITE_TIMEOUT_MS_PROP =
+      "iceberg.tables.copy-on-write.rewrite-timeout-ms";
+  private static final long COPY_ON_WRITE_REWRITE_TIMEOUT_MS_DEFAULT = 120_000L;
+  private static final String COPY_ON_WRITE_REWRITE_RESPONSE_CHUNK_FILES_PROP =
+      "iceberg.tables.copy-on-write.rewrite-response-chunk-files";
+  // a data file descriptor in an encoded RewriteComplete costs ~285 bytes at 5 columns, ~1.6 KB at
+  // 50 and ~10 KB at 300, so 500 files fit the byte limit up to roughly 50 columns and are split
+  // by size beyond. High rather than low: an extra chunk costs a producer transaction, an
+  // oversized first cut one local re-encode
+  private static final int COPY_ON_WRITE_REWRITE_RESPONSE_CHUNK_FILES_DEFAULT = 500;
+  // the fraction of the producer's limit a control message may occupy, leaving room for the record
+  // header and the batch framing, which the measured value does not include
+  private static final double CONTROL_MESSAGE_HEADROOM = 0.8;
+  // ProducerConfig's default for max.request.size; the constant itself is not public
+  private static final int DEFAULT_MAX_REQUEST_SIZE = 1024 * 1024;
+  private static final String STAGING_ORPHAN_CLEANUP_INTERVAL_MS_PROP =
+      "iceberg.tables.staging-orphan-cleanup-interval-ms";
+  private static final long STAGING_ORPHAN_CLEANUP_INTERVAL_MS_DEFAULT = 3_600_000L;
+  private static final String STAGING_ORPHAN_TTL_MS_PROP = "iceberg.tables.staging-orphan-ttl-ms";
+  private static final long STAGING_ORPHAN_TTL_MS_DEFAULT = 86_400_000L;
+  private static final String STATISTICS_ENABLED_PROP = "iceberg.tables.statistics.enabled";
+  private static final String STATISTICS_PARTITION_STATS_ENABLED_PROP =
+      "iceberg.tables.statistics.partition-stats-enabled";
+  private static final String STATISTICS_LG_NOMINAL_ENTRIES_PROP =
+      "iceberg.tables.statistics.lg-nominal-entries";
+  private static final int STATISTICS_LG_NOMINAL_ENTRIES_DEFAULT = 12;
+  private static final String STATISTICS_GAP_MAX_FILES_PROP =
+      "iceberg.tables.statistics.gap-max-files";
+  private static final int STATISTICS_GAP_MAX_FILES_DEFAULT = 1000;
+  private static final String STATISTICS_GAP_MAX_BYTES_PROP =
+      "iceberg.tables.statistics.gap-max-bytes";
+  private static final long STATISTICS_GAP_MAX_BYTES_DEFAULT = 10L * 1024 * 1024 * 1024;
+  private static final String STATISTICS_RETAIN_SNAPSHOTS_PROP =
+      "iceberg.tables.statistics.retain-snapshots";
+  private static final int STATISTICS_RETAIN_SNAPSHOTS_DEFAULT = 10;
+  private static final String STATISTICS_HEALTH_RECHECK_INTERVAL_MS_PROP =
+      "iceberg.tables.statistics.health-recheck-interval-ms";
+  private static final long STATISTICS_HEALTH_RECHECK_INTERVAL_MS_DEFAULT = 600_000L;
+  private static final String STATISTICS_STALE_DELETED_RATIO_PROP =
+      "iceberg.tables.statistics.stale-deleted-ratio";
+  private static final double STATISTICS_STALE_DELETED_RATIO_DEFAULT = 0.2;
+  // per-table keys, under iceberg.table.<name>.
+  private static final String TABLE_STATISTICS_ENABLED = "statistics.enabled";
+  private static final String TABLE_STATISTICS_PARTITION_STATS_ENABLED =
+      "statistics.partition-stats-enabled";
+  private static final String TABLE_STATISTICS_COLUMNS = "statistics.columns";
   private static final String TABLES_UPSERT_MODE_ENABLED_PROP =
       "iceberg.tables.upsert-mode-enabled";
   private static final String TABLES_CDC_OPS_INSERT_PROP = "iceberg.tables.cdc.ops.insert";
@@ -301,6 +382,8 @@ public class IcebergSinkConfig extends AbstractConfig {
     defineV3NewTypesSupportProps(configDef);
     defineMetadataProps(configDef);
     defineCdcProps(configDef);
+    defineCopyOnWriteProps(configDef);
+    defineStatisticsProps(configDef);
     return configDef;
   }
 
@@ -429,6 +512,204 @@ public class IcebergSinkConfig extends AbstractConfig {
         "OpenMetadata database name used to build Iceberg table FQNs.");
   }
 
+  private static void defineCopyOnWriteProps(ConfigDef configDef) {
+    configDef.define(
+        TABLES_ROW_LEVEL_MODE_PROP,
+        ConfigDef.Type.STRING,
+        RowLevelOperationMode.MERGE_ON_READ.modeName(),
+        Importance.MEDIUM,
+        "How update and delete operations are applied: "
+            + RowLevelOperationMode.MERGE_ON_READ.modeName()
+            + " writes delete files and leaves merging to the reading engine, "
+            + RowLevelOperationMode.COPY_ON_WRITE.modeName()
+            + " rewrites the affected data files. Applies to every table this connector serves");
+    configDef.define(
+        STAGING_LOCATION_PROP,
+        ConfigDef.Type.STRING,
+        null,
+        Importance.MEDIUM,
+        "Location for the connector's staging files (copy-on-write staged change files and "
+            + "statistics Puffin files), defaults to <table location>/kc-staging");
+    configDef.define(
+        COPY_ON_WRITE_MAX_SLICE_KEYS_PROP,
+        ConfigDef.Type.LONG,
+        COPY_ON_WRITE_MAX_SLICE_KEYS_DEFAULT,
+        ConfigDef.Range.atLeast(1L),
+        Importance.MEDIUM,
+        "Maximum number of distinct identifier keys, after normalization, in one copy-on-write "
+            + "slice; a change set with more keys is cut into slices applied over several commits");
+    configDef.define(
+        COPY_ON_WRITE_MAX_REWRITE_BYTES_PROP,
+        ConfigDef.Type.LONG,
+        COPY_ON_WRITE_MAX_REWRITE_BYTES_DEFAULT,
+        ConfigDef.Range.atLeast(1L),
+        Importance.MEDIUM,
+        "Maximum total size of the data files rewritten by one copy-on-write commit; a larger "
+            + "change set is applied over several commits");
+    configDef.define(
+        COPY_ON_WRITE_PRUNING_MAX_IN_CARDINALITY_PROP,
+        ConfigDef.Type.INT,
+        COPY_ON_WRITE_PRUNING_MAX_IN_CARDINALITY_DEFAULT,
+        ConfigDef.Range.atLeast(1),
+        Importance.LOW,
+        "Maximum number of distinct values per identifier column listed in the file pruning "
+            + "predicate; above it the predicate falls back to a range. Raising it past 200 stops "
+            + "Iceberg from evaluating the predicate at all, which prunes nothing");
+    configDef.define(
+        COPY_ON_WRITE_COMMIT_RETRIES_PROP,
+        ConfigDef.Type.INT,
+        COPY_ON_WRITE_COMMIT_RETRIES_DEFAULT,
+        ConfigDef.Range.atLeast(0),
+        Importance.MEDIUM,
+        "Number of immediate retries of one copy-on-write slice, shared between a commit that "
+            + "conflicts with a concurrent writer and a task that fails to rewrite the slice; once "
+            + "they are exhausted, the slice is retried in the next commit cycle");
+    configDef.define(
+        COPY_ON_WRITE_REWRITE_THREADS_PROP,
+        ConfigDef.Type.INT,
+        Math.min(2, Runtime.getRuntime().availableProcessors()),
+        ConfigDef.Range.atLeast(1),
+        Importance.MEDIUM,
+        "Number of threads used to rewrite data files, per task and shared by all its copy-on-write "
+            + "assignments; tasks on one node multiply it, so size it for the node's task density "
+            + "(see the sizing formula in the docs)");
+    configDef.define(
+        COPY_ON_WRITE_REWRITE_TIMEOUT_MS_PROP,
+        ConfigDef.Type.LONG,
+        COPY_ON_WRITE_REWRITE_TIMEOUT_MS_DEFAULT,
+        ConfigDef.Range.atLeast(1L),
+        Importance.MEDIUM,
+        "How long a copy-on-write slice may take to rewrite before it is cancelled and retried in "
+            + "the next commit cycle. The coordinator counts it from sending the assignment, and a "
+            + "task does not start an assignment that waited in its queue longer. A backstop: set "
+            + "it well above a typical slice rewrite plus the time assignments wait in a task's "
+            + "queue; it does not depend on the commit interval");
+    configDef.define(
+        COPY_ON_WRITE_REWRITE_RESPONSE_CHUNK_FILES_PROP,
+        ConfigDef.Type.INT,
+        COPY_ON_WRITE_REWRITE_RESPONSE_CHUNK_FILES_DEFAULT,
+        ConfigDef.Range.atLeast(1),
+        Importance.LOW,
+        "Upper bound on the data file descriptors a task puts in one rewrite response message. A "
+            + "chunk that still encodes larger than the producer allows is split further, so this "
+            + "caps the message rather than guaranteeing its size");
+    configDef.define(
+        STAGING_ORPHAN_CLEANUP_INTERVAL_MS_PROP,
+        ConfigDef.Type.LONG,
+        STAGING_ORPHAN_CLEANUP_INTERVAL_MS_DEFAULT,
+        ConfigDef.Range.atLeast(1L),
+        Importance.LOW,
+        "How often the staging location of a table is scanned for orphaned files, those older "
+            + "than iceberg.tables.staging-orphan-ttl-ms. Files of a committed, "
+            + "failed or cancelled slice are removed right away and do not wait for it");
+    configDef.define(
+        STAGING_ORPHAN_TTL_MS_PROP,
+        ConfigDef.Type.LONG,
+        STAGING_ORPHAN_TTL_MS_DEFAULT,
+        ConfigDef.Range.atLeast(1L),
+        Importance.LOW,
+        "Age, from its creation time, after which a staging file (staged change file, change set "
+            + "manifest or normalized slice) that nothing in use references any more is considered "
+            + "orphaned and removed by the staging cleanup. Must be greater than "
+            + "iceberg.control.commit.interval-ms plus iceberg.control.commit.timeout-ms");
+  }
+
+  private static void defineStatisticsProps(ConfigDef configDef) {
+    configDef.define(
+        STATISTICS_ENABLED_PROP,
+        ConfigDef.Type.BOOLEAN,
+        false,
+        Importance.MEDIUM,
+        "Collect NDV (number of distinct values) statistics for the tables of this connector. "
+            + "A table can replace it with iceberg.table.<name>.statistics.enabled");
+    configDef.define(
+        STATISTICS_PARTITION_STATS_ENABLED_PROP,
+        ConfigDef.Type.BOOLEAN,
+        false,
+        Importance.MEDIUM,
+        "Maintain partition statistics. Applies only to tables with statistics enabled. A table "
+            + "can replace it with iceberg.table.<name>.statistics.partition-stats-enabled");
+    configDef.define(
+        STATISTICS_LG_NOMINAL_ENTRIES_PROP,
+        ConfigDef.Type.INT,
+        STATISTICS_LG_NOMINAL_ENTRIES_DEFAULT,
+        ConfigDef.Range.between(4, 16),
+        Importance.LOW,
+        "Base-2 logarithm of the nominal number of entries of the theta sketch behind the NDV "
+            + "statistics: 12 means 4096 entries, the DataSketches default");
+    configDef.define(
+        STATISTICS_GAP_MAX_FILES_PROP,
+        ConfigDef.Type.INT,
+        STATISTICS_GAP_MAX_FILES_DEFAULT,
+        ConfigDef.Range.atLeast(0),
+        Importance.LOW,
+        "Limit of the catch-up over a gap in the statistics: the number of data files read. "
+            + "A gap over either limit is not caught up");
+    configDef.define(
+        STATISTICS_GAP_MAX_BYTES_PROP,
+        ConfigDef.Type.LONG,
+        STATISTICS_GAP_MAX_BYTES_DEFAULT,
+        ConfigDef.Range.atLeast(0L),
+        Importance.LOW,
+        "Limit of the catch-up over a gap in the statistics: the total size in bytes of the "
+            + "data files read");
+    configDef.define(
+        STATISTICS_RETAIN_SNAPSHOTS_PROP,
+        ConfigDef.Type.INT,
+        STATISTICS_RETAIN_SNAPSHOTS_DEFAULT,
+        new MinusOneOrPositive(),
+        Importance.LOW,
+        "How many of the latest statistics entries of each kind the commit branch keeps. -1 keeps "
+            + "them all, so they go away only with expire_snapshots");
+    configDef.define(
+        STATISTICS_HEALTH_RECHECK_INTERVAL_MS_PROP,
+        ConfigDef.Type.LONG,
+        STATISTICS_HEALTH_RECHECK_INTERVAL_MS_DEFAULT,
+        ConfigDef.Range.atLeast(0L),
+        Importance.LOW,
+        "How often a quiet table with a raised statistics health flag is checked against its "
+            + "metadata again, so that the flag clears after a manual fix. 0 turns the recheck "
+            + "off");
+    configDef.define(
+        STATISTICS_STALE_DELETED_RATIO_PROP,
+        ConfigDef.Type.DOUBLE,
+        STATISTICS_STALE_DELETED_RATIO_DEFAULT,
+        new GreaterThanZero(),
+        Importance.LOW,
+        "The statistics are stale when this share of the rows that went through the sketch since "
+            + "the last full recount is no longer live. Must be greater than 0");
+  }
+
+  private static class MinusOneOrPositive implements ConfigDef.Validator {
+    @Override
+    public void ensureValid(String name, Object value) {
+      int number = value == null ? 0 : ((Number) value).intValue();
+      if (number != -1 && number < 1) {
+        throw new ConfigException(name, value, "Must be -1 or at least 1");
+      }
+    }
+
+    @Override
+    public String toString() {
+      return "-1 or [1,...]";
+    }
+  }
+
+  private static class GreaterThanZero implements ConfigDef.Validator {
+    @Override
+    public void ensureValid(String name, Object value) {
+      // written so that NaN is refused too
+      if (value == null || !(((Number) value).doubleValue() > 0)) {
+        throw new ConfigException(name, value, "Must be greater than 0");
+      }
+    }
+
+    @Override
+    public String toString() {
+      return "(0,...]";
+    }
+  }
+
   private static void defineCdcProps(ConfigDef configDef) {
     configDef.define(
         TABLES_CDC_FIELD_PROP,
@@ -468,7 +749,9 @@ public class IcebergSinkConfig extends AbstractConfig {
   private final Map<String, String> kafkaProps;
   private final Map<String, String> autoCreateProps;
   private final Map<String, String> writeProps;
-  private final Map<String, TableSinkConfig> tableConfigMap = Maps.newHashMap();
+  // read from the worker, the coordinator and its pools at once
+  private final Map<String, TableSinkConfig> tableConfigMap = Maps.newConcurrentMap();
+  private final boolean statisticsInUse;
   private final RecordRoutingStrategy recordRoutingStrategy;
   private final Map<String, String> topicToTableMapping;
   private final String topicToTableMappingSource;
@@ -477,6 +760,11 @@ public class IcebergSinkConfig extends AbstractConfig {
   private final Collection<String> schemaTimestampNsFieldPaths;
 
   public IcebergSinkConfig(Map<String, String> originalProps) {
+    this(originalProps, LOG);
+  }
+
+  @VisibleForTesting
+  IcebergSinkConfig(Map<String, String> originalProps, Logger log) {
     super(CONFIG_DEF, originalProps);
     this.originalProps = originalProps;
 
@@ -507,10 +795,11 @@ public class IcebergSinkConfig extends AbstractConfig {
         parseVariantFieldPaths(getString(TABLES_SCHEMA_VARIANT_FIELDS_PROP));
     this.schemaTimestampNsFieldPaths =
         parseTimestampNsFieldPaths(getString(TABLES_SCHEMA_TIMESTAMP_NS_FIELDS_PROP));
-    validate();
+    this.statisticsInUse = resolveStatisticsInUse();
+    validate(log);
   }
 
-  private void validate() {
+  private void validate(Logger log) {
     checkState(!catalogProps().isEmpty(), "Must specify Iceberg catalog properties");
     switch (recordRoutingStrategy) {
       case DYNAMIC_FIELD:
@@ -538,6 +827,19 @@ public class IcebergSinkConfig extends AbstractConfig {
         throw new ConfigException("Unsupported routing strategy: " + recordRoutingStrategy);
     }
 
+    validateStatisticsColumns();
+    validateRowLevelMode();
+    // staging is used by copy-on-write and by the statistics; without either the checks would
+    // stop an existing merge-on-read connector with a long commit interval from starting
+    if (isCopyOnWriteMode() || statisticsInUse) {
+      validateStaging(log);
+      checkSharedControlTopic(log);
+    }
+
+    if (statisticsInUse) {
+      checkCommitThreadsForStatistics(log);
+    }
+
     if (recordRoutingStrategy == RecordRoutingStrategy.TOPIC_TO_TABLE) {
       LOG.info(
           "Using routing strategy: {}, topic-to-table mapping source: {}, route count: {}",
@@ -547,6 +849,192 @@ public class IcebergSinkConfig extends AbstractConfig {
     } else {
       LOG.info("Using routing strategy: {}", recordRoutingStrategy.value());
     }
+  }
+
+  private void validateRowLevelMode() {
+    RowLevelOperationMode mode = rowLevelMode();
+    if (mode != RowLevelOperationMode.COPY_ON_WRITE) {
+      return;
+    }
+
+    // without a CDC field or upsert mode every record is a plain append, reported as DataWritten,
+    // which the copy-on-write committer does not consume: the records would be acknowledged and
+    // never land. An empty CDC field counts as unset.
+    if ((tablesCdcField() == null || tablesCdcField().isEmpty()) && !isUpsertMode()) {
+      throw new ConfigException(
+          String.format(
+              "%s=%s requires %s or %s=true: without a change stream there are no row-level "
+                  + "operations to apply, and plain appends are not committed in this mode",
+              TABLES_ROW_LEVEL_MODE_PROP,
+              RowLevelOperationMode.COPY_ON_WRITE.modeName(),
+              TABLES_CDC_FIELD_PROP,
+              TABLES_UPSERT_MODE_ENABLED_PROP));
+    }
+
+    // a table listed twice gets every record written twice, so one (_topic, _partition, _offset)
+    // lands in the change set more than once. The normalizer folds the copies only because they
+    // happen to be equal; nothing checks for it. Different spellings of one table in a
+    // case-insensitive catalog are not caught.
+    Set<String> seenTableNames = Sets.newHashSet();
+    if (tables() != null) {
+      tables()
+          .forEach(
+              tableName -> {
+                if (!seenTableNames.add(tableName)) {
+                  throw new ConfigException(
+                      String.format(
+                          "%s lists %s more than once: each table can only be listed once",
+                          TABLES_PROP, tableName));
+                }
+              });
+    }
+
+    // a table auto-created with a merge-on-read write mode would fail the per-table check on the
+    // very next write. The catalog applies table-default.* underneath the auto-create properties
+    // and table-override.* on top of them (BaseMetastoreCatalog.BaseMetastoreCatalogTableBuilder),
+    // so only the resulting value decides what the table is created with.
+    ROW_LEVEL_MODE_TABLE_PROPS.forEach(
+        prop -> {
+          String override = catalogProps.get(CatalogProperties.TABLE_OVERRIDE_PREFIX + prop);
+          String declared =
+              override != null
+                  ? override
+                  : autoCreateProps.getOrDefault(
+                      prop, catalogProps.get(CatalogProperties.TABLE_DEFAULT_PREFIX + prop));
+          if (declared != null
+              && !declared.equalsIgnoreCase(RowLevelOperationMode.COPY_ON_WRITE.modeName())) {
+            throw new ConfigException(
+                String.format(
+                    "%s=%s conflicts with %s=%s; auto-created tables would be rejected on first write",
+                    prop,
+                    declared,
+                    TABLES_ROW_LEVEL_MODE_PROP,
+                    RowLevelOperationMode.COPY_ON_WRITE.modeName()));
+          }
+        });
+  }
+
+  private void validateStaging(Logger log) {
+    // until the response naming it reaches the coordinator's buffer (up to one commit interval
+    // plus the commit timeout after it is closed) only its age protects a staged file from the
+    // cleanup. Both settings are ints, so the sum is taken in long.
+    if (stagingOrphanTtlMs() <= (long) commitIntervalMs() + commitTimeoutMs()) {
+      throw new ConfigException(
+          String.format(
+              "%s=%s must be greater than %s=%s plus %s=%s: a staged file (a copy-on-write change "
+                  + "file or an intermediate statistics Puffin file) is unreferenced until the "
+                  + "response naming it reaches the coordinator, and cleaning up inside that window "
+                  + "deletes a file that has not been committed yet",
+              STAGING_ORPHAN_TTL_MS_PROP,
+              stagingOrphanTtlMs(),
+              COMMIT_INTERVAL_MS_PROP,
+              commitIntervalMs(),
+              COMMIT_TIMEOUT_MS_PROP,
+              commitTimeoutMs()));
+    }
+
+    checkStagingLocationScheme(stagingLocation(), log);
+  }
+
+  /**
+   * Warns at task startup when the staging location is a local path. Not a refusal: it works on a
+   * single-node Kafka Connect cluster.
+   */
+  private static void checkStagingLocationScheme(String stagingLocation, Logger log) {
+    if (stagingLocation != null && stagingLocation.startsWith("file:")) {
+      log.warn(
+          "{}={} uses the file: scheme: staged files are reachable only from the node that wrote "
+              + "them, so a worker or the coordinator on another node cannot see them, and losing "
+              + "that node loses staged changes whose offsets have already been released. This "
+              + "works only on a single-node Kafka Connect cluster; route it through shared "
+              + "storage otherwise",
+          STAGING_LOCATION_PROP,
+          stagingLocation);
+    }
+  }
+
+  private void checkSharedControlTopic(Logger log) {
+    if (DEFAULT_CONTROL_TOPIC.equals(controlTopic())) {
+      log.warn(
+          "{}={} is the default control topic, which connectors share unless they set their own. "
+              + "With copy-on-write or statistics on, this connector writes control events that "
+              + "releases without copy-on-write cannot decode: every task of such a release "
+              + "reading this topic, including tasks of other connectors, fails on them, and its "
+              + "coordinator fails again after each restart. Set a control topic of its own for "
+              + "this connector",
+          CONTROL_TOPIC_PROP,
+          controlTopic());
+    }
+  }
+
+  private void checkCommitThreadsForStatistics(Logger log) {
+    if (commitThreads() < 2) {
+      log.warn(
+          "{}={} with statistics on: a statistics lag step catching up a gap can hold the only "
+              + "commit thread for minutes, and copy-on-write slices and the staging cleanup of "
+              + "other tables wait for it. Set it to at least 2",
+          COMMIT_THREADS_PROP,
+          commitThreads());
+    }
+  }
+
+  private boolean resolveStatisticsInUse() {
+    boolean inUse = getBoolean(STATISTICS_ENABLED_PROP);
+    for (Entry<String, String> entry : originalProps.entrySet()) {
+      String key = entry.getKey();
+      if (isTableKey(key, TABLE_STATISTICS_ENABLED)) {
+        inUse |= parseTableBoolean(key, entry.getValue());
+      } else if (isTableKey(key, TABLE_STATISTICS_PARTITION_STATS_ENABLED)) {
+        parseTableBoolean(key, entry.getValue());
+      }
+    }
+    return inUse;
+  }
+
+  private static boolean isTableKey(String key, String suffix) {
+    return key.startsWith(TABLE_PROP_PREFIX)
+        && key.endsWith("." + suffix)
+        && key.length() > TABLE_PROP_PREFIX.length() + suffix.length() + 1;
+  }
+
+  private static boolean parseTableBoolean(String key, String value) {
+    String trimmed = value == null ? "" : value.trim();
+    if (trimmed.equalsIgnoreCase("true")) {
+      return true;
+    }
+    if (trimmed.equalsIgnoreCase("false")) {
+      return false;
+    }
+    throw new ConfigException(key, value, "Must be true or false");
+  }
+
+  private void validateStatisticsColumns() {
+    for (Entry<String, String> entry : originalProps.entrySet()) {
+      if (isTableKey(entry.getKey(), TABLE_STATISTICS_COLUMNS)) {
+        parseStatisticsColumns(entry.getKey(), entry.getValue());
+      }
+    }
+  }
+
+  private List<String> parseStatisticsColumns(String key, String value) {
+    if (value == null || value.trim().isEmpty()) {
+      throw new ConfigException(key, value, "Must list at least one column");
+    }
+    boolean caseInsensitive = schemaCaseInsensitive();
+    Set<String> seen = Sets.newHashSet();
+    ImmutableList.Builder<String> columns = ImmutableList.builder();
+    // limit -1 keeps the empty elements of "a," and ",a", which are errors
+    for (String raw : value.split(",", -1)) {
+      String column = raw.trim();
+      if (column.isEmpty()) {
+        throw new ConfigException(key, value, "Must not contain an empty column name");
+      }
+      if (!seen.add(caseInsensitive ? column.toLowerCase(Locale.ROOT) : column)) {
+        throw new ConfigException(key, value, "Must not repeat the column " + column);
+      }
+      columns.add(column);
+    }
+    return columns.build();
   }
 
   private void checkState(boolean condition, String msg) {
@@ -648,8 +1136,82 @@ public class IcebergSinkConfig extends AbstractConfig {
           String commitBranch =
               tableConfig.getOrDefault(COMMIT_BRANCH, tablesDefaultCommitBranch());
 
-          return new TableSinkConfig(routeRegex, idColumns, partitionBy, commitBranch);
+          boolean statisticsEnabled =
+              parseTableFlag(
+                  tableName,
+                  tableConfig,
+                  TABLE_STATISTICS_ENABLED,
+                  getBoolean(STATISTICS_ENABLED_PROP));
+          boolean partitionStatsEnabled =
+              parseTableFlag(
+                  tableName,
+                  tableConfig,
+                  TABLE_STATISTICS_PARTITION_STATS_ENABLED,
+                  getBoolean(STATISTICS_PARTITION_STATS_ENABLED_PROP));
+          String columnsStr = tableConfig.get(TABLE_STATISTICS_COLUMNS);
+          List<String> statisticsColumns =
+              columnsStr == null
+                  ? null
+                  : parseStatisticsColumns(
+                      TABLE_PROP_PREFIX + tableName + "." + TABLE_STATISTICS_COLUMNS, columnsStr);
+
+          return new TableSinkConfig(
+              routeRegex,
+              idColumns,
+              partitionBy,
+              commitBranch,
+              statisticsEnabled,
+              partitionStatsEnabled,
+              statisticsColumns);
         });
+  }
+
+  private static boolean parseTableFlag(
+      String tableName, Map<String, String> tableConfig, String suffix, boolean generalValue) {
+    String value = tableConfig.get(suffix);
+    return value == null
+        ? generalValue
+        : parseTableBoolean(TABLE_PROP_PREFIX + tableName + "." + suffix, value);
+  }
+
+  public boolean statisticsInUse() {
+    return statisticsInUse;
+  }
+
+  public int statisticsLgNominalEntries() {
+    return getInt(STATISTICS_LG_NOMINAL_ENTRIES_PROP);
+  }
+
+  public int statisticsGapMaxFiles() {
+    return getInt(STATISTICS_GAP_MAX_FILES_PROP);
+  }
+
+  public long statisticsGapMaxBytes() {
+    return getLong(STATISTICS_GAP_MAX_BYTES_PROP);
+  }
+
+  public int statisticsRetainSnapshots() {
+    return getInt(STATISTICS_RETAIN_SNAPSHOTS_PROP);
+  }
+
+  public long statisticsHealthRecheckIntervalMs() {
+    return getLong(STATISTICS_HEALTH_RECHECK_INTERVAL_MS_PROP);
+  }
+
+  public double statisticsStaleDeletedRatio() {
+    return getDouble(STATISTICS_STALE_DELETED_RATIO_PROP);
+  }
+
+  /** The statically configured tables; empty under dynamic routing. */
+  public Set<TableIdentifier> configuredTables() {
+    Collection<String> names =
+        recordRoutingStrategy == RecordRoutingStrategy.TOPIC_TO_TABLE
+            ? topicToTableMapping.values()
+            : tables();
+    if (names == null) {
+      return ImmutableSet.of();
+    }
+    return names.stream().map(TableIdentifier::parse).collect(ImmutableSet.toImmutableSet());
   }
 
   public String tablesCdcField() {
@@ -910,6 +1472,96 @@ public class IcebergSinkConfig extends AbstractConfig {
 
   public boolean isUpsertMode() {
     return getBoolean(TABLES_UPSERT_MODE_ENABLED_PROP);
+  }
+
+  public RowLevelOperationMode rowLevelMode() {
+    return parseRowLevelMode(getString(TABLES_ROW_LEVEL_MODE_PROP), TABLES_ROW_LEVEL_MODE_PROP);
+  }
+
+  public boolean isCopyOnWriteMode() {
+    return rowLevelMode() == RowLevelOperationMode.COPY_ON_WRITE;
+  }
+
+  public String stagingLocation() {
+    return getString(STAGING_LOCATION_PROP);
+  }
+
+  public long copyOnWriteMaxSliceKeys() {
+    return getLong(COPY_ON_WRITE_MAX_SLICE_KEYS_PROP);
+  }
+
+  public long copyOnWriteMaxRewriteBytes() {
+    return getLong(COPY_ON_WRITE_MAX_REWRITE_BYTES_PROP);
+  }
+
+  public int copyOnWritePruningMaxInCardinality() {
+    return getInt(COPY_ON_WRITE_PRUNING_MAX_IN_CARDINALITY_PROP);
+  }
+
+  public int copyOnWriteCommitRetries() {
+    return getInt(COPY_ON_WRITE_COMMIT_RETRIES_PROP);
+  }
+
+  public int copyOnWriteRewriteThreads() {
+    return getInt(COPY_ON_WRITE_REWRITE_THREADS_PROP);
+  }
+
+  public long copyOnWriteRewriteTimeoutMs() {
+    return getLong(COPY_ON_WRITE_REWRITE_TIMEOUT_MS_PROP);
+  }
+
+  public int copyOnWriteRewriteResponseChunkFiles() {
+    return getInt(COPY_ON_WRITE_REWRITE_RESPONSE_CHUNK_FILES_PROP);
+  }
+
+  /**
+   * The largest control message this connector will produce, in bytes.
+   *
+   * <p>Derived from the producer's {@code max.request.size} ({@code
+   * iceberg.kafka.max.request.size}), not the topic's {@code max.message.bytes}, which needs an
+   * admin call. Both default to ~1 MB; if only the topic limit is raised, this stays conservative
+   * at the cost of an extra message.
+   */
+  public int controlMessageMaxBytes() {
+    int maxRequestSize = DEFAULT_MAX_REQUEST_SIZE;
+    String configured = kafkaProps.get(ProducerConfig.MAX_REQUEST_SIZE_CONFIG);
+    if (configured != null) {
+      try {
+        maxRequestSize = Integer.parseInt(configured.trim());
+      } catch (NumberFormatException e) {
+        // the producer itself will reject this at startup; do not fail the size check over it
+        LOG.warn(
+            "Ignoring unparseable {}{}={}, assuming {}",
+            KAFKA_PROP_PREFIX,
+            ProducerConfig.MAX_REQUEST_SIZE_CONFIG,
+            configured,
+            maxRequestSize,
+            e);
+      }
+    }
+    return (int) (maxRequestSize * CONTROL_MESSAGE_HEADROOM);
+  }
+
+  public long stagingOrphanCleanupIntervalMs() {
+    return getLong(STAGING_ORPHAN_CLEANUP_INTERVAL_MS_PROP);
+  }
+
+  public long stagingOrphanTtlMs() {
+    return getLong(STAGING_ORPHAN_TTL_MS_PROP);
+  }
+
+  private static RowLevelOperationMode parseRowLevelMode(String value, String source) {
+    try {
+      return RowLevelOperationMode.fromName(value);
+    } catch (IllegalArgumentException e) {
+      throw new ConfigException(
+          String.format(
+              "Invalid value %s for %s, expected one of %s, %s",
+              value,
+              source,
+              RowLevelOperationMode.MERGE_ON_READ.modeName(),
+              RowLevelOperationMode.COPY_ON_WRITE.modeName()));
+    }
   }
 
   public int commitThreads() {
