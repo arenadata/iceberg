@@ -25,6 +25,7 @@ import org.apache.avro.Schema;
 import org.apache.iceberg.DataFile;
 import org.apache.iceberg.DeleteFile;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
+import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.types.Types.ListType;
 import org.apache.iceberg.types.Types.NestedField;
 import org.apache.iceberg.types.Types.StringType;
@@ -34,6 +35,11 @@ import org.apache.iceberg.types.Types.UUIDType;
 /**
  * A control event payload for events sent by a worker that contains the table data that has been
  * written and is ready to commit.
+ *
+ * <p>The written schema has the {@code sketch_file} field only when the event carries a sketch
+ * file; otherwise it is the released schema. A released reader throws on a field it does not know,
+ * because the Avro reader calls {@code get} on the record for every field of the writer's schema,
+ * so an event without a sketch file must not carry the field even as null.
  */
 public class DataWritten implements Payload {
 
@@ -44,6 +50,7 @@ public class DataWritten implements Payload {
   private List<DataFile> dataFiles;
   private List<DeleteFile> deleteFiles;
   private List<String> sourceTopics;
+  private SketchFile sketchFile;
   private StructType icebergSchema;
   private final Schema avroSchema;
 
@@ -55,6 +62,7 @@ public class DataWritten implements Payload {
   static final int DELETE_FILES_ELEMENT = 10_305;
   static final int SOURCE_TOPICS = 10_306;
   static final int SOURCE_TOPICS_ELEMENT = 10_307;
+  static final int SKETCH_FILE = 10_308;
 
   // Used by Avro reflection to instantiate this class when reading events, note that this does not
   // set the partition type so the instance cannot be re-serialized
@@ -78,6 +86,17 @@ public class DataWritten implements Payload {
       List<DataFile> dataFiles,
       List<DeleteFile> deleteFiles,
       List<String> sourceTopics) {
+    this(partitionType, commitId, tableReference, dataFiles, deleteFiles, sourceTopics, null);
+  }
+
+  public DataWritten(
+      StructType partitionType,
+      UUID commitId,
+      TableReference tableReference,
+      List<DataFile> dataFiles,
+      List<DeleteFile> deleteFiles,
+      List<String> sourceTopics,
+      SketchFile sketchFile) {
     Preconditions.checkNotNull(commitId, "Commit ID cannot be null");
     Preconditions.checkNotNull(tableReference, "Table reference cannot be null");
     this.partitionType = partitionType;
@@ -86,6 +105,7 @@ public class DataWritten implements Payload {
     this.dataFiles = dataFiles;
     this.deleteFiles = deleteFiles;
     this.sourceTopics = sourceTopics;
+    this.sketchFile = sketchFile;
     this.avroSchema = AvroUtil.convert(writeSchema(), getClass());
   }
 
@@ -114,12 +134,16 @@ public class DataWritten implements Payload {
     return sourceTopics == null ? List.of() : sourceTopics;
   }
 
+  public SketchFile sketchFile() {
+    return sketchFile;
+  }
+
   @Override
   public StructType writeSchema() {
     if (icebergSchema == null) {
       StructType dataFileStruct = DataFile.getType(partitionType);
 
-      this.icebergSchema =
+      StructType withoutSketchFile =
           StructType.of(
               NestedField.required(COMMIT_ID, "commit_id", UUIDType.get()),
               NestedField.required(
@@ -136,6 +160,17 @@ public class DataWritten implements Payload {
                   SOURCE_TOPICS,
                   "source_topics",
                   ListType.ofRequired(SOURCE_TOPICS_ELEMENT, StringType.get())));
+
+      this.icebergSchema =
+          sketchFile == null
+              ? withoutSketchFile
+              : StructType.of(
+                  ImmutableList.<NestedField>builder()
+                      .addAll(withoutSketchFile.fields())
+                      .add(
+                          NestedField.optional(
+                              SKETCH_FILE, "sketch_file", SketchFile.ICEBERG_SCHEMA))
+                      .build());
     }
 
     return icebergSchema;
@@ -168,6 +203,9 @@ public class DataWritten implements Payload {
                 ? List.of()
                 : ((List<?>) v).stream().map(Object::toString).collect(Collectors.toList());
         return;
+      case SKETCH_FILE:
+        this.sketchFile = (SketchFile) v;
+        return;
       default:
         // ignore the object, it must be from a newer version of the format
     }
@@ -186,6 +224,8 @@ public class DataWritten implements Payload {
         return deleteFiles;
       case SOURCE_TOPICS:
         return sourceTopics;
+      case SKETCH_FILE:
+        return sketchFile;
       default:
         // a newer version's field: the reader gets it for reuse before put() ignores it
         return null;

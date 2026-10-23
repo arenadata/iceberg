@@ -40,6 +40,7 @@ import org.apache.iceberg.StructLike;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.TableProperties;
 import org.apache.iceberg.connect.data.RecordProjection;
+import org.apache.iceberg.connect.data.StatisticsFileReaders;
 import org.apache.iceberg.data.GenericFileWriterFactory;
 import org.apache.iceberg.data.InternalRecordWrapper;
 import org.apache.iceberg.data.Record;
@@ -48,6 +49,7 @@ import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.io.ClusteredDataWriter;
 import org.apache.iceberg.io.FileWriterFactory;
 import org.apache.iceberg.io.OutputFileFactory;
+import org.apache.iceberg.mapping.NameMapping;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.relocated.com.google.common.util.concurrent.ThreadFactoryBuilder;
@@ -338,12 +340,14 @@ public final class CopyOnWriteRewriter {
     IdentifierKeys.KeyBuilder keyBuilder = IdentifierKeys.keyBuilder(tableSchema, orderedIdFields);
     ClusteredDataWriter<Record> remainderWriter =
         newClusteredWriter(operationId, writerId, targetFileSizeBytes);
+    NameMapping nameMapping = StatisticsFileReaders.nameMapping(table);
 
     try {
       for (FileScanTask task : chunk) {
         stopIfCancelled(cancelled);
         try (CloseableIterable<Record> rows =
-            AffectedFileReader.open(table.io(), task, table.schema(), table.schema())) {
+            AffectedFileReader.open(
+                table.io(), task, table.schema(), table.schema(), nameMapping)) {
           for (Record row : rows) {
             stopIfCancelled(cancelled);
             StructLike key = keyBuilder.keyOf(row);

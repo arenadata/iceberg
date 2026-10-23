@@ -45,6 +45,7 @@ import org.apache.iceberg.io.FileIO;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableSet;
+import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.relocated.com.google.common.collect.Sets;
 import org.apache.iceberg.types.Types.StructType;
 import org.slf4j.Logger;
@@ -70,6 +71,13 @@ class ChangeSetStore {
   static final String VALID_THROUGH_TS_PROP = "kafka.connect.valid-through-ts";
   static final String CHANGE_SET_ID_PROP = "kafka.connect.copy-on-write.change-set-id";
   static final String CHANGE_SET_CURSOR_PROP = "kafka.connect.copy-on-write.change-set-cursor";
+
+  /**
+   * The change set of the final slice when statistics are enabled, for a later recount of a final
+   * snapshot left without them. Not {@link #CHANGE_SET_ID_PROP}, so {@link #loadDrainState} still
+   * sees a fresh start after it.
+   */
+  static final String FINAL_CHANGE_SET_ID_PROP = "kafka.connect.copy-on-write.final-change-set-id";
 
   /**
    * Which slice of the drain produced a snapshot.
@@ -106,6 +114,8 @@ class ChangeSetStore {
     // over into the next one, and its manifest stays until that one first commits; see
     // adoptDroppedChangeSet
     private final ChangeSetManifest dropped;
+    // the id from the pointer that named the dropped change set, whatever its manifest says
+    private final UUID droppedChangeSetId;
     private final String droppedLocation;
     private final String droppedReason;
 
@@ -114,18 +124,25 @@ class ChangeSetStore {
         StructLike cursor,
         String manifestLocation,
         ChangeSetManifest dropped,
+        UUID droppedChangeSetId,
         String droppedLocation,
         String droppedReason) {
       this.manifest = manifest;
       this.cursor = cursor;
       this.manifestLocation = manifestLocation;
       this.dropped = dropped;
+      this.droppedChangeSetId = droppedChangeSetId;
       this.droppedLocation = droppedLocation;
       this.droppedReason = droppedReason;
     }
 
     private static DrainStart freshStart() {
-      return new DrainStart(null, null, null, null, null, null);
+      return new DrainStart(null, null, null, null, null, null, null);
+    }
+
+    private static DrainStart dropping(
+        ChangeSetManifest dropped, UUID droppedChangeSetId, String droppedLocation, String reason) {
+      return new DrainStart(null, null, null, dropped, droppedChangeSetId, droppedLocation, reason);
     }
 
     ChangeSetManifest manifest() {
@@ -146,6 +163,27 @@ class ChangeSetStore {
 
     Set<String> carryOverTopics() {
       return dropped == null ? ImmutableSet.of() : dropped.sourceTopics();
+    }
+
+    /** Unlike the staged files, none for an unsupported format: its entries are not trusted. */
+    List<ChangeSetManifest.SketchFileEntry> carryOverSketchFiles() {
+      return dropped == null || !dropped.formatVersionSupported()
+          ? ImmutableList.of()
+          : dropped.sketchFiles();
+    }
+
+    /** The change sets the next one adopts, the dropped one last. */
+    List<UUID> adoptedChangeSetIds() {
+      if (droppedChangeSetId == null) {
+        return ImmutableList.of();
+      }
+
+      ImmutableList.Builder<UUID> adopted = ImmutableList.builder();
+      if (dropped != null && dropped.formatVersionSupported()) {
+        adopted.addAll(dropped.adoptedChangeSetIds());
+      }
+
+      return adopted.add(droppedChangeSetId).build();
     }
   }
 
@@ -221,7 +259,7 @@ class ChangeSetStore {
               manifest.formatVersion(),
               changeSetId,
               ChangeSetManifest.CURRENT_FORMAT_VERSION);
-      return new DrainStart(null, null, null, manifest, manifestLocation, reason);
+      return DrainStart.dropping(manifest, changeSetId, manifestLocation, reason);
     }
 
     if (!manifest.identifierFieldsMatch(currentIdentifierFieldIds)) {
@@ -229,14 +267,14 @@ class ChangeSetStore {
           String.format(
               "identifier fields changed since change set %s froze (%s -> %s)",
               changeSetId, manifest.identifierFieldIds(), currentIdentifierFieldIds);
-      return new DrainStart(null, null, null, manifest, manifestLocation, reason);
+      return DrainStart.dropping(manifest, changeSetId, manifestLocation, reason);
     }
 
     String cursorJson = summary.get(CHANGE_SET_CURSOR_PROP);
     StructType cursorType = manifest.cursorType(table.schema());
     StructLike cursor =
         cursorJson == null ? null : (StructLike) SingleValueParser.fromJson(cursorType, cursorJson);
-    return new DrainStart(manifest, cursor, manifestLocation, null, null, null);
+    return new DrainStart(manifest, cursor, manifestLocation, null, null, null, null);
   }
 
   private ChangeSetManifest readManifest(
@@ -280,9 +318,30 @@ class ChangeSetStore {
 
   /**
    * Freezes a new change set from the currently buffered {@link RowChangesWritten} responses, plus
-   * any staged files carried over from a dropped one. Returns {@code null} if there is nothing to
-   * freeze.
+   * what {@code start} carries over from a dropped change set. Returns {@code null} if there is
+   * nothing to freeze.
    */
+  FreezeResult freeze(
+      Table table,
+      String branch,
+      TableReference tableReference,
+      String stagingLocation,
+      Set<Integer> identifierFieldIds,
+      TableCommitRequest request,
+      DrainStart start) {
+    return freeze(
+        table,
+        branch,
+        tableReference,
+        stagingLocation,
+        identifierFieldIds,
+        request,
+        start.carryOverFiles(),
+        start.carryOverTopics(),
+        start.carryOverSketchFiles(),
+        start.adoptedChangeSetIds());
+  }
+
   FreezeResult freeze(
       Table table,
       String branch,
@@ -292,6 +351,30 @@ class ChangeSetStore {
       TableCommitRequest request,
       List<StagedChangeFile> carryOverFiles,
       Set<String> carryOverTopics) {
+    return freeze(
+        table,
+        branch,
+        tableReference,
+        stagingLocation,
+        identifierFieldIds,
+        request,
+        carryOverFiles,
+        carryOverTopics,
+        ImmutableList.of(),
+        ImmutableList.of());
+  }
+
+  private FreezeResult freeze(
+      Table table,
+      String branch,
+      TableReference tableReference,
+      String stagingLocation,
+      Set<Integer> identifierFieldIds,
+      TableCommitRequest request,
+      List<StagedChangeFile> carryOverFiles,
+      Set<String> carryOverTopics,
+      List<ChangeSetManifest.SketchFileEntry> carryOverSketchFiles,
+      List<UUID> adoptedChangeSetIds) {
     Map<Integer, Long> committedOffsets = lastCommittedOffsetsForTable(table, branch);
 
     List<RowChangesWritten> payloads =
@@ -321,6 +404,20 @@ class ChangeSetStore {
     Set<String> sourceTopics = Sets.newLinkedHashSet(carryOverTopics);
     payloads.stream().flatMap(p -> p.sourceTopics().stream()).forEach(sourceTopics::add);
 
+    // the input of the statistics step: one entry per response with a Puffin file, with the staged
+    // files it covers
+    List<ChangeSetManifest.SketchFileEntry> sketchFiles = Lists.newArrayList(carryOverSketchFiles);
+    payloads.stream()
+        .filter(payload -> payload.sketchFile() != null)
+        .map(
+            payload ->
+                new ChangeSetManifest.SketchFileEntry(
+                    payload.sketchFile(),
+                    payload.stagedFiles().stream()
+                        .map(StagedChangeFile::location)
+                        .collect(Collectors.toList())))
+        .forEach(sketchFiles::add);
+
     Map<Integer, Long> frozenOffsets = mergeMax(committedOffsets, request.controlTopicOffsets());
     ChangeSetManifest manifest =
         ChangeSetManifest.freeze(
@@ -329,7 +426,9 @@ class ChangeSetStore {
             allFiles,
             sourceTopics,
             frozenOffsets,
-            request.validThroughTs());
+            request.validThroughTs(),
+            sketchFiles,
+            adoptedChangeSetIds);
     String location =
         ChangeSetManifest.location(
             stagingLocation, tableReference, groupId, manifest.changeSetId());
@@ -399,6 +498,15 @@ class ChangeSetStore {
     CopyOnWriteFiles.deleteQuietly(io, locations);
   }
 
+  /** Deletes the Puffin files of a change set when no statistics step is left to delete them. */
+  void deleteSketchFiles(FileIO io, ChangeSetManifest manifest) {
+    CopyOnWriteFiles.deleteQuietly(
+        io,
+        manifest.sketchFiles().stream()
+            .map(ChangeSetManifest.SketchFileEntry::location)
+            .collect(Collectors.toList()));
+  }
+
   /**
    * The summary of the most recent snapshot this connector wrote, walking back past anyone else's.
    *
@@ -412,19 +520,24 @@ class ChangeSetStore {
    *
    * <p>The connector's snapshot is the one carrying the offsets of its group, not any commit id:
    * another connector on the table writes a commit id too, and its snapshot on top would hide the
-   * change set here and in the staging sweep just as a compaction would.
+   * change set here and in the staging cleanup just as a compaction would.
    */
   Map<String, String> latestConnectorSummary(Table table, String branch) {
+    Snapshot snapshot = latestConnectorSnapshot(table, branch);
+    return snapshot != null ? snapshot.summary() : ImmutableMap.of();
+  }
+
+  /** The snapshot whose summary {@link #latestConnectorSummary} returns, or {@code null}. */
+  Snapshot latestConnectorSnapshot(Table table, String branch) {
     Snapshot snapshot = latestSnapshot(table, branch);
     while (snapshot != null) {
-      Map<String, String> summary = snapshot.summary();
-      if (summary.containsKey(offsetsProp)) {
-        return summary;
+      if (snapshot.summary().containsKey(offsetsProp)) {
+        return snapshot;
       }
       Long parentSnapshotId = snapshot.parentId();
       snapshot = parentSnapshotId != null ? table.snapshot(parentSnapshotId) : null;
     }
-    return ImmutableMap.of();
+    return null;
   }
 
   boolean pointsAtChangeSet(Table table, String branch) {

@@ -23,7 +23,9 @@ import static org.apache.iceberg.types.Types.NestedField.required;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
+import static org.mockito.AdditionalAnswers.delegatesTo;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -32,6 +34,8 @@ import java.nio.ByteBuffer;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.apache.avro.file.DataFileStream;
 import org.apache.avro.generic.GenericDatumReader;
 import org.apache.iceberg.PartitionSpec;
@@ -43,6 +47,8 @@ import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.connect.IcebergSinkConfig;
 import org.apache.iceberg.connect.TableSinkConfig;
+import org.apache.iceberg.connect.data.SketchFiles.RecordingFileIO;
+import org.apache.iceberg.connect.data.copyonwrite.StagedChangeFileWriter;
 import org.apache.iceberg.connect.data.copyonwrite.StagedChangeSchema;
 import org.apache.iceberg.connect.events.StagedChangeFile;
 import org.apache.iceberg.connect.events.TableReference;
@@ -89,6 +95,8 @@ public class TestCopyOnWriteStagingWriter {
               optional(3, "status", Types.StringType.get())),
           ID_FIELDS);
   private static final String OP_FIELD = "op";
+  private static final UUID COMMIT_ID = UUID.randomUUID();
+  private static final int LG_K = 12;
 
   // a required column outside the key: the table a delete carrying only the key must still fit
   private static final TableIdentifier ORDERS_IDENTIFIER = TableIdentifier.of(NAMESPACE, "orders");
@@ -263,6 +271,287 @@ public class TestCopyOnWriteStagingWriter {
         .isEqualTo(ImmutableMap.of(1, longBound(3L), 2, longBound(9L)));
   }
 
+  @Test
+  public void testDeleteIsNotSketchedInsertAndUpdateAre() {
+    RecordingFileIO io = new RecordingFileIO();
+    CopyOnWriteStagingWriter writer = writerWithSketches(cdcConfig(false), io);
+
+    writer.write(record("orders", 0, 60L, row(1L, 1L, "c", "new")));
+    writer.write(record("orders", 0, 61L, row(1L, 2L, "u", "paid")));
+    // a delete carries the key and nothing else, and is not a value that entered the table
+    writer.write(record("orders", 0, 62L, row(1L, 3L, "d", null)));
+    StagedChangesResult result = onlyResult(writer.complete(COMMIT_ID));
+
+    assertThat(result.stagedFiles()).hasSize(1);
+    SketchFiles.Content content = SketchFiles.read(io, result.sketchFile());
+    assertThat(content.properties()).containsEntry("row-count", "2");
+    assertThat(content.ndv()).containsOnlyKeys(1, 2, 3);
+    assertThat(content.ndv()).containsEntry(1, 1.0).containsEntry(2, 2.0).containsEntry(3, 2.0);
+    assertThat(result.sketchFile().location())
+        .startsWith(stagingDirectory() + "/stats/" + COMMIT_ID + "-task-0-")
+        .endsWith(".puffin");
+  }
+
+  @ParameterizedTest(name = "upsert {0}")
+  @ValueSource(booleans = {false, true})
+  public void testRowWithoutMappedOperationIsSketched(boolean upsert) {
+    RecordingFileIO io = new RecordingFileIO();
+    CopyOnWriteStagingWriter writer = writerWithSketches(cdcConfig(upsert), io);
+
+    writer.write(record("orders", 0, 63L, row(1L, 1L, null, "no operation")));
+    writer.write(record("orders", 0, 64L, row(1L, 2L, "x", "unmapped operation")));
+    StagedChangesResult result = onlyResult(writer.complete(COMMIT_ID));
+
+    SketchFiles.Content content = SketchFiles.read(io, result.sketchFile());
+    assertThat(content.properties()).containsEntry("row-count", "2");
+    assertThat(content.ndv()).containsEntry(2, 2.0).containsEntry(3, 2.0);
+  }
+
+  @Test
+  public void testOnlyDeletesStagePuffinWithEmptyBlobs() {
+    RecordingFileIO io = new RecordingFileIO();
+    CopyOnWriteStagingWriter writer = writerWithSketches(cdcConfig(false), io);
+
+    writer.write(record("orders", 0, 65L, row(1L, 1L, "d", null)));
+    writer.write(record("orders", 0, 66L, row(1L, 2L, "d", null)));
+    StagedChangesResult result = onlyResult(writer.complete(COMMIT_ID));
+
+    // the coordinator cannot tell from the staged files that no row was inserted: the file says so
+    assertThat(result.stagedFiles()).hasSize(1);
+    SketchFiles.Content content = SketchFiles.read(io, result.sketchFile());
+    assertThat(content.properties())
+        .containsEntry("last-column-id", "3")
+        .containsEntry("row-count", "0");
+    assertThat(content.ndv()).containsEntry(1, 0.0).containsEntry(2, 0.0).containsEntry(3, 0.0);
+  }
+
+  @Test
+  public void testNothingStagedWritesNoSketchFile() {
+    RecordingFileIO io = new RecordingFileIO();
+    CopyOnWriteStagingWriter staging = writerWithSketches(cdcConfig(false), io);
+    staging.write(record("orders", 0, 66L, row(1L, 1L, "c", "new")));
+    assertThat(onlyResult(staging.complete(COMMIT_ID)).sketchFile())
+        .as("a file for a staged row")
+        .isNotNull();
+
+    RecordingFileIO otherIo = new RecordingFileIO();
+    CopyOnWriteStagingWriter writer = writerWithSketches(cdcConfig(false), otherIo);
+    writer.write(record("orders", 0, 67L, row(1L, 1L, "m", "ignored")));
+    writer.write(record("orders", 0, 68L, null));
+
+    assertThat(writer.complete(COMMIT_ID)).isEmpty();
+    assertThat(otherIo.statsFilesAttempted()).isEmpty();
+  }
+
+  @Test
+  public void testWithoutSketchesNoSketchFileIsWritten() {
+    RecordingFileIO io = new RecordingFileIO();
+    CopyOnWriteStagingWriter writer =
+        new CopyOnWriteStagingWriter(
+            tableWithFileIo(io), TABLE_REFERENCE, cdcConfig(false), ID_FIELDS);
+
+    writer.write(record("orders", 0, 69L, row(1L, 1L, "c", "new")));
+    StagedChangesResult result = onlyResult(writer.complete(COMMIT_ID));
+
+    assertThat(result.stagedFiles()).hasSize(1);
+    assertThat(result.sketchFile()).isNull();
+    assertThat(io.otherFiles()).as("the staged file was written").isNotEmpty();
+    assertThat(io.statsFiles()).isEmpty();
+  }
+
+  @Test
+  public void testFailingSketchUpdateDoesNotFailWrite() {
+    RecordingFileIO io = new RecordingFileIO();
+    AtomicInteger updates = new AtomicInteger();
+    ColumnSketchCollector sketches =
+        new ColumnSketchCollector(
+            TABLE_IDENTIFIER,
+            SketchFiles.tableWith(io),
+            stagingDirectory(),
+            "task-0",
+            LG_K,
+            null,
+            false,
+            table.schema()) {
+          @Override
+          public void update(Record row) {
+            updates.incrementAndGet();
+            throw new IllegalStateException("update failed");
+          }
+        };
+    CopyOnWriteStagingWriter writer =
+        new CopyOnWriteStagingWriter(
+            tableWithFileIo(io), TABLE_REFERENCE, cdcConfig(false), ID_FIELDS, sketches);
+
+    writer.write(record("orders", 0, 70L, row(1L, 1L, "c", "new")));
+    writer.write(record("orders", 0, 71L, row(1L, 2L, "c", "new")));
+    writer.write(record("orders", 0, 72L, row(1L, 3L, "u", "paid")));
+    StagedChangesResult result = onlyResult(writer.complete(COMMIT_ID));
+
+    // the sketches lack the rows of the failed updates: their file would understate the NDV
+    assertThat(result.sketchFile()).as("no file of sketches that missed rows").isNull();
+    assertThat(io.statsFilesAttempted()).isEmpty();
+    assertThat(updates).as("the collector is not asked again in the cycle").hasValue(1);
+    assertThat(result.stagedFiles()).as("the rows are staged").hasSize(1);
+    assertThat(result.stagedFiles().get(0).recordCount()).isEqualTo(3L);
+    assertThat(result.sourceTopics()).containsExactly("orders");
+  }
+
+  @Test
+  public void testFailingSketchFileWriteKeepsStagedFiles() {
+    RecordingFileIO io = new RecordingFileIO().failOnStatsFiles();
+    CopyOnWriteStagingWriter writer = writerWithSketches(cdcConfig(false), io);
+
+    writer.write(record("orders", 0, 70L, row(1L, 1L, "c", "new")));
+    StagedChangesResult result = onlyResult(writer.complete(COMMIT_ID));
+
+    assertThat(io.statsFilesAttempted()).as("the writer tried the file").hasSize(1);
+    assertThat(result.stagedFiles()).as("the changes are reported").hasSize(1);
+    assertThat(result.sketchFile()).as("no reference to a file that is not there").isNull();
+    assertThat(result.sourceTopics()).containsExactly("orders");
+  }
+
+  @Test
+  public void testStatisticsThatFailInEveryWayLeaveStagedResultAsWithoutThem() throws IOException {
+    RecordingFileIO io = new RecordingFileIO().failOnStatsFiles();
+    CopyOnWriteStagingWriter failing =
+        new CopyOnWriteStagingWriter(
+            tableWithFileIo(io),
+            TABLE_REFERENCE,
+            cdcConfig(false),
+            ID_FIELDS,
+            unhashableSketches(io));
+    CopyOnWriteStagingWriter plain = writer(cdcConfig(false));
+    // the control: where the file can be written, it has no blob, so every value failed to hash
+    RecordingFileIO healthy = new RecordingFileIO();
+    CopyOnWriteStagingWriter control =
+        new CopyOnWriteStagingWriter(
+            tableWithFileIo(healthy),
+            TABLE_REFERENCE,
+            cdcConfig(false),
+            ID_FIELDS,
+            unhashableSketches(healthy));
+
+    for (CopyOnWriteStagingWriter writer : ImmutableList.of(failing, plain, control)) {
+      writer.write(record("orders", 0, 80L, row(1L, 1L, "c", "new")));
+      writer.write(record("orders", 0, 81L, row(1L, 2L, "u", "paid")));
+      writer.write(record("orders", 0, 82L, row(1L, 3L, "d", null)));
+    }
+
+    SketchFiles.Content controlContent =
+        SketchFiles.read(healthy, onlyResult(control.complete(COMMIT_ID)).sketchFile());
+    assertThat(controlContent.properties()).containsEntry("row-count", "2");
+    assertThat(controlContent.ndv()).as("the blobs of the control").isEmpty();
+
+    List<RecordWriteResult> failedResults = failing.complete(COMMIT_ID);
+    assertThat(io.statsFilesAttempted()).as("the writer tried the file").hasSize(1);
+    StagedChangesResult actual = onlyResult(failedResults);
+    StagedChangesResult expected = onlyResult(plain.complete(COMMIT_ID));
+
+    assertThat(actual.sketchFile()).as("no reference to a file that is not there").isNull();
+    assertThat(expected.sketchFile()).isNull();
+    assertThat(actual.tableReference()).isEqualTo(expected.tableReference());
+    assertThat(actual.taskId()).isEqualTo(expected.taskId());
+    assertThat(actual.sourceTopics()).isEqualTo(expected.sourceTopics());
+    assertThat(shapes(actual.stagedFiles())).hasSize(1).isEqualTo(shapes(expected.stagedFiles()));
+    assertThat(readRows(table, ID_FIELDS, actual.stagedFiles()))
+        .as("the same rows are staged")
+        .hasSize(3)
+        .isEqualTo(readRows(table, ID_FIELDS, expected.stagedFiles()));
+  }
+
+  @Test
+  public void testSchemaChangeMovesSketchesToNewSchema() {
+    RecordingFileIO io = new RecordingFileIO();
+    IcebergSinkConfig evolving = config(true);
+    when(evolving.evolveSchemaEnabled()).thenReturn(true);
+    CopyOnWriteStagingWriter writer = writerWithSketches(evolving, io);
+
+    writer.write(record("orders", 0, 71L, row(1L, 1L, null, "a")));
+    // the table gets a column here: the staged file in progress ends and a new one starts
+    Map<String, Object> withExtra = row(1L, 2L, null, "b");
+    withExtra.put("extra", "x");
+    writer.write(record("orders", 0, 72L, withExtra));
+    StagedChangesResult result = onlyResult(writer.complete(COMMIT_ID));
+
+    assertThat(result.stagedFiles()).as("one staged file per schema").hasSize(2);
+    SketchFiles.Content content = SketchFiles.read(io, result.sketchFile());
+    assertThat(content.properties())
+        .containsEntry("last-column-id", "4")
+        .containsEntry("row-count", "2");
+    // the added column has seen only the row written since
+    assertThat(content.ndv())
+        .containsEntry(1, 1.0)
+        .containsEntry(2, 2.0)
+        .containsEntry(3, 2.0)
+        .containsEntry(4, 1.0);
+  }
+
+  private ColumnSketchCollector unhashableSketches(RecordingFileIO io) {
+    Schema mismatched =
+        new Schema(
+            required(1, "tenant_id", Types.StringType.get()),
+            required(2, "order_id", Types.StringType.get()),
+            optional(3, "status", Types.LongType.get()));
+    return new ColumnSketchCollector(
+        TABLE_IDENTIFIER,
+        SketchFiles.tableWith(io),
+        stagingDirectory(),
+        "task-0",
+        LG_K,
+        null,
+        false,
+        mismatched);
+  }
+
+  /** What of a staged file does not depend on the name it was given. */
+  private static List<List<Object>> shapes(List<StagedChangeFile> files) {
+    List<List<Object>> shapes = Lists.newArrayList();
+    for (StagedChangeFile file : files) {
+      shapes.add(
+          ImmutableList.of(
+              file.recordCount(),
+              file.schemaId(),
+              file.formatVersion(),
+              file.lowerBounds(),
+              file.upperBounds()));
+    }
+
+    return shapes;
+  }
+
+  private static StagedChangesResult onlyResult(List<RecordWriteResult> results) {
+    assertThat(results).hasSize(1);
+    return (StagedChangesResult) results.get(0);
+  }
+
+  private CopyOnWriteStagingWriter writerWithSketches(
+      IcebergSinkConfig config, RecordingFileIO io) {
+    ColumnSketchCollector sketches =
+        new ColumnSketchCollector(
+            TABLE_IDENTIFIER,
+            SketchFiles.tableWith(io),
+            stagingDirectory(),
+            "task-0",
+            LG_K,
+            null,
+            false,
+            table.schema());
+    return new CopyOnWriteStagingWriter(
+        tableWithFileIo(io), TABLE_REFERENCE, config, ID_FIELDS, sketches);
+  }
+
+  private Table tableWithFileIo(RecordingFileIO io) {
+    Table wrapped = mock(Table.class, delegatesTo(table));
+    doReturn(io).when(wrapped).io();
+    return wrapped;
+  }
+
+  private String stagingDirectory() {
+    return StagedChangeFileWriter.stagingDirectory(
+        StagedChangeFileWriter.stagingLocation(table, null), TABLE_REFERENCE, "cg-connect");
+  }
+
   private void assertFailsNaming(Map<String, Object> value, String... fields) {
     CopyOnWriteStagingWriter writer = writer(cdcConfig(true));
 
@@ -272,7 +561,7 @@ public class TestCopyOnWriteStagingWriter {
         .hasMessageContaining("topic: orders")
         .hasMessageContaining("partition: 1")
         .hasMessageContaining("offset: 5");
-    assertThat(writer.complete()).as("the record is not staged").isEmpty();
+    assertThat(writer.complete(COMMIT_ID)).as("the record is not staged").isEmpty();
   }
 
   private CopyOnWriteStagingWriter writer(IcebergSinkConfig config) {
@@ -293,7 +582,7 @@ public class TestCopyOnWriteStagingWriter {
 
   private static List<StagedChangeFile> stagedFiles(CopyOnWriteStagingWriter writer) {
     List<StagedChangeFile> files = Lists.newArrayList();
-    for (RecordWriteResult result : writer.complete()) {
+    for (RecordWriteResult result : writer.complete(COMMIT_ID)) {
       files.addAll(((StagedChangesResult) result).stagedFiles());
     }
     return files;
@@ -383,7 +672,7 @@ public class TestCopyOnWriteStagingWriter {
     when(config.taskId()).thenReturn("task-0");
     when(config.isUpsertMode()).thenReturn(upsert);
     when(config.evolveSchemaEnabled()).thenReturn(false);
-    when(config.copyOnWriteStagingLocation()).thenReturn(null);
+    when(config.stagingLocation()).thenReturn(null);
     return config;
   }
 }

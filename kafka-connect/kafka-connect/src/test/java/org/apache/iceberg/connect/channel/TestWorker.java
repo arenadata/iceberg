@@ -21,27 +21,40 @@ package org.apache.iceberg.connect.channel;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.tuple;
+import static org.mockito.AdditionalAnswers.delegatesTo;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.withSettings;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
+import org.apache.iceberg.HasTableOperations;
 import org.apache.iceberg.PartitionSpec;
+import org.apache.iceberg.RowLevelOperationMode;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.catalog.Catalog;
 import org.apache.iceberg.catalog.TableIdentifier;
+import org.apache.iceberg.connect.TableSinkConfig;
+import org.apache.iceberg.connect.data.ColumnSketchCollector;
 import org.apache.iceberg.connect.data.IcebergWriterResult;
 import org.apache.iceberg.connect.data.Offset;
+import org.apache.iceberg.connect.data.RecordRoutingStrategy;
 import org.apache.iceberg.connect.data.RecordWriteResult;
 import org.apache.iceberg.connect.data.SinkWriter;
 import org.apache.iceberg.connect.data.SinkWriterResult;
+import org.apache.iceberg.connect.data.SketchValues;
 import org.apache.iceberg.connect.data.StagedChangesResult;
 import org.apache.iceberg.connect.data.copyonwrite.StagedChangeSchema;
 import org.apache.iceberg.connect.events.Assignment;
@@ -54,6 +67,7 @@ import org.apache.iceberg.connect.events.PayloadType;
 import org.apache.iceberg.connect.events.RewriteAssigned;
 import org.apache.iceberg.connect.events.RewriteComplete;
 import org.apache.iceberg.connect.events.RowChangesWritten;
+import org.apache.iceberg.connect.events.SketchFile;
 import org.apache.iceberg.connect.events.StagedChangeFile;
 import org.apache.iceberg.connect.events.StartCommit;
 import org.apache.iceberg.connect.events.TableReference;
@@ -61,6 +75,7 @@ import org.apache.iceberg.connect.events.TopicPartitionRef;
 import org.apache.iceberg.data.Record;
 import org.apache.iceberg.exceptions.NoSuchTableException;
 import org.apache.iceberg.inmemory.InMemoryFileIO;
+import org.apache.iceberg.io.OutputFile;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableSet;
@@ -72,10 +87,18 @@ import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.connect.sink.SinkRecord;
 import org.apache.kafka.connect.sink.SinkTaskContext;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.MockedStatic;
 
 public class TestWorker extends ChannelTestBase {
+
+  private final List<Worker> workersToStop = Lists.newArrayList();
+
+  @AfterEach
+  public void stopWorkers() {
+    workersToStop.forEach(Worker::stop);
+  }
 
   @Test
   public void testSave() {
@@ -104,7 +127,7 @@ public class TestWorker extends ChannelTestBase {
       SinkWriterResult sinkWriterResult =
           new SinkWriterResult(ImmutableList.<RecordWriteResult>of(writeResult), offsets);
       SinkWriter sinkWriter = mock(SinkWriter.class);
-      when(sinkWriter.completeWrite()).thenReturn(sinkWriterResult);
+      when(sinkWriter.completeWrite(any())).thenReturn(sinkWriterResult);
 
       Worker worker = new Worker(catalog, config, clientFactory, sinkWriter, context);
       worker.start();
@@ -176,7 +199,7 @@ public class TestWorker extends ChannelTestBase {
               partition1, new Offset(4L, EventTestUtil.now()));
 
       SinkWriter sinkWriter = mock(SinkWriter.class);
-      when(sinkWriter.completeWrite())
+      when(sinkWriter.completeWrite(any()))
           .thenReturn(
               new SinkWriterResult(ImmutableList.<RecordWriteResult>of(stagedResult), offsets));
 
@@ -226,6 +249,359 @@ public class TestWorker extends ChannelTestBase {
     }
   }
 
+  @Test
+  public void testWritersAreCompletedWithCommitIdOfStartCommit() {
+    UUID commitId = UUID.randomUUID();
+
+    // the mock answers only for this id: a worker that completes the writers with another has no
+    // result to report
+    List<Event> events = cycle(commitId, false, ImmutableList.of());
+
+    assertThat(events).hasSize(1);
+    assertThat(((DataComplete) events.get(0).payload()).commitId()).isEqualTo(commitId);
+  }
+
+  @Test
+  public void testEveryDataWrittenOfWriterCarriesItsOneSketchFile() {
+    UUID commitId = UUID.randomUUID();
+    SketchFile sketchFile = new SketchFile("s3://warehouse/staging/stats/a.puffin", 1000L, 120L);
+    TableReference tableReference = TableReference.of("catalog", TableIdentifier.parse(TABLE_NAME));
+    // a schema change in the middle of the cycle gives a writer several results
+    IcebergWriterResult first = dataResult(tableReference, sketchFile);
+    IcebergWriterResult second = dataResult(tableReference, sketchFile);
+
+    List<Event> events = cycle(commitId, false, ImmutableList.of(first, second));
+
+    assertThat(events).hasSize(3);
+    for (Event event : events.subList(0, 2)) {
+      DataWritten dataWritten = (DataWritten) event.payload();
+      assertThat(dataWritten.getSchema().getField("sketch_file")).isNotNull();
+      assertThat(dataWritten.sketchFile()).isNotNull();
+      assertThat(dataWritten.sketchFile().location()).isEqualTo(sketchFile.location());
+      assertThat(dataWritten.sketchFile().fileSizeBytes()).isEqualTo(1000L);
+      assertThat(dataWritten.sketchFile().footerSizeBytes()).isEqualTo(120L);
+    }
+  }
+
+  @Test
+  public void testDataWrittenWithoutSketchFileKeepsSchemaOfReleasedVersion() {
+    UUID commitId = UUID.randomUUID();
+    TableReference tableReference = TableReference.of("catalog", TableIdentifier.parse(TABLE_NAME));
+
+    List<Event> events = cycle(commitId, false, ImmutableList.of(dataResult(tableReference, null)));
+
+    DataWritten dataWritten = (DataWritten) events.get(0).payload();
+    assertThat(dataWritten.sketchFile()).isNull();
+    // a connector of a released version fails on a field it does not know, even a null one
+    assertThat(dataWritten.getSchema().getField("sketch_file")).isNull();
+    assertThat(dataWritten.dataFiles()).hasSize(1);
+  }
+
+  @Test
+  public void testRowChangesWrittenCarriesSketchFileOfItsResult() {
+    UUID commitId = UUID.randomUUID();
+    SketchFile sketchFile = new SketchFile("s3://warehouse/staging/stats/b.puffin", 2000L, 240L);
+    TableReference tableReference = TableReference.of("catalog", TableIdentifier.parse(TABLE_NAME));
+    List<StagedChangeFile> stagedFiles =
+        ImmutableList.of(stagedFile("s3://warehouse/staging/0/epoch/0.avro", 3L));
+
+    List<Event> events =
+        cycle(
+            commitId,
+            true,
+            ImmutableList.of(
+                new StagedChangesResult(
+                    tableReference,
+                    "0",
+                    stagedFiles,
+                    ImmutableSet.of(SRC_TOPIC_NAME),
+                    sketchFile)));
+    RowChangesWritten withFile = (RowChangesWritten) events.get(0).payload();
+    assertThat(withFile.sketchFile()).isNotNull();
+    assertThat(withFile.sketchFile().location()).isEqualTo(sketchFile.location());
+    assertThat(withFile.sketchFile().fileSizeBytes()).isEqualTo(2000L);
+    assertThat(withFile.sketchFile().footerSizeBytes()).isEqualTo(240L);
+  }
+
+  @Test
+  public void testRowChangesWrittenWithoutSketchFileCarriesNone() {
+    UUID commitId = UUID.randomUUID();
+    TableReference tableReference = TableReference.of("catalog", TableIdentifier.parse(TABLE_NAME));
+    List<StagedChangeFile> stagedFiles =
+        ImmutableList.of(stagedFile("s3://warehouse/staging/0/epoch/0.avro", 3L));
+
+    List<Event> events =
+        cycle(
+            commitId,
+            true,
+            ImmutableList.of(
+                new StagedChangesResult(
+                    tableReference, "0", stagedFiles, ImmutableSet.of(SRC_TOPIC_NAME))));
+    RowChangesWritten withoutFile = (RowChangesWritten) events.get(0).payload();
+    assertThat(withoutFile.sketchFile()).isNull();
+    assertThat(withoutFile.stagedFiles()).hasSize(1);
+  }
+
+  @Test
+  public void testSketchFileOfRealWriterIsNamedByCommitAndReported() {
+    UUID commitId = UUID.randomUUID();
+    TableSinkConfig tableConfig = mock(TableSinkConfig.class);
+    when(tableConfig.statisticsEnabled()).thenReturn(true);
+    // the mock answers an empty list, which is an explicit list without a column
+    when(tableConfig.statisticsColumns()).thenReturn(null);
+    when(config.tableConfig(any())).thenReturn(tableConfig);
+    when(config.routingStrategy()).thenReturn(RecordRoutingStrategy.ALL_TABLES);
+    when(config.tables()).thenReturn(ImmutableList.of(TABLE_IDENTIFIER.toString()));
+    when(config.rowLevelMode()).thenReturn(RowLevelOperationMode.MERGE_ON_READ);
+    when(config.statisticsLgNominalEntries()).thenReturn(12);
+    when(config.taskId()).thenReturn("0");
+
+    try (MockedStatic<KafkaUtils> mockKafkaUtils = mockStatic(KafkaUtils.class)) {
+      ConsumerGroupMetadata consumerGroupMetadata = mock(ConsumerGroupMetadata.class);
+      mockKafkaUtils
+          .when(() -> KafkaUtils.consumerGroupMetadata(any()))
+          .thenReturn(consumerGroupMetadata);
+
+      SinkTaskContext context = mock(SinkTaskContext.class);
+      when(context.assignment()).thenReturn(ImmutableSet.of(new TopicPartition(SRC_TOPIC_NAME, 0)));
+
+      Worker worker =
+          new Worker(catalog, config, clientFactory, new SinkWriter(catalog, config), context);
+      worker.start();
+      initConsumer();
+
+      worker.save(
+          ImmutableList.of(
+              new SinkRecord(
+                  SRC_TOPIC_NAME,
+                  0,
+                  null,
+                  "key",
+                  null,
+                  ImmutableMap.of("id", 1L, "data", "a", "date", "d"),
+                  0L)));
+      Event commitRequest = new Event(config.connectGroupId(), new StartCommit(commitId));
+      consumer.addRecord(
+          new ConsumerRecord<>(CTL_TOPIC_NAME, 0, 1, "key", AvroUtil.encode(commitRequest)));
+      worker.process();
+
+      assertThat(producer.history()).hasSize(2);
+      DataWritten dataWritten =
+          (DataWritten) AvroUtil.decode(producer.history().get(0).value()).payload();
+      assertThat(dataWritten.dataFiles()).hasSize(1);
+      assertThat(dataWritten.sketchFile()).isNotNull();
+      assertThat(dataWritten.sketchFile().location()).contains("/stats/" + commitId + "-0-");
+      assertThat(table.io().newInputFile(dataWritten.sketchFile().location()).getLength())
+          .isEqualTo(dataWritten.sketchFile().fileSizeBytes());
+      worker.stop();
+    }
+  }
+
+  @Test
+  public void testStatisticsThatFailInEveryWayLeaveEventsAsWithoutThem() {
+    List<Event> without = realWriterCycle(false, false, 1L);
+    // SketchValues throws on every value and the file of the sketches cannot be written
+    AtomicInteger statsFilesTried = new AtomicInteger();
+    AtomicInteger valuesRefused = new AtomicInteger();
+    List<Event> failing = realWriterCycle(true, true, 2L, statsFilesTried, valuesRefused);
+
+    assertThat(valuesRefused).as("the collector hashed values, and they failed").hasPositiveValue();
+    assertThat(statsFilesTried).as("the writer tried the file").hasValue(1);
+    assertThat(without).hasSize(2);
+    assertThat(failing).hasSize(2);
+    DataWritten expected = (DataWritten) without.get(0).payload();
+    DataWritten actual = (DataWritten) failing.get(0).payload();
+    assertThat(actual.sketchFile()).as("no reference to a file that is not there").isNull();
+    assertThat(actual.getSchema().getField("sketch_file"))
+        .as("the schema of the released version")
+        .isNull();
+    assertThat(expected.getSchema().getField("sketch_file")).isNull();
+    assertThat(actual.tableReference().identifier())
+        .isEqualTo(expected.tableReference().identifier());
+    assertThat(actual.sourceTopics()).isEqualTo(expected.sourceTopics());
+    assertThat(actual.deleteFiles()).isEmpty();
+    assertThat(actual.dataFiles())
+        .extracting(dataFile -> dataFile.recordCount(), dataFile -> dataFile.fileSizeInBytes())
+        .containsExactlyElementsOf(
+            expected.dataFiles().stream()
+                .map(dataFile -> tuple(dataFile.recordCount(), dataFile.fileSizeInBytes()))
+                .collect(Collectors.toList()));
+    assertThat(actual.dataFiles()).hasSize(1);
+    DataComplete expectedComplete = (DataComplete) without.get(1).payload();
+    DataComplete actualComplete = (DataComplete) failing.get(1).payload();
+    assertThat(actualComplete.assignments())
+        .extracting(tpo -> tuple(tpo.partition(), tpo.offset()))
+        .isEqualTo(
+            expectedComplete.assignments().stream()
+                .map(tpo -> tuple(tpo.partition(), tpo.offset()))
+                .collect(Collectors.toList()));
+  }
+
+  private List<Event> realWriterCycle(boolean statistics, boolean failing, long controlOffset) {
+    return realWriterCycle(
+        statistics, failing, controlOffset, new AtomicInteger(), new AtomicInteger());
+  }
+
+  /**
+   * One cycle of a worker with the real writers over a table whose statistics fail as asked, and
+   * the events it sent. {@code statsFilesTried} counts the files of the sketches the writer asked
+   * for, {@code valuesRefused} the values {@code SketchValues} refused to hash.
+   */
+  private List<Event> realWriterCycle(
+      boolean statistics,
+      boolean failing,
+      long controlOffset,
+      AtomicInteger statsFilesTried,
+      AtomicInteger valuesRefused) {
+    UUID commitId = UUID.randomUUID();
+    TableSinkConfig tableConfig = mock(TableSinkConfig.class);
+    when(tableConfig.statisticsEnabled()).thenReturn(statistics);
+    when(tableConfig.statisticsColumns()).thenReturn(null);
+    when(config.tableConfig(any())).thenReturn(tableConfig);
+    when(config.routingStrategy()).thenReturn(RecordRoutingStrategy.ALL_TABLES);
+    when(config.tables()).thenReturn(ImmutableList.of(TABLE_IDENTIFIER.toString()));
+    when(config.rowLevelMode()).thenReturn(RowLevelOperationMode.MERGE_ON_READ);
+    when(config.statisticsLgNominalEntries()).thenReturn(12);
+    when(config.taskId()).thenReturn("0");
+
+    // the files of the table go through an io that refuses those of the sketches
+    InMemoryFileIO io =
+        new InMemoryFileIO() {
+          @Override
+          public OutputFile newOutputFile(String path) {
+            if (path.contains("/" + ColumnSketchCollector.STATS_DIR + "/")) {
+              statsFilesTried.incrementAndGet();
+              throw new UncheckedIOException(new IOException("cannot create " + path));
+            }
+
+            return super.newOutputFile(path);
+          }
+        };
+    Table tableOfWriter = table;
+    if (failing) {
+      tableOfWriter =
+          mock(
+              Table.class,
+              withSettings()
+                  .extraInterfaces(HasTableOperations.class)
+                  .defaultAnswer(delegatesTo(table)));
+      doReturn(io).when(tableOfWriter).io();
+    }
+
+    Catalog writerCatalog = mock(Catalog.class, delegatesTo(catalog));
+    doReturn(tableOfWriter).when(writerCatalog).loadTable(any());
+
+    try (MockedStatic<KafkaUtils> mockKafkaUtils = mockStatic(KafkaUtils.class);
+        MockedStatic<SketchValues> mockValues =
+            mockStatic(
+                SketchValues.class,
+                invocation -> {
+                  if (failing && invocation.getMethod().getName().equals("toByteBuffer")) {
+                    valuesRefused.incrementAndGet();
+                    throw new IllegalArgumentException("cannot hash the value");
+                  }
+
+                  return invocation.callRealMethod();
+                })) {
+      ConsumerGroupMetadata consumerGroupMetadata = mock(ConsumerGroupMetadata.class);
+      mockKafkaUtils
+          .when(() -> KafkaUtils.consumerGroupMetadata(any()))
+          .thenReturn(consumerGroupMetadata);
+
+      SinkTaskContext context = mock(SinkTaskContext.class);
+      when(context.assignment()).thenReturn(ImmutableSet.of(new TopicPartition(SRC_TOPIC_NAME, 0)));
+
+      Worker worker =
+          new Worker(
+              writerCatalog, config, clientFactory, new SinkWriter(writerCatalog, config), context);
+      worker.start();
+      initConsumer();
+
+      worker.save(
+          ImmutableList.of(
+              new SinkRecord(
+                  SRC_TOPIC_NAME,
+                  0,
+                  null,
+                  "key",
+                  null,
+                  ImmutableMap.of("id", 1L, "data", "a", "date", "d"),
+                  0L),
+              new SinkRecord(
+                  SRC_TOPIC_NAME,
+                  0,
+                  null,
+                  "key",
+                  null,
+                  ImmutableMap.of("id", 2L, "data", "b", "date", "d"),
+                  1L)));
+      Event commitRequest = new Event(config.connectGroupId(), new StartCommit(commitId));
+      consumer.addRecord(
+          new ConsumerRecord<>(
+              CTL_TOPIC_NAME, 0, controlOffset, "key", AvroUtil.encode(commitRequest)));
+      worker.process();
+      // the mock consumer is shared by the cycles of a test, and stopping a worker closes it
+      workersToStop.add(worker);
+
+      List<Event> events =
+          producer.history().stream()
+              .map(sent -> AvroUtil.decode(sent.value()))
+              .collect(Collectors.toList());
+      producer.clear();
+      return events;
+    }
+  }
+
+  private static IcebergWriterResult dataResult(
+      TableReference tableReference, SketchFile sketchFile) {
+    return new IcebergWriterResult(
+        tableReference,
+        ImmutableList.of(EventTestUtil.createDataFile()),
+        ImmutableList.of(),
+        StructType.of(),
+        ImmutableSet.of(SRC_TOPIC_NAME),
+        sketchFile);
+  }
+
+  /**
+   * Answers a StartCommit of the given id with the results the writers give for that id alone, and
+   * returns the events the worker sent.
+   */
+  private List<Event> cycle(
+      UUID commitId, boolean copyOnWrite, List<RecordWriteResult> writerResults) {
+    when(config.isCopyOnWriteMode()).thenReturn(copyOnWrite);
+    when(config.taskId()).thenReturn("0");
+    when(config.copyOnWriteRewriteThreads()).thenReturn(1);
+
+    try (MockedStatic<KafkaUtils> mockKafkaUtils = mockStatic(KafkaUtils.class)) {
+      ConsumerGroupMetadata consumerGroupMetadata = mock(ConsumerGroupMetadata.class);
+      mockKafkaUtils
+          .when(() -> KafkaUtils.consumerGroupMetadata(any()))
+          .thenReturn(consumerGroupMetadata);
+
+      SinkTaskContext context = mock(SinkTaskContext.class);
+      when(context.assignment()).thenReturn(ImmutableSet.of(new TopicPartition(SRC_TOPIC_NAME, 0)));
+
+      SinkWriter sinkWriter = mock(SinkWriter.class);
+      when(sinkWriter.completeWrite(commitId))
+          .thenReturn(new SinkWriterResult(writerResults, ImmutableMap.of()));
+
+      Worker worker = new Worker(catalog, config, clientFactory, sinkWriter, context);
+      worker.start();
+      initConsumer();
+
+      Event commitRequest = new Event(config.connectGroupId(), new StartCommit(commitId));
+      consumer.addRecord(
+          new ConsumerRecord<>(CTL_TOPIC_NAME, 0, 1, "key", AvroUtil.encode(commitRequest)));
+      worker.process();
+
+      verify(sinkWriter).completeWrite(commitId);
+      return producer.history().stream()
+          .map(sent -> AvroUtil.decode(sent.value()))
+          .collect(Collectors.toList());
+    }
+  }
+
   private static StagedChangeFile stagedFile(String location, long recordCount) {
     return new StagedChangeFile(
         location, 100L, recordCount, 0, 1, ImmutableMap.of(), ImmutableMap.of());
@@ -260,7 +636,7 @@ public class TestWorker extends ChannelTestBase {
       when(context.assignment()).thenReturn(ImmutableSet.of(new TopicPartition(SRC_TOPIC_NAME, 0)));
 
       SinkWriter sinkWriter = mock(SinkWriter.class);
-      when(sinkWriter.completeWrite())
+      when(sinkWriter.completeWrite(any()))
           .thenReturn(
               new SinkWriterResult(ImmutableList.<RecordWriteResult>of(), ImmutableMap.of()));
 
@@ -296,7 +672,7 @@ public class TestWorker extends ChannelTestBase {
       when(context.assignment()).thenReturn(ImmutableSet.of(new TopicPartition(SRC_TOPIC_NAME, 0)));
 
       SinkWriter sinkWriter = mock(SinkWriter.class);
-      when(sinkWriter.completeWrite())
+      when(sinkWriter.completeWrite(any()))
           .thenReturn(
               new SinkWriterResult(ImmutableList.<RecordWriteResult>of(), ImmutableMap.of()));
 

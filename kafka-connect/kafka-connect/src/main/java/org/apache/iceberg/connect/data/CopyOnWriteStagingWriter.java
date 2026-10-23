@@ -22,10 +22,12 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.connect.IcebergSinkConfig;
 import org.apache.iceberg.connect.data.copyonwrite.StagedChangeFileWriter;
 import org.apache.iceberg.connect.data.copyonwrite.StagedChangeSchema;
+import org.apache.iceberg.connect.events.SketchFile;
 import org.apache.iceberg.connect.events.StagedChangeFile;
 import org.apache.iceberg.connect.events.TableReference;
 import org.apache.iceberg.data.Record;
@@ -35,12 +37,15 @@ import org.apache.iceberg.relocated.com.google.common.collect.Sets;
 import org.apache.iceberg.types.Types.NestedField;
 import org.apache.kafka.connect.errors.DataException;
 import org.apache.kafka.connect.sink.SinkRecord;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * The copy-on-write counterpart of {@link IcebergWriter}: it does not touch the table, it stages
  * the changes for the coordinator to plan a rewrite from.
  */
 class CopyOnWriteStagingWriter implements RecordWriter {
+  private static final Logger LOG = LoggerFactory.getLogger(CopyOnWriteStagingWriter.class);
 
   private final TableReference tableReference;
   private final Table table;
@@ -49,6 +54,7 @@ class CopyOnWriteStagingWriter implements RecordWriter {
   private final CdcOperations cdcOperations;
   private final StagedChangeFileWriter fileWriter;
   private final Set<String> sourceTopics;
+  private ColumnSketchCollector sketches;
   private RecordConverter recordConverter;
 
   CopyOnWriteStagingWriter(
@@ -56,7 +62,17 @@ class CopyOnWriteStagingWriter implements RecordWriter {
       TableReference tableReference,
       IcebergSinkConfig config,
       Set<Integer> identifierFieldIds) {
+    this(table, tableReference, config, identifierFieldIds, null);
+  }
+
+  CopyOnWriteStagingWriter(
+      Table table,
+      TableReference tableReference,
+      IcebergSinkConfig config,
+      Set<Integer> identifierFieldIds,
+      ColumnSketchCollector sketches) {
     this.table = table;
+    this.sketches = sketches;
     this.tableReference = tableReference;
     this.config = config;
     this.identifierFieldIds = identifierFieldIds;
@@ -68,7 +84,7 @@ class CopyOnWriteStagingWriter implements RecordWriter {
             table,
             tableReference,
             identifierFieldIds,
-            config.copyOnWriteStagingLocation(),
+            config.stagingLocation(),
             config.connectGroupId(),
             config.taskId());
   }
@@ -97,16 +113,34 @@ class CopyOnWriteStagingWriter implements RecordWriter {
     checkIdentifierValues(record, tableRow);
 
     try {
+      int opCode = opCode(rawOperation);
       fileWriter.write(
           fileWriter.stagedRow(
-              tableRow,
-              opCode(rawOperation),
-              record.topic(),
-              record.kafkaPartition(),
-              record.kafkaOffset()));
+              tableRow, opCode, record.topic(), record.kafkaPartition(), record.kafkaOffset()));
+      if (opCode != StagedChangeSchema.OP_DELETE) {
+        // only after the write took the row; a delete stages the key, not a value
+        updateSketches(tableRow);
+      }
       sourceTopics.add(record.topic());
     } catch (Exception e) {
       throw conversionFailure(record, e);
+    }
+  }
+
+  private void updateSketches(Record row) {
+    if (sketches == null) {
+      return;
+    }
+
+    try {
+      sketches.update(row);
+    } catch (RuntimeException e) {
+      sketches = null;
+      LOG.warn(
+          "Statistics of table {} cannot take a row, they are dropped for this commit and the "
+              + "write goes on",
+          tableReference,
+          e);
     }
   }
 
@@ -173,6 +207,9 @@ class CopyOnWriteStagingWriter implements RecordWriter {
 
     SchemaUtils.applySchemaUpdates(table, updates);
     fileWriter.refreshSchema();
+    if (sketches != null) {
+      sketches.schemaChanged(table.schema());
+    }
     this.recordConverter = new RecordConverter(table, config);
     return recordConverter.convert(record.value(), null);
   }
@@ -200,16 +237,19 @@ class CopyOnWriteStagingWriter implements RecordWriter {
   }
 
   @Override
-  public List<RecordWriteResult> complete() {
+  public List<RecordWriteResult> complete(UUID commitId) {
     List<StagedChangeFile> stagedFiles = fileWriter.complete();
     if (stagedFiles.isEmpty()) {
       sourceTopics.clear();
       return ImmutableList.of();
     }
 
+    // written even when every row was a delete: the staged files alone do not show the coordinator
+    // that nothing was inserted
+    SketchFile sketchFile = sketches != null ? sketches.write(commitId) : null;
     RecordWriteResult result =
         new StagedChangesResult(
-            tableReference, config.taskId(), stagedFiles, Set.copyOf(sourceTopics));
+            tableReference, config.taskId(), stagedFiles, Set.copyOf(sourceTopics), sketchFile);
     sourceTopics.clear();
     return ImmutableList.of(result);
   }

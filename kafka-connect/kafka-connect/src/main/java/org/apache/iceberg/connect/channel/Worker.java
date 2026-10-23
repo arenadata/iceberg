@@ -106,7 +106,9 @@ class Worker extends Channel {
       return false;
     }
 
-    SinkWriterResult results = sinkWriter.completeWrite();
+    UUID commitId = ((StartCommit) event.payload()).commitId();
+
+    SinkWriterResult results = sinkWriter.completeWrite(commitId);
 
     // include all assigned topic partitions even if no messages were read
     // from a partition, as the coordinator will use that to determine
@@ -123,8 +125,6 @@ class Worker extends Channel {
                       tp.topic(), tp.partition(), offset.offset(), offset.timestamp());
                 })
             .collect(Collectors.toList());
-
-    UUID commitId = ((StartCommit) event.payload()).commitId();
 
     List<Event> events =
         results.writerResults().stream()
@@ -301,15 +301,26 @@ class Worker extends Channel {
     switch (writeResult.kind()) {
       case DATA_FILES:
         IcebergWriterResult dataResult = (IcebergWriterResult) writeResult;
-        return new Event(
-            config.connectGroupId(),
-            new DataWritten(
-                dataResult.partitionStruct(),
-                commitId,
-                dataResult.tableReference(),
-                dataResult.dataFiles(),
-                dataResult.deleteFiles(),
-                ImmutableList.copyOf(dataResult.sourceTopics())));
+        // a sketch reference changes the schema of the event, which a released connector cannot
+        // read: an event without one is encoded in the released format
+        DataWritten dataWritten =
+            dataResult.sketchFile() == null
+                ? new DataWritten(
+                    dataResult.partitionStruct(),
+                    commitId,
+                    dataResult.tableReference(),
+                    dataResult.dataFiles(),
+                    dataResult.deleteFiles(),
+                    ImmutableList.copyOf(dataResult.sourceTopics()))
+                : new DataWritten(
+                    dataResult.partitionStruct(),
+                    commitId,
+                    dataResult.tableReference(),
+                    dataResult.dataFiles(),
+                    dataResult.deleteFiles(),
+                    ImmutableList.copyOf(dataResult.sourceTopics()),
+                    dataResult.sketchFile());
+        return new Event(config.connectGroupId(), dataWritten);
       case STAGED_CHANGES:
         StagedChangesResult stagedResult = (StagedChangesResult) writeResult;
         return new Event(
@@ -319,7 +330,8 @@ class Worker extends Channel {
                 stagedResult.tableReference(),
                 stagedResult.taskId(),
                 ImmutableList.copyOf(stagedResult.sourceTopics()),
-                stagedResult.stagedFiles()));
+                stagedResult.stagedFiles(),
+                stagedResult.sketchFile()));
       default:
         throw new IllegalStateException("Unknown writer result kind: " + writeResult.kind());
     }

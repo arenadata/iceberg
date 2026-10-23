@@ -19,8 +19,10 @@
 package org.apache.iceberg.connect.channel;
 
 import java.util.List;
+import java.util.Set;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.connect.events.PayloadType;
+import org.apache.iceberg.connect.events.TableReference;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 
 /**
@@ -34,6 +36,18 @@ final class MergeOnReadTailHandoff {
 
   MergeOnReadTailHandoff(MergeOnReadTableCommitter mergeOnReadTail) {
     this.mergeOnReadTail = mergeOnReadTail;
+  }
+
+  void stop() {
+    mergeOnReadTail.stop();
+  }
+
+  boolean hasStep(TableReference tableReference) {
+    return mergeOnReadTail.hasStatisticsStep(tableReference.identifier());
+  }
+
+  Set<String> inFlightSketchLocations(TableReference tableReference) {
+    return mergeOnReadTail.inFlightSketchLocations(tableReference.identifier());
   }
 
   /**
@@ -52,6 +66,10 @@ final class MergeOnReadTailHandoff {
    * out, and carries no valid-through while it leaves anything out: the freeze drops everything
    * below the committed offsets as applied, so a tail snapshot recording this cycle's position
    * would lose the {@code RowChangesWritten} above it.
+   *
+   * @param drainInProgress whether the tail waits for its turn: a change set is left to drain, or
+   *     the final snapshot of the last one waits for the recount of its statistics, whose pointer
+   *     the tail's snapshot would take off it
    */
   TableCommitRequest offer(
       TableCommitRequest request, boolean drainInProgress, Table table, List<Envelope> spent) {

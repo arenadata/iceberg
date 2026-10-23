@@ -21,6 +21,7 @@ package org.apache.iceberg.connect.channel;
 import static org.apache.iceberg.types.Types.NestedField.optional;
 import static org.apache.iceberg.types.Types.NestedField.required;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.when;
@@ -41,18 +42,22 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
+import java.util.function.Function;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.iceberg.GenericStatisticsFile;
 import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.connect.IcebergSinkConfig;
+import org.apache.iceberg.connect.TableSinkConfig;
 import org.apache.iceberg.connect.data.copyonwrite.ChangeSetManifest;
 import org.apache.iceberg.connect.data.copyonwrite.StagedChangeFileWriter;
 import org.apache.iceberg.connect.data.copyonwrite.StagedChangeSchema;
 import org.apache.iceberg.connect.events.Event;
 import org.apache.iceberg.connect.events.RowChangesWritten;
+import org.apache.iceberg.connect.events.SketchFile;
 import org.apache.iceberg.connect.events.StagedChangeFile;
 import org.apache.iceberg.connect.events.TableReference;
 import org.apache.iceberg.data.GenericRecord;
@@ -64,16 +69,18 @@ import org.apache.iceberg.io.PositionOutputStream;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableSet;
+import org.apache.iceberg.relocated.com.google.common.collect.Lists;
+import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.types.Types;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * Where staged files, manifests and the sweep prefix live, and that one connector's sweep stays out
- * of every staging directory that is not its own.
+ * Where staged files, manifests and the cleanup prefix live, and that one connector's cleanup stays
+ * out of every staging directory that is not its own.
  *
- * <p>Runs on {@code HadoopFileIO} over the local file system: the sweep compares the locations a
+ * <p>Runs on {@code HadoopFileIO} over the local file system: the cleanup compares the locations a
  * listing returns with the ones the writer and the manifest were given, so an escaped directory
  * name has to come back from a real listing spelled exactly as it was written.
  */
@@ -87,14 +94,19 @@ public class TestStagingLayout {
   // task.id is the task number alone, so two connectors' tasks share it
   private static final String TASK_ID = "0";
   private static final long ORPHAN_TTL_MS = 1_000L;
-  private static final long SWEEP_INTERVAL_MS = 3_600_000L;
+  private static final long CLEANUP_INTERVAL_MS = 3_600_000L;
   private static final String COMMIT_ID_PROP = "kafka.connect.commit-id";
   private static final String CHANGE_SET_ID_PROP = "kafka.connect.copy-on-write.change-set-id";
+  private static final String FINAL_CHANGE_SET_ID_PROP =
+      "kafka.connect.copy-on-write.final-change-set-id";
 
   @TempDir private Path dir;
 
   private HadoopTables tables;
   private String staging;
+  // the statistics of every table, and the Puffin files of the steps of its merge-on-read tail
+  private boolean statistics = false;
+  private Function<TableReference, Set<String>> tailSteps = tableReference -> ImmutableSet.of();
 
   @BeforeEach
   public void before() {
@@ -103,7 +115,7 @@ public class TestStagingLayout {
   }
 
   @Test
-  public void testASweepLeavesTheStagingOfATableThatPrintsWithTheSameName() {
+  public void testCleanupLeavesStagingOfTableThatPrintsWithSameName() {
     // table c in namespace a.b and table b.c in namespace a both render as a.b.c
     TableReference nested = reference(Namespace.of("a", "b"), "c");
     TableReference dotted = reference(Namespace.of("a"), "b.c");
@@ -115,7 +127,7 @@ public class TestStagingLayout {
     StagedChangeFile dottedFile = stage(dottedTable, dotted, group);
     String dottedManifest = freeze(dottedTable, dotted, group, ImmutableList.of(dottedFile));
 
-    sweep(drainState(nestedTable, nested), group);
+    cleanUp(drainState(nestedTable, nested), group);
 
     assertThat(exists(dottedTable, dottedFile.location()))
         .as("a staged file of a.b%2Ec, unreachable from a%2Eb.c")
@@ -124,12 +136,12 @@ public class TestStagingLayout {
         .as("the manifest of a.b%2Ec, unreachable from a%2Eb.c")
         .isTrue();
     assertThat(exists(nestedTable, nestedOrphan.location()))
-        .as("the sweeping table's own orphan: the sweep did run")
+        .as("the cleaned table's own orphan: the cleanup did run")
         .isFalse();
   }
 
   @Test
-  public void testASweepLeavesTheStagingOfAnotherConnectorOnTheSameTable() {
+  public void testCleanupLeavesStagingOfAnotherConnectorOnSameTable() {
     TableReference orders = reference(Namespace.of("db"), "orders");
     Table table = table("orders");
 
@@ -138,7 +150,7 @@ public class TestStagingLayout {
     StagedChangeFile otherFile = stage(table, orders, "connect-b");
     String otherManifest = freeze(table, orders, "connect-b", ImmutableList.of(otherFile));
 
-    sweep(drainState(table, orders), "connect-a");
+    cleanUp(drainState(table, orders), "connect-a");
 
     assertThat(exists(table, otherFile.location()))
         .as("a staged file of connector b, unreachable from connector a")
@@ -147,12 +159,12 @@ public class TestStagingLayout {
         .as("the manifest of connector b, unreachable from connector a")
         .isTrue();
     assertThat(exists(table, ownOrphan.location()))
-        .as("connector a's own orphan: the sweep did run")
+        .as("connector a's own orphan: the cleanup did run")
         .isFalse();
   }
 
   @Test
-  public void testASweepKeepsTheChangeSetAnotherConnectorCommittedOver() {
+  public void testCleanupKeepsChangeSetAnotherConnectorCommittedOver() {
     TableReference orders = reference(Namespace.of("db"), "orders");
     Table table = table("orders");
 
@@ -183,7 +195,7 @@ public class TestStagingLayout {
         .commit();
     StagedChangeFile ownOrphan = stage(table, orders, "connect-a");
 
-    sweep(drainState(table, orders), "connect-a");
+    cleanUp(drainState(table, orders), "connect-a");
 
     assertThat(exists(table, live.location()))
         .as("a staged file named by connector a's pointer, below connector b's snapshot")
@@ -192,12 +204,12 @@ public class TestStagingLayout {
         .as("the manifest connector a's pointer names")
         .isTrue();
     assertThat(exists(table, ownOrphan.location()))
-        .as("connector a's own orphan: the sweep did run")
+        .as("connector a's own orphan: the cleanup did run")
         .isFalse();
   }
 
   @Test
-  public void testASweepFindsItsOwnFilesUnderEscapedDirectories() {
+  public void testCleanupFindsItsOwnFilesUnderEscapedDirectories() {
     // every character that is escaped, in the table and in the group: a listing that spelled a
     // directory differently from the writer would make the live file look like an orphan
     TableReference escaped = reference(Namespace.of("a.b"), "c/d%e");
@@ -220,7 +232,7 @@ public class TestStagingLayout {
     TableDrainState state = drainState(table, escaped);
     state.manifest = manifest;
     state.manifestLocation = manifestLocation;
-    sweep(state, group);
+    cleanUp(state, group);
 
     assertThat(exists(table, live.location())).as("named by the change set in memory").isTrue();
     assertThat(exists(table, manifestLocation)).as("the change set's own manifest").isTrue();
@@ -228,7 +240,7 @@ public class TestStagingLayout {
   }
 
   @Test
-  public void testASweepKeepsTheStagedFilesOfResponsesStillInTheCommitBuffer() {
+  public void testCleanupKeepsStagedFilesOfResponsesStillInCommitBuffer() {
     // a drain longer than the orphan TTL: the responses of its later cycles wait in the
     // coordinator's buffer until the drain ends, belonging to no change set at all: neither a
     // manifest nor the pointer in the summary names their staged files
@@ -244,12 +256,12 @@ public class TestStagingLayout {
         .as("named by a RowChangesWritten the coordinator is still holding")
         .isTrue();
     assertThat(exists(table, orphan.location()))
-        .as("named by nothing: the sweep did run")
+        .as("named by nothing: the cleanup did run")
         .isFalse();
   }
 
   @Test
-  public void testASweepKeepsTheNormalizedFileOfTheSliceBeingRewritten() {
+  public void testCleanupKeepsNormalizedFileOfSliceBeingRewritten() {
     // the normalized file of the attempt in flight is named by nothing persisted: the manifest
     // lists the staged files it was built from, not itself. A rewrite slower than the TTL (the
     // two are not validated against each other) would have it deleted out from under the workers
@@ -275,7 +287,7 @@ public class TestStagingLayout {
     state.manifest = manifest;
     state.manifestLocation = manifestLocation;
     state.normalizedLocation = inFlight;
-    sweep(state, "connect-a");
+    cleanUp(state, "connect-a");
 
     assertThat(exists(table, inFlight))
         .as("the normalized file the workers are rewriting right now")
@@ -286,10 +298,10 @@ public class TestStagingLayout {
   }
 
   @Test
-  public void testASweepDeletesTheManifestOfAChangeSetNothingNamesAnyMore() {
+  public void testCleanupDeletesManifestOfChangeSetNothingNamesAnyMore() {
     // a coordinator that died between writing the manifest and the first slice commit leaves a
     // frozen change set no one can reach: no snapshot names it, and the memory that held it went
-    // with the coordinator. That leaves it to the TTL, which only works if the sweep treats a
+    // with the coordinator. That leaves it to the TTL, which only works if the cleanup treats a
     // manifest like any other file under the prefix: a drain whose first commit keeps failing
     // leaves one behind every cycle
     TableReference orders = reference(Namespace.of("db"), "orders");
@@ -297,7 +309,7 @@ public class TestStagingLayout {
     StagedChangeFile abandoned = stage(table, orders, "connect-a");
     String orphanedManifest = freeze(table, orders, "connect-a", ImmutableList.of(abandoned));
 
-    sweep(drainState(table, orders), "connect-a");
+    cleanUp(drainState(table, orders), "connect-a");
 
     assertThat(exists(table, orphanedManifest))
         .as("the manifest of a change set no pointer and no memory names, past the TTL")
@@ -327,7 +339,7 @@ public class TestStagingLayout {
   }
 
   @Test
-  public void testASweepOfATableDroppedAndCreatedAgainLeavesTheChangeSetOfTheNewOne() {
+  public void testCleanupOfTableDroppedAndCreatedAgainLeavesChangeSetOfNewOne() {
     // staging configured outside the table, so the old table and the new one share a prefix: it is
     // spelled from the name alone. The coordinator was not restarted, and still holds the state of
     // the old table (its drain long over, or abandoned when the table was found replaced) next
@@ -372,12 +384,12 @@ public class TestStagingLayout {
         .as("the manifest the new table's pointer names")
         .isTrue();
     assertThat(exists(recreated, orphan.location()))
-        .as("named by nothing: the new table's sweep did run")
+        .as("named by nothing: the new table's cleanup did run")
         .isFalse();
   }
 
   @Test
-  public void testTheStateOfAReplacedTableSweepsNothingUnderTheSharedPrefix() {
+  public void testStateOfReplacedTableCleansUpNothingUnderSharedPrefix() {
     // the same shared prefix, but this time the new table's change set is frozen and has not
     // committed a slice yet: no snapshot names it, so the only thing that reaches its manifest,
     // its staged files and the normalized file being rewritten is the memory of the state the new
@@ -425,7 +437,7 @@ public class TestStagingLayout {
         .as("the normalized file the workers are rewriting for it")
         .isTrue();
     assertThat(exists(recreated, orphan.location()))
-        .as("named by nothing: the new table's own sweep did run")
+        .as("named by nothing: the new table's own cleanup did run")
         .isFalse();
   }
 
@@ -438,30 +450,30 @@ public class TestStagingLayout {
     assertThat(StagedChangeFileWriter.stagingLocation(table, "s3://bucket/staging"))
         .isEqualTo("s3://bucket/staging");
     assertThat(StagedChangeFileWriter.stagingLocation(table, null))
-        .isEqualTo(table.location() + "/kc-copy-on-write-staging");
+        .isEqualTo(table.location() + "/kc-staging");
   }
 
   @Test
-  public void testTheFirstSweepOfATableRunsAsSoonAsItIsLoaded() {
+  public void testFirstCleanupOfTableRunsAsSoonAsItIsLoaded() {
     // a coordinator is built anew by every rebalance that takes and returns the leader's partition.
-    // A timer started at its birth means a connector rebalancing more often than the sweep interval
-    // never sweeps at all, and staging grows without bound
+    // A timer started at its birth means a connector rebalancing more often than the cleanup
+    // interval never cleans up at all, and staging grows without bound
     TableReference orders = reference(Namespace.of("db"), "orders");
     Table table = table("orders");
     StagedChangeFile orphan = stage(table, orders, "connect-a");
 
-    scheduler("connect-a", SWEEP_INTERVAL_MS, () -> true, drainState(table, orders))
+    scheduler("connect-a", CLEANUP_INTERVAL_MS, () -> true, drainState(table, orders))
         .maybeClean(pastTtl(), ImmutableList::of);
 
     assertThat(exists(table, orphan.location()))
-        .as("an orphan past the TTL, swept without waiting out an interval first")
+        .as("an orphan past the TTL, cleaned up without waiting out an interval first")
         .isFalse();
   }
 
   @Test
-  public void testATableLoadedAfterASweepDoesNotWaitOutTheIntervalOfAnother() {
-    // the timer is per table: a table that joins the tables being swept between two sweeps has
-    // never been swept
+  public void testTableLoadedAfterCleanupDoesNotWaitOutIntervalOfAnother() {
+    // the timer is per table: a table that joins the tables being cleaned up between two cleanups
+    // has never been cleaned up
     TableReference orders = reference(Namespace.of("db"), "orders");
     TableReference items = reference(Namespace.of("db"), "items");
     Table ordersTable = table("orders");
@@ -470,7 +482,7 @@ public class TestStagingLayout {
     // deferred: no task has reported in yet, so no transition has loaded it
     TableDrainState itemsState = new TableDrainState(items);
     StagingCleanupScheduler scheduler =
-        scheduler("connect-a", SWEEP_INTERVAL_MS, () -> true, ordersState, itemsState);
+        scheduler("connect-a", CLEANUP_INTERVAL_MS, () -> true, ordersState, itemsState);
 
     long firstTick = pastTtl();
     scheduler.maybeClean(firstTick, ImmutableList::of);
@@ -481,34 +493,34 @@ public class TestStagingLayout {
     scheduler.maybeClean(firstTick + 1, ImmutableList::of);
 
     assertThat(exists(itemsTable, orphan.location()))
-        .as("the orphan of a table loaded after the first sweep, well within the interval")
+        .as("the orphan of a table loaded after the first cleanup, well within the interval")
         .isFalse();
   }
 
   @Test
-  public void testASweptTableIsNotSweptAgainWithinTheInterval() {
+  public void testCleanedUpTableIsNotCleanedUpAgainWithinInterval() {
     TableReference orders = reference(Namespace.of("db"), "orders");
     Table table = table("orders");
     TableDrainState state = drainState(table, orders);
     StagingCleanupScheduler scheduler =
-        scheduler("connect-a", SWEEP_INTERVAL_MS, () -> true, state);
+        scheduler("connect-a", CLEANUP_INTERVAL_MS, () -> true, state);
 
     long firstTick = pastTtl();
     scheduler.maybeClean(firstTick, ImmutableList::of);
     StagedChangeFile orphan = stage(table, orders, "connect-a");
-    scheduler.maybeClean(firstTick + SWEEP_INTERVAL_MS - 1, ImmutableList::of);
+    scheduler.maybeClean(firstTick + CLEANUP_INTERVAL_MS - 1, ImmutableList::of);
 
     assertThat(exists(table, orphan.location()))
         .as("listing and deleting a whole prefix is not a per-tick cost")
         .isTrue();
 
-    scheduler.maybeClean(firstTick + SWEEP_INTERVAL_MS, ImmutableList::of);
+    scheduler.maybeClean(firstTick + CLEANUP_INTERVAL_MS, ImmutableList::of);
 
     assertThat(exists(table, orphan.location())).as("an interval later").isFalse();
   }
 
   @Test
-  public void testNothingIsSweptUntilTheControlTopicIsCaughtUp() {
+  public void testNothingIsCleanedUpUntilControlTopicIsCaughtUp() {
     // the commit buffer is one of the three sources of reachability. Until the control topic is
     // read to its end offsets the buffer holds only part of what the connector wrote, and the
     // staged files of the responses still on their way are named by nothing
@@ -517,7 +529,7 @@ public class TestStagingLayout {
     StagedChangeFile orphan = stage(table, orders, "connect-a");
     AtomicBoolean caughtUp = new AtomicBoolean(false);
     StagingCleanupScheduler scheduler =
-        scheduler("connect-a", SWEEP_INTERVAL_MS, caughtUp::get, drainState(table, orders));
+        scheduler("connect-a", CLEANUP_INTERVAL_MS, caughtUp::get, drainState(table, orders));
 
     long tick = pastTtl();
     scheduler.maybeClean(tick, ImmutableList::of);
@@ -529,17 +541,17 @@ public class TestStagingLayout {
     caughtUp.set(true);
     scheduler.maybeClean(tick + 1, ImmutableList::of);
 
-    assertThat(exists(table, orphan.location())).as("read to the end, and swept").isFalse();
+    assertThat(exists(table, orphan.location())).as("read to the end, and cleaned up").isFalse();
   }
 
   @Test
-  public void testATableWhoseLockIsHeldIsSweptOnTheNextTick() throws Exception {
+  public void testTableWhoseLockIsHeldIsCleanedUpOnNextTick() throws Exception {
     TableReference orders = reference(Namespace.of("db"), "orders");
     Table table = table("orders");
     StagedChangeFile orphan = stage(table, orders, "connect-a");
     TableDrainState state = drainState(table, orders);
     StagingCleanupScheduler scheduler =
-        scheduler("connect-a", SWEEP_INTERVAL_MS, () -> true, state);
+        scheduler("connect-a", CLEANUP_INTERVAL_MS, () -> true, state);
 
     long firstTick = pastTtl();
     ExecutorService transition = Executors.newSingleThreadExecutor();
@@ -574,13 +586,13 @@ public class TestStagingLayout {
     // the skipped table did not spend its interval: the next tick is well inside it
     scheduler.maybeClean(firstTick + 1, ImmutableList::of);
 
-    assertThat(exists(table, orphan.location())).as("swept once the lock is free").isFalse();
+    assertThat(exists(table, orphan.location())).as("cleaned up once the lock is free").isFalse();
   }
 
   @Test
   public void testTheStopFlagIsCheckedBetweenTables() {
-    // the coordinator is stopping mid-pass: the table already reached is swept, the rest is left
-    // for the next coordinator: another may already be handing out its slices
+    // the coordinator is stopping mid-pass: the table already reached is cleaned up, the rest is
+    // left for the next coordinator: another may already be handing out its slices
     TableReference orders = reference(Namespace.of("db"), "orders");
     TableReference items = reference(Namespace.of("db"), "items");
     Table ordersTable = table("orders");
@@ -610,11 +622,11 @@ public class TestStagingLayout {
   }
 
   @Test
-  public void testASecondSweepIsSkippedWhileThePreviousPassIsStillRunning() throws Exception {
+  public void testSecondCleanupIsSkippedWhilePreviousPassIsStillRunning() throws Exception {
     // one task per pass, not one per table: a slow pass must not queue a second one behind it on
     // the pool copy-on-write's slice transitions share. Two different tables, so the
     // first pass's own listing of its own prefix can never touch the second table's file: with
-    // one shared prefix a delayed pass would sweep it too regardless of the guard, since the age
+    // one shared prefix a delayed pass would clean up it too regardless of the guard, since the age
     // check uses the tick that scheduled the pass, not the wall-clock time it finally runs at
     TableReference orders = reference(Namespace.of("db"), "orders");
     TableReference items = reference(Namespace.of("db"), "items");
@@ -644,17 +656,20 @@ public class TestStagingLayout {
     IcebergSinkConfig config = mock(IcebergSinkConfig.class);
     when(config.controlTopic()).thenReturn(CTL_TOPIC);
     when(config.connectGroupId()).thenReturn("connect-a");
-    when(config.copyOnWriteStagingOrphanCleanupIntervalMs()).thenReturn(0L);
-    when(config.copyOnWriteStagingOrphanTtlMs()).thenReturn(ORPHAN_TTL_MS);
+    when(config.stagingOrphanCleanupIntervalMs()).thenReturn(0L);
+    when(config.stagingOrphanTtlMs()).thenReturn(ORPHAN_TTL_MS);
     StagingCleanupScheduler scheduler =
         new StagingCleanupScheduler(
             config,
-            new ChangeSetStore(config),
             gate,
-            ImmutableList.of(ordersState, itemsState),
+            copyOnWriteSource(
+                config,
+                new ChangeSetStore(config),
+                identifier -> tables.load(locationOf(identifier, ordersState, itemsState)),
+                ordersState,
+                itemsState),
             () -> true,
-            () -> false,
-            identifier -> tables.load(locationOf(identifier, ordersState, itemsState)));
+            () -> false);
 
     StagedChangeFile secondOrphan;
     try {
@@ -663,8 +678,8 @@ public class TestStagingLayout {
           .as("the first pass has started and is blocked mid-flight")
           .isTrue();
 
-      // a second table joins the tables being swept while the first pass is still running: whether
-      // it is swept now or waits for the next tick is exactly what the guard decides
+      // a second table joins the tables being cleaned up while the first pass is still running:
+      // whether it is cleaned up now or waits for the next tick is exactly what the guard decides
       itemsState.table = itemsTable;
       itemsState.stagingLocation = staging;
       secondOrphan = stage(itemsTable, items, "connect-a");
@@ -747,8 +762,8 @@ public class TestStagingLayout {
     IcebergSinkConfig config = mock(IcebergSinkConfig.class);
     when(config.controlTopic()).thenReturn(CTL_TOPIC);
     when(config.connectGroupId()).thenReturn("connect-a");
-    when(config.copyOnWriteStagingOrphanCleanupIntervalMs()).thenReturn(0L);
-    when(config.copyOnWriteStagingOrphanTtlMs()).thenReturn(ORPHAN_TTL_MS);
+    when(config.stagingOrphanCleanupIntervalMs()).thenReturn(0L);
+    when(config.stagingOrphanTtlMs()).thenReturn(ORPHAN_TTL_MS);
     AtomicInteger summaryReads = new AtomicInteger();
     ChangeSetStore store =
         new ChangeSetStore(config) {
@@ -762,12 +777,10 @@ public class TestStagingLayout {
     StagingCleanupScheduler scheduler =
         new StagingCleanupScheduler(
             config,
-            store,
             Runnable::run,
-            ImmutableList.of(state),
+            copyOnWriteSource(config, store, identifier -> unsupportedIo, state),
             () -> true,
-            () -> false,
-            identifier -> unsupportedIo);
+            () -> false);
 
     scheduler.maybeClean(pastTtl(), ImmutableList::of);
     scheduler.maybeClean(pastTtl() + 1, ImmutableList::of);
@@ -777,8 +790,302 @@ public class TestStagingLayout {
         .isZero();
   }
 
+  @Test
+  public void cleanupKeepsPuffinFilesOfChangeSetInMemory() {
+    // frozen, its slices not committed yet: only the memory of the drain names the Puffin files of
+    // its responses, which the step of its final snapshot reads
+    TableReference orders = reference(Namespace.of("db"), "orders");
+    Table table = table("orders");
+    StagedChangeFile staged = stage(table, orders, "connect-a");
+    String puffin = puffin(table, orders, "connect-a");
+    String orphan = puffin(table, orders, "connect-a");
+    ChangeSetManifest manifest = manifest(table, ImmutableList.of(staged), puffin);
+    TableDrainState state = drainState(table, orders);
+    state.manifest = manifest;
+    state.manifestLocation = manifestLocation(orders, "connect-a", manifest);
+    manifest.write(table.io(), state.manifestLocation);
+
+    cleanUp(state, "connect-a");
+
+    assertThat(exists(table, puffin)).as("named by the change set in memory").isTrue();
+    assertThat(exists(table, staged.location())).isTrue();
+    assertThat(exists(table, orphan)).as("a Puffin file named by nothing").isFalse();
+  }
+
+  @Test
+  public void cleanupKeepsPuffinFilesOfChangeSetPointerNames() {
+    // a drain between two slices after a restart: its memory is empty, the pointer of its slice
+    // names the manifest, and the manifest the Puffin files
+    TableReference orders = reference(Namespace.of("db"), "orders");
+    Table table = table("orders");
+    StagedChangeFile staged = stage(table, orders, "connect-a");
+    String puffin = puffin(table, orders, "connect-a");
+    String orphan = puffin(table, orders, "connect-a");
+    ChangeSetManifest manifest = manifest(table, ImmutableList.of(staged), puffin);
+    manifest.write(table.io(), manifestLocation(orders, "connect-a", manifest));
+    commitPointer(table, CHANGE_SET_ID_PROP, manifest.changeSetId());
+
+    cleanUp(drainState(table, orders), "connect-a");
+
+    assertThat(exists(table, puffin)).as("named by the manifest the pointer names").isTrue();
+    assertThat(exists(table, staged.location())).isTrue();
+    assertThat(exists(table, orphan)).isFalse();
+  }
+
+  @Test
+  public void cleanupKeepsChangeSetOfFinalSnapshotWithoutItsStatistics() {
+    // the step of the final snapshot F did not finish. Its change set X waits for the
+    // recount, named only by the pointer of F: the manifest, the staged files and the Puffin files
+    statistics = true;
+    TableReference orders = reference(Namespace.of("db"), "orders");
+    Table table = table("orders");
+    PendingChangeSet pending = pendingChangeSet(table, orders);
+    String orphan = puffin(table, orders, "connect-a");
+
+    cleanUp(drainState(table, orders), "connect-a");
+
+    assertThat(exists(table, pending.manifestLocation)).as("the manifest of X").isTrue();
+    assertThat(exists(table, pending.staged)).as("the staged file of X").isTrue();
+    assertThat(exists(table, pending.puffin)).as("the Puffin file of X").isTrue();
+    assertThat(exists(table, orphan)).isFalse();
+  }
+
+  @Test
+  public void cleanupKeepsChangeSetOfPendingFinalSnapshotInMemory() {
+    // the start of a drain found F, and the recount has not run yet: the drain's memory names X
+    statistics = true;
+    TableReference orders = reference(Namespace.of("db"), "orders");
+    Table table = table("orders");
+    StagedChangeFile staged = stage(table, orders, "connect-a");
+    String puffin = puffin(table, orders, "connect-a");
+    ChangeSetManifest manifest = manifest(table, ImmutableList.of(staged), puffin);
+    String location = manifestLocation(orders, "connect-a", manifest);
+    manifest.write(table.io(), location);
+    TableDrainState state = drainState(table, orders);
+    state.pendingFinal =
+        new TableDrainState.PendingFinal(
+            1L, manifest.changeSetId(), manifest, location, UUID.randomUUID());
+
+    cleanUp(state, "connect-a");
+
+    assertThat(exists(table, location)).as("the manifest of X").isTrue();
+    assertThat(exists(table, staged.location())).isTrue();
+    assertThat(exists(table, puffin)).isTrue();
+  }
+
+  @Test
+  public void onceFinalSnapshotHasItsStatisticsItsChangeSetGoesByTtl() {
+    // the recount wrote the record of F but could not delete X: nothing reaches X any more
+    statistics = true;
+    TableReference orders = reference(Namespace.of("db"), "orders");
+    Table table = table("orders");
+    PendingChangeSet pending = pendingChangeSet(table, orders);
+    long finalSnapshotId = table.currentSnapshot().snapshotId();
+    table
+        .updateStatistics()
+        .setStatistics(
+            new GenericStatisticsFile(
+                finalSnapshotId, table.location() + "/stats.puffin", 1L, 1L, ImmutableList.of()))
+        .commit();
+
+    cleanUp(drainState(table, orders), "connect-a");
+
+    assertThat(exists(table, pending.manifestLocation)).isFalse();
+    assertThat(exists(table, pending.staged)).isFalse();
+    assertThat(exists(table, pending.puffin)).isFalse();
+  }
+
+  @Test
+  public void onlyLatestSnapshotOfConnectorIsLookedAtForPendingFinalSnapshot() {
+    // the connector committed over F since (the tail of merge-on-read, which waits for no recount
+    // once the table is not stepped): F is not the latest, and X is no longer awaited
+    statistics = true;
+    TableReference orders = reference(Namespace.of("db"), "orders");
+    Table table = table("orders");
+    PendingChangeSet pending = pendingChangeSet(table, orders);
+    table
+        .newAppend()
+        .set(COMMIT_ID_PROP, UUID.randomUUID().toString())
+        .set(offsetsProp("connect-a"), "{\"0\":9}")
+        .commit();
+
+    cleanUp(drainState(table, orders), "connect-a");
+
+    assertThat(exists(table, pending.manifestLocation)).isFalse();
+    assertThat(exists(table, pending.puffin)).isFalse();
+  }
+
+  @Test
+  public void withStatisticsOffFinalPointerKeepsNothing() {
+    // no statistics, no step of the final snapshot to wait for
+    TableReference orders = reference(Namespace.of("db"), "orders");
+    Table table = table("orders");
+    PendingChangeSet pending = pendingChangeSet(table, orders);
+
+    cleanUp(drainState(table, orders), "connect-a");
+
+    assertThat(exists(table, pending.manifestLocation)).isFalse();
+    assertThat(exists(table, pending.staged)).isFalse();
+  }
+
+  @Test
+  public void finalPointerWhoseManifestIsGoneKeepsNothingAndCleanupRuns() {
+    // the usual state after a step of F: its change set is deleted, the pointer stays with F
+    statistics = true;
+    TableReference orders = reference(Namespace.of("db"), "orders");
+    Table table = table("orders");
+    commitPointer(table, FINAL_CHANGE_SET_ID_PROP, UUID.randomUUID());
+    StagedChangeFile orphan = stage(table, orders, "connect-a");
+    TableDrainState state = drainState(table, orders);
+    StagingCleanupScheduler scheduler = scheduler("connect-a", 0L, () -> true, state);
+
+    scheduler.maybeClean(pastTtl(), ImmutableList::of);
+
+    assertThat(exists(table, orphan.location())).isFalse();
+    assertThat(scheduler.hasWarnedOfCleanupFailure(orders)).isFalse();
+  }
+
+  @Test
+  public void finalPointerWhoseManifestCannotBeReadCleansUpNothing() {
+    // X may still be awaited: never delete on a partial view of what is reachable
+    statistics = true;
+    TableReference orders = reference(Namespace.of("db"), "orders");
+    Table table = table("orders");
+    UUID changeSetId = UUID.randomUUID();
+    write(table, ChangeSetManifest.location(staging, orders, "connect-a", changeSetId));
+    commitPointer(table, FINAL_CHANGE_SET_ID_PROP, changeSetId);
+    StagedChangeFile orphan = stage(table, orders, "connect-a");
+    TableDrainState state = drainState(table, orders);
+    StagingCleanupScheduler scheduler = scheduler("connect-a", 0L, () -> true, state);
+
+    scheduler.maybeClean(pastTtl(), ImmutableList::of);
+
+    assertThat(exists(table, orphan.location())).isTrue();
+    assertThat(scheduler.hasWarnedOfCleanupFailure(orders)).isTrue();
+  }
+
+  @Test
+  public void cleanupKeepsPuffinFilesOfStepsOfTail() {
+    // the steps of the merge-on-read tail take their Puffin files off the buffer; they
+    // live under the same prefix until the step deletes them
+    TableReference orders = reference(Namespace.of("db"), "orders");
+    Table table = table("orders");
+    String ofTheTail = puffin(table, orders, "connect-a");
+    String orphan = puffin(table, orders, "connect-a");
+    tailSteps =
+        tableReference ->
+            tableReference.equals(orders) ? ImmutableSet.of(ofTheTail) : ImmutableSet.of();
+
+    cleanUp(drainState(table, orders), "connect-a");
+
+    assertThat(exists(table, ofTheTail)).as("a step of the tail is in flight").isTrue();
+    assertThat(exists(table, orphan)).isFalse();
+  }
+
+  @Test
+  public void tableWhoseLockIsHeldOnTickKeepsIntervalOfItsLastCleanup() throws Exception {
+    // a transition holding the lock on some tick must not make the table look new to the cleanup:
+    // it would then be cleaned up on the next free tick, whatever the interval
+    TableReference orders = reference(Namespace.of("db"), "orders");
+    Table table = table("orders");
+    TableDrainState state = drainState(table, orders);
+    StagingCleanupScheduler scheduler =
+        scheduler("connect-a", CLEANUP_INTERVAL_MS, () -> true, state);
+    long firstTick = pastTtl();
+    scheduler.maybeClean(firstTick, ImmutableList::of);
+    StagedChangeFile orphan = stage(table, orders, "connect-a");
+
+    ExecutorService transition = Executors.newSingleThreadExecutor();
+    CountDownLatch locked = new CountDownLatch(1);
+    CountDownLatch mayUnlock = new CountDownLatch(1);
+    try {
+      transition.execute(
+          () -> {
+            state.lock.lock();
+            try {
+              locked.countDown();
+              mayUnlock.await(30, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+              Thread.currentThread().interrupt();
+            } finally {
+              state.lock.unlock();
+            }
+          });
+      assertThat(locked.await(30, TimeUnit.SECONDS)).isTrue();
+      scheduler.maybeClean(firstTick + 1, ImmutableList::of);
+    } finally {
+      mayUnlock.countDown();
+      transition.shutdown();
+      assertThat(transition.awaitTermination(30, TimeUnit.SECONDS)).isTrue();
+    }
+
+    scheduler.maybeClean(firstTick + 2, ImmutableList::of);
+
+    assertThat(exists(table, orphan.location()))
+        .as("cleaned up an interval after its last cleanup, not on the tick after a busy one")
+        .isTrue();
+  }
+
   private Table table(String name) {
     return tables.create(SCHEMA, PartitionSpec.unpartitioned(), "file:" + dir.resolve(name));
+  }
+
+  private String puffin(Table table, TableReference tableReference, String groupId) {
+    String location =
+        StagedChangeFileWriter.stagingDirectory(staging, tableReference, groupId)
+            + "/stats/"
+            + UUID.randomUUID()
+            + "-task-0.puffin";
+    write(table, location);
+    return location;
+  }
+
+  private static ChangeSetManifest manifest(
+      Table table, List<StagedChangeFile> staged, String puffin) {
+    List<String> stagedLocations = Lists.newArrayList();
+    staged.forEach(file -> stagedLocations.add(file.location()));
+    return ChangeSetManifest.freeze(
+        table,
+        ID_FIELDS,
+        staged,
+        ImmutableSet.of("orders"),
+        ImmutableMap.of(),
+        null,
+        ImmutableList.of(
+            new ChangeSetManifest.SketchFileEntry(new SketchFile(puffin, 1L, 1L), stagedLocations)),
+        ImmutableList.of());
+  }
+
+  private static void commitPointer(Table table, String prop, UUID changeSetId) {
+    table
+        .newAppend()
+        .set(COMMIT_ID_PROP, UUID.randomUUID().toString())
+        .set(offsetsProp("connect-a"), "{\"0\":1}")
+        .set(prop, changeSetId.toString())
+        .commit();
+  }
+
+  /** The change set X of connector a whose final snapshot F, the latest, has no statistics. */
+  private PendingChangeSet pendingChangeSet(Table table, TableReference tableReference) {
+    StagedChangeFile staged = stage(table, tableReference, "connect-a");
+    String puffin = puffin(table, tableReference, "connect-a");
+    ChangeSetManifest manifest = manifest(table, ImmutableList.of(staged), puffin);
+    String location = manifestLocation(tableReference, "connect-a", manifest);
+    manifest.write(table.io(), location);
+    commitPointer(table, FINAL_CHANGE_SET_ID_PROP, manifest.changeSetId());
+    return new PendingChangeSet(location, staged.location(), puffin);
+  }
+
+  private static final class PendingChangeSet {
+    private final String manifestLocation;
+    private final String staged;
+    private final String puffin;
+
+    private PendingChangeSet(String manifestLocation, String staged, String puffin) {
+      this.manifestLocation = manifestLocation;
+      this.staged = staged;
+      this.puffin = puffin;
+    }
   }
 
   private static TableReference reference(Namespace namespace, String name) {
@@ -853,45 +1160,63 @@ public class TestStagingLayout {
     return state;
   }
 
-  /** One sweep of one table by the connector {@code groupId}, far enough past the orphan TTL. */
-  private void sweep(TableDrainState state, String groupId) {
+  /** One cleanup of one table by the connector {@code groupId}, far enough past the orphan TTL. */
+  private void cleanUp(TableDrainState state, String groupId) {
     scheduler(groupId, 0L, () -> true, state).maybeClean(pastTtl(), ImmutableList::of);
   }
 
   /**
-   * A scheduler over the given tables, with the sweep interval and the catch-up mark of a test.
+   * A scheduler over the given tables, with the cleanup interval and the catch-up mark of a test.
    *
    * <p>It loads a table by name the way a catalog does: whatever is at the location of the given
    * state's table now, read afresh.
    */
   private StagingCleanupScheduler scheduler(
       String groupId,
-      long sweepIntervalMs,
+      long cleanupIntervalMs,
       BooleanSupplier controlTopicCaughtUp,
       TableDrainState... states) {
-    return scheduler(groupId, sweepIntervalMs, controlTopicCaughtUp, () -> false, states);
+    return scheduler(groupId, cleanupIntervalMs, controlTopicCaughtUp, () -> false, states);
   }
 
-  /** A scheduler whose stop flag a test controls, in addition to the sweep interval and gate. */
+  /** A scheduler whose stop flag a test controls, in addition to the cleanup interval and gate. */
   private StagingCleanupScheduler scheduler(
       String groupId,
-      long sweepIntervalMs,
+      long cleanupIntervalMs,
       BooleanSupplier controlTopicCaughtUp,
       BooleanSupplier stopped,
       TableDrainState... states) {
     IcebergSinkConfig config = mock(IcebergSinkConfig.class);
     when(config.controlTopic()).thenReturn(CTL_TOPIC);
     when(config.connectGroupId()).thenReturn(groupId);
-    when(config.copyOnWriteStagingOrphanCleanupIntervalMs()).thenReturn(sweepIntervalMs);
-    when(config.copyOnWriteStagingOrphanTtlMs()).thenReturn(ORPHAN_TTL_MS);
+    when(config.stagingOrphanCleanupIntervalMs()).thenReturn(cleanupIntervalMs);
+    when(config.stagingOrphanTtlMs()).thenReturn(ORPHAN_TTL_MS);
+    when(config.statisticsInUse()).thenReturn(statistics);
+    TableSinkConfig tableConfig = mock(TableSinkConfig.class);
+    when(tableConfig.statisticsEnabled()).thenReturn(statistics);
+    when(config.tableConfig(any())).thenReturn(tableConfig);
     return new StagingCleanupScheduler(
         config,
-        new ChangeSetStore(config),
         Runnable::run,
-        ImmutableList.copyOf(states),
+        copyOnWriteSource(
+            config,
+            new ChangeSetStore(config),
+            identifier -> tables.load(locationOf(identifier, states)),
+            states),
         controlTopicCaughtUp,
-        stopped,
-        identifier -> tables.load(locationOf(identifier, states)));
+        stopped);
+  }
+
+  private CopyOnWriteStagingCleanupSource copyOnWriteSource(
+      IcebergSinkConfig config,
+      ChangeSetStore store,
+      Function<TableIdentifier, Table> loadTable,
+      TableDrainState... states) {
+    Map<TableReference, TableDrainState> byReference = Maps.newLinkedHashMap();
+    for (TableDrainState state : states) {
+      byReference.put(state.tableReference, state);
+    }
+    return new CopyOnWriteStagingCleanupSource(config, store, byReference, loadTable, tailSteps);
   }
 
   /** Where the table of that name lives: a state is given its table only once it is loaded. */

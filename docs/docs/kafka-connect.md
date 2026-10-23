@@ -42,6 +42,7 @@ The Apache Iceberg Sink Connector for Kafka Connect is a sink connector for writ
 * Copy-on-write or merge-on-read for updates and deletes
 * Automatic table creation and schema evolution
 * Field name mapping via Iceberg’s column mapping functionality
+* Optional NDV (number of distinct values) and partition statistics, updated on every commit
 
 ## Installation
 
@@ -57,6 +58,8 @@ Copy the distribution archive into the Kafka Connect plugins directory on all no
 
 The sink relies on [KIP-447](https://cwiki.apache.org/confluence/display/KAFKA/KIP-447%3A+Producer+scalability+for+exactly+once+semantics)
 for exactly-once semantics. This requires Kafka 2.5 or later.
+
+Statistics [metrics](#metrics) need Kafka Connect 4.1 or later.
 
 ## Configuration
 
@@ -83,7 +86,7 @@ for exactly-once semantics. This requires Kafka 2.5 or later.
 | iceberg.tables.cdc.ops.ignored                                  | The comma-separated values of the cdc operation field that should be ignored by connector                             |
 | iceberg.tables.upsert-mode-enabled                              | Set to true to treat all appends as upserts, false otherwise                                                          |
 | iceberg.tables.row-level-mode                                   | How updates and deletes are applied: `merge-on-read` (default) or `copy-on-write`, for all tables of the connector    |
-| iceberg.tables.copy-on-write.staging-location                   | Location of staged change files, default is `<table location>/kc-copy-on-write-staging`                               |
+| iceberg.tables.staging-location                                 | Location of the connector's staging files (copy-on-write change files, statistics Puffin files), default is `<table location>/kc-staging` |
 | iceberg.tables.copy-on-write.max-slice-keys                     | Max distinct keys applied by one commit, default is 200,000; a larger change set is applied over several commits      |
 | iceberg.tables.copy-on-write.max-rewrite-bytes                  | Max total size of data files rewritten by one commit, default is 10 GiB                                               |
 | iceberg.tables.copy-on-write.pruning.max-in-cardinality         | Max distinct values per identifier column in the file pruning predicate, default is 200                               |
@@ -91,14 +94,16 @@ for exactly-once semantics. This requires Kafka 2.5 or later.
 | iceberg.tables.copy-on-write.rewrite-threads                    | Threads rewriting data files, per task, default is min(2, cores)                                                      |
 | iceberg.tables.copy-on-write.rewrite-timeout-ms                 | Rewrite timeout in msec after which the work is retried, default is 120,000 (2 min)                                   |
 | iceberg.tables.copy-on-write.rewrite-response-chunk-files       | Max data files reported in one control message, default is 500                                                        |
-| iceberg.tables.copy-on-write.staging-orphan-cleanup-interval-ms | How often orphaned staged files are removed, default is 3,600,000 (1 hour)                                            |
-| iceberg.tables.copy-on-write.staging-orphan-ttl-ms              | Age after which an unreferenced staged file is orphaned, default is 86,400,000 (1 day)                                |
+| iceberg.tables.staging-orphan-cleanup-interval-ms               | How often orphaned staged files are removed, default is 3,600,000 (1 hour)                                            |
+| iceberg.tables.staging-orphan-ttl-ms                            | Age after which an unreferenced staged file is orphaned, default is 86,400,000 (1 day)                                |
+| iceberg.tables.statistics.*                                     | Table statistics, off by default, see [Table statistics](#table-statistics)                                           |
 | iceberg.tables.auto-create-props.*                              | Properties set on new tables during auto-create                                                                       |
 | iceberg.tables.write-props.*                                    | Properties passed through to Iceberg writer initialization, these take precedence                                     |
 | iceberg.table.\<table name\>.commit-branch                      | Table-specific branch for commits, use `iceberg.tables.default-commit-branch` if not specified                        |
 | iceberg.table.\<table name\>.id-columns                         | Comma-separated list of columns that identify a row in the table (primary key)                                        |
 | iceberg.table.\<table name\>.partition-by                       | Comma-separated list of partition fields to use when creating the table                                               |
 | iceberg.table.\<table name\>.route-regex                        | The regex used to match a record's `routeField` to a table                                                            |
+| iceberg.table.\<table name\>.statistics.*                       | Table-specific statistics settings, see [Table statistics](#table-statistics)                                         |
 | iceberg.control.topic                                           | Name of the control topic, default is `control-iceberg`                                                               |
 | iceberg.control.group-id-prefix                                 | Prefix for the control consumer group, default is `cg-control`                                                        |
 | iceberg.control.commit.interval-ms                              | Commit interval in msec, default is 300,000 (5 min)                                                                   |
@@ -294,6 +299,141 @@ When using HDFS or Hive, the sink will initialize the Hadoop configuration. Firs
 from the classpath are loaded. Next, if `iceberg.hadoop-conf-dir` is specified, config files
 are loaded from that location. Finally, any `iceberg.hadoop.*` properties from the sink config are
 applied. When merging these, the order of precedence is sink config > config dir > classpath.
+
+### Table statistics
+
+With statistics on, every data commit is followed by a statistics commit for the new snapshot: a Puffin file
+with an `apache-datasketches-theta-v1` blob (property `ndv`) per column, merged incrementally with the parent's,
+and optionally a partition statistics file. Off by default. A failed statistics step only logs a warning: the
+data commit and offsets are not affected, and the statistics are caught up later.
+
+#### Statistics settings
+
+Keys are `iceberg.tables.statistics.<key>` and, per table (dynamic tables too),
+`iceberg.table.<table name>.statistics.<key>`. An invalid value fails the connector at start.
+
+| Key                          | Type             | Default                               | Description                                                              |
+|------------------------------|------------------|---------------------------------------|--------------------------------------------------------------------------|
+| `enabled`                    | boolean          | `false`                               | NDV statistics; also per table                                           |
+| `partition-stats-enabled`    | boolean          | `false`                               | Partition statistics of partitioned tables, not ORC; also per table      |
+| `lg-nominal-entries`         | int, 4 to 16     | `12`                                  | log2 of the sketch size                                                  |
+| `gap-max-files`              | int, 0 or more   | `1000`                                | Max data files read to catch up snapshots without statistics             |
+| `gap-max-bytes`              | long, 0 or more  | `10737418240` (10 GiB)                | Max total size of those files                                            |
+| `retain-snapshots`           | int, -1 or 1+    | `10`                                  | N latest statistics entries of each kind kept on the commit branch, `-1` keeps all |
+| `health-recheck-interval-ms` | long, 0 or more  | `600000` (10 min)                     | Recheck of a quiet table with a raised metric, `0` turns it off          |
+| `stale-deleted-ratio`        | double, above 0  | `0.2`                                 | Share of sketched rows no longer live that makes the statistics stale    |
+| `columns`                    | comma-separated  | first 100 primitive top-level columns | Columns to collect NDV for; per table only                               |
+
+```json
+"iceberg.tables.statistics.enabled": "true",
+"iceberg.table.db.events.statistics.partition-stats-enabled": "true",
+"iceberg.table.db.audit.statistics.enabled": "false",
+"iceberg.table.db.wide.statistics.columns": "id,customer_id,status"
+```
+
+* `lg-nominal-entries` above 12 helps only statistics the connector starts on an empty table: engines write 12.
+  Lowering it needs a full recompute. A task holds a sketch per column and table: up to 64 KiB at 12, 1 MiB at 16.
+* `columns` are looked up by name. A column added to the list of a table with statistics needs `ANALYZE` of
+  that column; rename a column and the list together, or it drops out.
+* `staging-orphan-ttl-ms` must exceed `iceberg.control.commit.interval-ms` plus `iceberg.control.commit.timeout-ms`.
+* Engines use the statistics with Spark `spark.sql.cbo.enabled=true` and Trino
+  `iceberg.extended-statistics.enabled=true` (the default).
+
+#### Runbook
+
+| Case                                                                | Action                                                                                                                                  |
+|---------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------|
+| Statistics enabled on a non-empty table (`missing-baseline`)        | Once: Trino `ANALYZE db.events` (required with `uuid` columns) or Spark `CALL catalog.system.compute_table_stats(table => 'db.events')` |
+| Gap over the limit (`gap-over-limit`)                               | Full `ANALYZE` / `compute_table_stats`, or raise `gap-max-files` / `gap-max-bytes`                                                      |
+| Column type widened, for example `int` to `long`                    | `ANALYZE db.events WITH (columns = ARRAY['c'])`                                                                                         |
+| Partition statistics to be enabled on a large table                 | First Spark `CALL catalog.system.compute_partition_stats(table => 'db.events')`                                                         |
+| Warning `NDV of change set X … is lost` (copy-on-write)             | `ANALYZE`                                                                                                                               |
+| Time travel or rollback beyond the last N snapshots with statistics | `ANALYZE` (in copy-on-write a drain is one snapshot)                                                                                    |
+
+* Blobs of an external `ANALYZE` for columns outside `columns` disappear after the next connector commit.
+  Spark `compute_table_stats` with `columns` drops the blobs of the other columns.
+* Trino `OPTIMIZE` and partial `ANALYZE` copy older blobs; if data was added since, the connector ignores the
+  copy. Trino `INSERT` merges with the nearest snapshot with statistics, not the parent, and may miss values
+  of other writers.
+* Spark hashes a `uuid` as a string, the connector and Trino as bytes: on a sketch built by Spark the NDV can
+  be up to twice too high until a full `ANALYZE` in Trino.
+* `metadata.json` grows by about N x (250 x columns + 500) bytes, ~55 KiB at 20 columns and N = 10, and every
+  cycle adds one more metadata version. Use `write.metadata.delete-after-commit.enabled=true`,
+  `write.metadata.compression-codec=gzip`, a smaller N and an explicit `columns` list.
+* The connector does not clean `metadata/`: files of an entry replaced by a concurrent `ANALYZE` of the head,
+  and files left by a crash or a failed write (partition statistics too), are removed by `remove_orphan_files`.
+
+#### Metrics
+
+Registered by the task hosting the coordinator (`kafka.connect:type=plugins,connector=<name>,task=<id>`),
+Kafka Connect 4.1 or later. Alert on a value above 0 over a window longer than
+`iceberg.control.commit.interval-ms`; the warning in the log names the table.
+
+| Metric                               | Tables                                         | Action                                                    |
+|--------------------------------------|------------------------------------------------|-----------------------------------------------------------|
+| `statistics-tables-gap-over-limit`   | gap over the limit                             | Full `ANALYZE`, or raise the limit                        |
+| `statistics-tables-missing-baseline` | without statistics, or with columns without it | `ANALYZE` of the table or of the columns from the warning |
+| `statistics-tables-stale`            | NDV over `stale-deleted-ratio`                 | `ANALYZE`                                                 |
+
+Staleness is hidden by a Trino `INSERT` (it resets the share), and shows only after compaction in merge-on-read
+upsert mode and for deletes in format version 2. After upgrading a table to version 3, run Spark
+`rewrite_position_delete_files` with `options => map('rewrite-all', 'true')`, then recompute.
+
+#### Limits
+
+* **Coordinator heap:** a catch-up step needs ~130-230 MiB (a Parquet row group per file plus sketches). Up to
+  two lag steps run at once; when other engines write to the connector's tables, up to
+  `iceberg.control.commit.threads` steps.
+* **`iceberg.control.commit.threads`** of 2 or more: with one thread a catch-up blocks other tables.
+* **Load:** one more metadata commit per cycle. The INFO line ending a step shows files read; growth means
+  foreign writers or no right to write Puffin files.
+* **Restart:** only static tables (`iceberg.tables`, `iceberg.tables.topic-to-table-mapping`) keep their
+  statistics lag; a dynamic table catches up with its next commit.
+* **Staging:** Puffin files are deleted after their step or after `staging-orphan-ttl-ms`. In merge-on-read
+  they can outlive the TTL after a restart until the table gets data, and are never cleaned once statistics
+  are turned off: delete `<staging>/<namespace>.<table>/<connect group id>/stats/` by hand or with a lifecycle
+  rule. The same applies to storage without file creation time (GCS without `createTime`) and to dropped tables.
+
+#### Permissions
+
+Tasks write to `<staging>/<namespace>.<table>/<connect group id>/stats/`; the coordinator reads, lists and
+deletes there, and writes and deletes in the table's `metadata/`. `<staging>` is
+`iceberg.tables.staging-location`; `.`, `/` and `%` in names are written as `%2E`, `%2F` and `%25`. Without
+the right to write Puffin files a task logs a warning per table each cycle and the coordinator reads data files
+instead.
+
+#### Upgrade and rollback
+
+* **Upgrade:** upgrade all tasks, then enable statistics.
+* **Rollback to a release without copy-on-write:** turn statistics off, wait for
+  `Commit … complete, committed to N of N table(s)` without `(partial)`, then roll back.
+
+#### Statistics in copy-on-write
+
+* The statistics step of the final snapshot delays valid-through and its `CommitToTable` by seconds, minutes
+  when catching up a gap. Slices get no statistics.
+* Staging keeps the change set until its final step succeeds. After switching to merge-on-read before that,
+  delete `<staging>/<namespace>.<table>/<connect group id>/_changesets/<X>.json` and the files in its
+  `stagedFiles`, where X is `kafka.connect.copy-on-write.final-change-set-id` of the latest copy-on-write snapshot.
+
+### Compatibility with earlier releases
+
+With copy-on-write or statistics on, the control topic gets events that releases without copy-on-write cannot
+decode. Their tasks on that topic fail: during a rolling upgrade, after a rollback, and in other connectors
+sharing it. Workers fail with `Unknown field ordinal` or `ArrayIndexOutOfBoundsException`, the coordinator with
+`NotRunningException: Coordinator unexpectedly terminated` after every restart. Give each connector its own
+`iceberg.control.topic`.
+
+Finish the upgrade to recover. If an earlier release has to run, stop whatever writes new events (see
+[Upgrade and rollback](#upgrade-and-rollback)), stop the failing connector and skip the events; their records
+are lost unless the source topics are read again:
+
+```bash
+kafka-consumer-groups --bootstrap-server localhost:9092 --group <connect group id>-coord \
+  --topic control-iceberg --reset-offsets --to-latest --execute
+```
+
+`<connect group id>` is `iceberg.connect.group-id`, by default `connect-<connector name>`.
 
 ## Examples
 

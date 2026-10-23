@@ -23,6 +23,7 @@ import static org.apache.iceberg.types.Types.NestedField.required;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.tuple;
 
+import java.io.File;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Comparator;
@@ -42,6 +43,7 @@ import org.apache.iceberg.Table;
 import org.apache.iceberg.TableProperties;
 import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.TableIdentifier;
+import org.apache.iceberg.connect.data.FilesWithoutFieldIds;
 import org.apache.iceberg.connect.events.TableReference;
 import org.apache.iceberg.data.GenericFileWriterFactory;
 import org.apache.iceberg.data.GenericRecord;
@@ -64,6 +66,7 @@ import org.apache.iceberg.util.Pair;
 import org.assertj.core.groups.Tuple;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 
@@ -86,6 +89,8 @@ public class TestRewriteFormatsAndPriorDeletes {
   private static final Schema SCHEMA =
       new Schema(
           required(1, "id", Types.LongType.get()), optional(2, "data", Types.StringType.get()));
+
+  @TempDir private File temp;
 
   private InMemoryCatalog catalog;
 
@@ -236,6 +241,44 @@ public class TestRewriteFormatsAndPriorDeletes {
     // one file for the emitted keys; under the table's default target the remainder is one more
     assertThat(written).as("target file size").hasSizeGreaterThan(2);
     assertThat(committedRows(target, plan, written)).containsExactlyInAnyOrderElementsOf(expected);
+  }
+
+  @ParameterizedTest(name = "{0}")
+  @EnumSource(
+      value = FileFormat.class,
+      names = {"PARQUET", "ORC", "AVRO"})
+  public void testRowsOfFileWithoutFieldIdsAreCarriedOverByNameMapping(FileFormat format)
+      throws IOException {
+    // a file added by add_files, written before "payload" was renamed to "data": read without the
+    // mapping, the carried-over rows would get another column's values or lose their own
+    Table target =
+        createTable(
+            format,
+            2,
+            ImmutableMap.of(
+                TableProperties.DEFAULT_NAME_MAPPING,
+                FilesWithoutFieldIds.mappingWithAlias(SCHEMA, "data", "payload")));
+    DataFile added =
+        FilesWithoutFieldIds.write(
+            target,
+            temp,
+            format,
+            List.of(
+                FilesWithoutFieldIds.row(1L, "n1", "a"),
+                FilesWithoutFieldIds.row(2L, "n2", "b"),
+                FilesWithoutFieldIds.row(3L, "n3", "c")));
+    target.newAppend().appendFile(added).commit();
+    long baseSnapshotId = target.currentSnapshot().snapshotId();
+
+    List<FileScanTask> plan = planFiles(target);
+    ChangeSetSlice slice =
+        sliceOf(target, List.of(Map.entry(StagedChangeSchema.OP_UPDATE, row(1L, "a2"))));
+
+    List<DataFile> written =
+        new CopyOnWriteRewriter(target, 1).rewrite(baseSnapshotId, plan, slice);
+
+    assertThat(committedRows(target, plan, written))
+        .containsExactlyInAnyOrder(tuple(1L, "a2"), tuple(2L, "b"), tuple(3L, "c"));
   }
 
   private Table createTable(FileFormat format, int formatVersion, Map<String, String> properties) {

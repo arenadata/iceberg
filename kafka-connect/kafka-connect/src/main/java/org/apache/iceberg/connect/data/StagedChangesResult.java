@@ -20,6 +20,7 @@ package org.apache.iceberg.connect.data;
 
 import java.util.List;
 import java.util.Set;
+import org.apache.iceberg.connect.events.SketchFile;
 import org.apache.iceberg.connect.events.StagedChangeFile;
 import org.apache.iceberg.connect.events.TableReference;
 
@@ -30,16 +31,27 @@ public class StagedChangesResult implements RecordWriteResult {
   private final String taskId;
   private final List<StagedChangeFile> stagedFiles;
   private final Set<String> sourceTopics;
+  private final SketchFile sketchFile;
 
   public StagedChangesResult(
       TableReference tableReference,
       String taskId,
       List<StagedChangeFile> stagedFiles,
       Set<String> sourceTopics) {
+    this(tableReference, taskId, stagedFiles, sourceTopics, null);
+  }
+
+  public StagedChangesResult(
+      TableReference tableReference,
+      String taskId,
+      List<StagedChangeFile> stagedFiles,
+      Set<String> sourceTopics,
+      SketchFile sketchFile) {
     this.tableReference = tableReference;
     this.taskId = taskId;
     this.stagedFiles = stagedFiles;
     this.sourceTopics = sourceTopics;
+    this.sketchFile = sketchFile;
   }
 
   @Override
@@ -63,5 +75,9 @@ public class StagedChangesResult implements RecordWriteResult {
 
   public List<StagedChangeFile> stagedFiles() {
     return stagedFiles;
+  }
+
+  public SketchFile sketchFile() {
+    return sketchFile;
   }
 }

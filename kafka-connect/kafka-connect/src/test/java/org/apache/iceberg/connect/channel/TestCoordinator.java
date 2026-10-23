@@ -36,11 +36,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
@@ -56,6 +58,10 @@ import org.apache.iceberg.Snapshot;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.connect.MetadataEvents;
+import org.apache.iceberg.connect.StatisticsAssertions;
+import org.apache.iceberg.connect.data.StatisticsHealth;
+import org.apache.iceberg.connect.data.StatisticsStep;
+import org.apache.iceberg.connect.data.copyonwrite.StagedChangeFileWriter;
 import org.apache.iceberg.connect.events.AvroUtil;
 import org.apache.iceberg.connect.events.CommitComplete;
 import org.apache.iceberg.connect.events.CommitToTable;
@@ -65,11 +71,13 @@ import org.apache.iceberg.connect.events.Event;
 import org.apache.iceberg.connect.events.PayloadType;
 import org.apache.iceberg.connect.events.RewriteComplete;
 import org.apache.iceberg.connect.events.RowChangesWritten;
+import org.apache.iceberg.connect.events.SketchFile;
 import org.apache.iceberg.connect.events.StagedChangeFile;
 import org.apache.iceberg.connect.events.StartCommit;
 import org.apache.iceberg.connect.events.TableReference;
 import org.apache.iceberg.connect.events.TopicPartitionOffset;
 import org.apache.iceberg.connect.events.TopicPartitionRef;
+import org.apache.iceberg.io.FileInfo;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableSet;
@@ -309,8 +317,7 @@ public class TestCoordinator extends ChannelTestBase {
   @Test
   public void testCopyOnWriteCommitsTheTailOfMergeOnReadInsteadOfRejectingIt() {
     // merge-on-read -> copy-on-write with a cycle in flight: the DataWritten carries a commit id
-    // this
-    // coordinator never issued. Refused, it would stall the table and pin the offsets for good
+    // this coordinator never issued. Refused, it would stall the table and pin the offsets for good
     catalog.dropTable(TABLE_IDENTIFIER);
     table = catalog.createTable(TABLE_IDENTIFIER, new Schema(SCHEMA.columns(), ImmutableSet.of(1)));
     when(config.isCopyOnWriteMode()).thenReturn(true);
@@ -796,6 +803,241 @@ public class TestCoordinator extends ChannelTestBase {
   }
 
   @Test
+  public void testTableBufferNamesIsNotVisitedAgainUnderItsReferenceWithoutUuid() {
+    // pendingTables() names a table of the statistics lag, or one not looked at since a
+    // restart, without its UUID, while the workers name it with one: visited under both, it
+    // would get two commit() calls of one cycle in parallel
+    ScriptedTableCommitter committer = new ScriptedTableCommitter();
+    committer.drainInFlight(TABLE_NAME);
+    committer.drainInFlight("tbl2");
+    Coordinator coordinator = startCoordinator(committer);
+    UUID commitId = startCommitId(0);
+    UUID tableUuid = UUID.randomUUID();
+    addDataWritten(commitId, tableReference(TABLE_NAME, tableUuid), 1);
+    OffsetDateTime ts = EventTestUtil.now();
+    addDataComplete(commitId, "task-0", 1, ts, 2);
+
+    coordinator.process();
+
+    assertThat(committer.requests(TABLE_NAME))
+        .as("one commit of the table, under the reference of its responses")
+        .hasSize(1);
+    TableCommitRequest request = committer.lastRequest(TABLE_NAME);
+    assertThat(request.tableReference().uuid()).isEqualTo(tableUuid);
+    assertThat(positions(request.envelopes())).containsExactly("0:1");
+    assertThat(committer.requests("tbl2"))
+        .as("a table nothing else of the cycle names is visited under its reference without UUID")
+        .hasSize(1);
+    assertThat(committer.lastRequest("tbl2").tableReference().uuid()).isNull();
+    // every table of the cycle committed: two, not three
+    assertCommitComplete(1, commitId, ts);
+  }
+
+  @Test
+  public void testPendingTablesNamingTableWithAndWithoutItsUuidGiveItOneVisit() {
+    ScriptedTableCommitter committer = new ScriptedTableCommitter();
+    UUID tableUuid = UUID.randomUUID();
+    committer.drainInFlight(TABLE_NAME);
+    committer.pending(tableReference(TABLE_NAME, tableUuid));
+    Coordinator coordinator = startCoordinator(committer);
+    UUID commitId = startCommitId(0);
+    addDataComplete(commitId, "task-0", 1, EventTestUtil.now(), 1);
+
+    coordinator.process();
+
+    assertThat(committer.requests(TABLE_NAME))
+        .extracting(request -> request.tableReference().uuid())
+        .containsExactly(tableUuid);
+  }
+
+  @Test
+  public void testReferencesOfBufferWithOneNameAndTwoUuidsAreBothVisited() {
+    // the table was re-created under its name: the responses of the old one and of the new one
+    // are committed each under its own reference, and the reference without UUID is not visited
+    ScriptedTableCommitter committer = new ScriptedTableCommitter();
+    committer.drainInFlight(TABLE_NAME);
+    Coordinator coordinator = startCoordinator(committer);
+    UUID commitId = startCommitId(0);
+    UUID oldUuid = UUID.randomUUID();
+    UUID newUuid = UUID.randomUUID();
+    addDataWritten(commitId, tableReference(TABLE_NAME, oldUuid), 1);
+    addDataWritten(commitId, tableReference(TABLE_NAME, newUuid), 2);
+    addDataComplete(commitId, "task-0", 1, EventTestUtil.now(), 3);
+
+    coordinator.process();
+
+    assertThat(committer.requests(TABLE_NAME))
+        .extracting(request -> request.tableReference().uuid())
+        .containsExactlyInAnyOrder(oldUuid, newUuid);
+  }
+
+  @Test
+  public void testCommitterRunsStepOnPoolOfTableTransitionsWithoutHealthWhenOff() throws Exception {
+    ScriptedTableCommitter committer = new ScriptedTableCommitter();
+    StatisticsStep step = new StatisticsStep();
+    Coordinator coordinator = scriptedCoordinator(committer, step);
+    try {
+      assertThat(committer.step).isSameAs(step);
+      assertThat(committer.health).isSameAs(StatisticsHealth.NOOP);
+      String threadName =
+          CompletableFuture.supplyAsync(
+                  () -> Thread.currentThread().getName(), committer.transitionExec)
+              .get(10, TimeUnit.SECONDS);
+      assertThat(threadName).startsWith("iceberg-table-transition-");
+    } finally {
+      coordinator.terminate();
+    }
+  }
+
+  @Test
+  public void testEachCoordinatorHasHealthOfItsOwnWhenStatisticsAreInUse() {
+    when(config.statisticsInUse()).thenReturn(true);
+    when(config.statisticsHealthRecheckIntervalMs()).thenReturn(60_000L);
+    ScriptedTableCommitter first = new ScriptedTableCommitter();
+    ScriptedTableCommitter second = new ScriptedTableCommitter();
+    Coordinator firstCoordinator = scriptedCoordinator(first, new StatisticsStep());
+    Coordinator secondCoordinator = scriptedCoordinator(second, new StatisticsStep());
+    try {
+      assertThat(first.health).isNotNull().isNotSameAs(StatisticsHealth.NOOP);
+      assertThat(second.health).isNotNull().isNotSameAs(StatisticsHealth.NOOP);
+      assertThat(first.health)
+          .as("an old coordinator finishing terminate() keeps its own")
+          .isNotSameAs(second.health);
+    } finally {
+      firstCoordinator.terminate();
+      secondCoordinator.terminate();
+    }
+  }
+
+  @Test
+  public void testCoordinatorAttachesItsHealthToMetricsOfCommitter() {
+    // the coordinator only plugs its health into the metrics the committer registered, and does
+    // it in the constructor: no step has run yet
+    when(config.statisticsInUse()).thenReturn(true);
+    when(config.statisticsHealthRecheckIntervalMs()).thenReturn(60_000L);
+    FakePluginMetrics pluginMetrics = new FakePluginMetrics();
+    StatisticsMetrics metrics = new StatisticsMetrics();
+    metrics.register(pluginMetrics);
+    ScriptedTableCommitter committer = new ScriptedTableCommitter();
+    Coordinator coordinator = scriptedCoordinator(committer, new StatisticsStep(), metrics);
+    try {
+      committer.health.update(
+          TableIdentifier.of("db", "a"), flags -> new StatisticsHealth.Flags(true, false, true));
+      committer.health.update(
+          TableIdentifier.of("db", "b"), flags -> new StatisticsHealth.Flags(true, true, false));
+
+      assertThat(pluginMetrics.metricValue("statistics-tables-gap-over-limit")).isEqualTo(2.0);
+      assertThat(pluginMetrics.metricValue("statistics-tables-missing-baseline")).isEqualTo(1.0);
+      assertThat(pluginMetrics.metricValue("statistics-tables-stale")).isEqualTo(1.0);
+    } finally {
+      coordinator.terminate();
+    }
+  }
+
+  @Test
+  public void testTerminateReleasesItsHealthOnlyAfterPoolsAreWaitedFor()
+      throws InterruptedException {
+    // a transition that ignores the interrupt keeps the coordinator in terminate(): until it is
+    // over, the steps still running feed the health, and the metrics keep reading it
+    when(config.statisticsInUse()).thenReturn(true);
+    when(config.statisticsHealthRecheckIntervalMs()).thenReturn(60_000L);
+    FakePluginMetrics pluginMetrics = new FakePluginMetrics();
+    StatisticsMetrics metrics = new StatisticsMetrics();
+    metrics.register(pluginMetrics);
+    ScriptedTableCommitter committer = new ScriptedTableCommitter();
+    Coordinator coordinator = scriptedCoordinator(committer, new StatisticsStep(), metrics);
+    committer.health.update(
+        TableIdentifier.of("db", "a"), flags -> new StatisticsHealth.Flags(false, true, false));
+
+    CountDownLatch transitionStarted = new CountDownLatch(1);
+    CountDownLatch releaseTransition = new CountDownLatch(1);
+    committer.transitionExec.execute(
+        () -> holdUninterruptibly(transitionStarted, releaseTransition));
+    Thread terminating = new Thread(coordinator::terminate, "test-terminate");
+    try {
+      assertThat(transitionStarted.await(10, TimeUnit.SECONDS)).isTrue();
+      terminating.start();
+      StatisticsAssertions.await(
+          "terminate() waiting for the pools",
+          () -> terminating.getState() == Thread.State.TIMED_WAITING);
+
+      assertThat(pluginMetrics.metricValue("statistics-tables-missing-baseline"))
+          .as("the health is released once the pools are done, not when the wait begins")
+          .isEqualTo(1.0);
+    } finally {
+      releaseTransition.countDown();
+    }
+
+    terminating.join(TimeUnit.SECONDS.toMillis(10));
+    assertThat(terminating.isAlive()).isFalse();
+    assertThat(pluginMetrics.metricValue("statistics-tables-missing-baseline")).isEqualTo(0.0);
+  }
+
+  @Test
+  public void testTerminateThatTimesOutStillReleasesItsHealth() {
+    when(config.statisticsInUse()).thenReturn(true);
+    when(config.statisticsHealthRecheckIntervalMs()).thenReturn(60_000L);
+    FakePluginMetrics pluginMetrics = new FakePluginMetrics();
+    StatisticsMetrics metrics = new StatisticsMetrics();
+    metrics.register(pluginMetrics);
+    ScriptedTableCommitter committer = new ScriptedTableCommitter();
+    Coordinator coordinator = scriptedCoordinator(committer, new StatisticsStep(), metrics);
+    coordinator.terminationTimeout(Duration.ofMillis(100));
+    committer.health.update(
+        TableIdentifier.of("db", "a"), flags -> new StatisticsHealth.Flags(false, false, true));
+
+    CountDownLatch transitionStarted = new CountDownLatch(1);
+    CountDownLatch releaseTransition = new CountDownLatch(1);
+    committer.transitionExec.execute(
+        () -> holdUninterruptibly(transitionStarted, releaseTransition));
+    try {
+      StatisticsAssertions.await("the transition running", () -> transitionStarted.getCount() == 0);
+
+      assertThatThrownBy(coordinator::terminate)
+          .isInstanceOf(ConnectException.class)
+          .hasMessage("Timed out waiting for coordinator shutdown");
+
+      assertThat(pluginMetrics.metricValue("statistics-tables-stale"))
+          .as("a coordinator that gave up waiting is done with the metrics all the same")
+          .isEqualTo(0.0);
+    } finally {
+      releaseTransition.countDown();
+    }
+  }
+
+  @Test
+  public void testOldCoordinatorFinishingTerminateLeavesHealthOfNewOneAttached() {
+    // the task got its leader partition back while the old coordinator was still in terminate(),
+    // so the new one attached last
+    when(config.statisticsInUse()).thenReturn(true);
+    when(config.statisticsHealthRecheckIntervalMs()).thenReturn(60_000L);
+    FakePluginMetrics pluginMetrics = new FakePluginMetrics();
+    StatisticsMetrics metrics = new StatisticsMetrics();
+    metrics.register(pluginMetrics);
+    ScriptedTableCommitter oldCommitter = new ScriptedTableCommitter();
+    ScriptedTableCommitter newCommitter = new ScriptedTableCommitter();
+    Coordinator oldCoordinator = scriptedCoordinator(oldCommitter, new StatisticsStep(), metrics);
+    Coordinator newCoordinator = scriptedCoordinator(newCommitter, new StatisticsStep(), metrics);
+    try {
+      oldCommitter.health.update(
+          TableIdentifier.of("db", "a"), flags -> new StatisticsHealth.Flags(true, true, true));
+      newCommitter.health.update(
+          TableIdentifier.of("db", "b"), flags -> new StatisticsHealth.Flags(false, true, false));
+      assertThat(pluginMetrics.metricValue("statistics-tables-gap-over-limit")).isEqualTo(0.0);
+
+      oldCoordinator.terminate();
+
+      assertThat(pluginMetrics.metricValue("statistics-tables-gap-over-limit")).isEqualTo(0.0);
+      assertThat(pluginMetrics.metricValue("statistics-tables-missing-baseline")).isEqualTo(1.0);
+      assertThat(pluginMetrics.metricValue("statistics-tables-stale")).isEqualTo(0.0);
+    } finally {
+      newCoordinator.terminate();
+    }
+
+    assertThat(pluginMetrics.metricValue("statistics-tables-missing-baseline")).isEqualTo(0.0);
+  }
+
+  @Test
   public void testAReplayAnchorHoldsBackOnlyItsOwnPartition() {
     // a table routed dynamically, its change set half applied: the committer has spent the
     // envelopes, yet a restarted coordinator finds the table only by reading one of them again.
@@ -1038,9 +1280,9 @@ public class TestCoordinator extends ChannelTestBase {
   @Test
   public void testTheControlTopicIsCaughtUpOnlyAtTheEndOffsetsOfAssignment() {
     // consumeAvailable() stops at the first empty poll, which says nothing about how much of the
-    // topic is behind it. The copy-on-write staging cleanup reads the commit buffer as one of its
-    // three sources of reachability, so it may not run until what the topic held when its
-    // partitions were assigned has been consumed
+    // topic is behind it. The staging cleanup reads the commit buffer as one of its three sources
+    // of reachability, so it may not run until what the topic held when its partitions were
+    // assigned has been consumed
     Coordinator coordinator = startCoordinator();
     consumer.updateEndOffsets(ImmutableMap.of(new TopicPartition(CTL_TOPIC_NAME, 0), 2L));
 
@@ -1070,6 +1312,107 @@ public class TestCoordinator extends ChannelTestBase {
     consumer.updateEndOffsets(ImmutableMap.of(new TopicPartition(CTL_TOPIC_NAME, 0), 0L));
 
     assertThat(coordinator.isControlTopicCaughtUp()).as("asked again, and answered").isTrue();
+  }
+
+  @Test
+  public void testStagingCleanupRunsRightAfterCommitterWithBufferOfTick() {
+    // the cleanup runs outside doCommit, and a Puffin file a buffered response names is kept
+    copyOnWrite();
+    when(config.stagingOrphanTtlMs()).thenReturn(0L);
+    when(config.stagingOrphanCleanupIntervalMs()).thenReturn(0L);
+    List<String> calls = Collections.synchronizedList(Lists.newArrayList());
+    ScriptedTableCommitter committer = new ScriptedTableCommitter();
+    ScriptedCleanupSource source = new ScriptedCleanupSource(calls);
+    committer.cleanupSource = source;
+    committer.onProcess = () -> calls.add("process");
+    Coordinator coordinator = startCoordinator(committer);
+    String buffered = source.put("stats/buffered-task-0.puffin");
+    String orphan = source.put("stats/orphan-task-1.puffin");
+
+    Event dataWritten =
+        new Event(
+            config.connectGroupId(),
+            new DataWritten(
+                StructType.of(),
+                startCommitId(0),
+                source.tableReference,
+                ImmutableList.of(),
+                ImmutableList.of(),
+                ImmutableList.of("src-topic"),
+                new SketchFile(buffered, 1L, 1L)));
+    addRecord(AvroUtil.encode(dataWritten), 0);
+    consumer.updateEndOffsets(
+        ImmutableMap.of(controlTopicPartition(0), 1L, controlTopicPartition(1), 0L));
+    coordinator.process();
+
+    assertThat(calls)
+        .as("no cleanup before the control topic is read to its end, then one after the committer")
+        .containsExactly("process", "process", "cleanup");
+    // the pass runs on the pool of table transitions
+    StatisticsAssertions.await("the pass deletes the orphan", () -> !source.exists(orphan));
+    assertThat(source.exists(buffered)).as("named by the response in the buffer").isTrue();
+    coordinator.terminate();
+  }
+
+  @Test
+  public void testTerminateDuringPassOfStagingCleanupDeletesNothingAfterFlag()
+      throws InterruptedException {
+    // the pass ignores the interrupt of shutdownNow(), as a read from object storage would. The
+    // flag of the coordinator rises before the committer is told to stop: a pass that runs to its
+    // end while the committer stops starts no delete
+    copyOnWrite();
+    when(config.stagingOrphanTtlMs()).thenReturn(0L);
+    when(config.stagingOrphanCleanupIntervalMs()).thenReturn(0L);
+    ScriptedTableCommitter committer = new ScriptedTableCommitter();
+    ScriptedCleanupSource source = new ScriptedCleanupSource(Lists.newArrayList());
+    CountDownLatch reading = new CountDownLatch(1);
+    CountDownLatch release = new CountDownLatch(1);
+    source.persisted =
+        () -> {
+          reading.countDown();
+          while (release.getCount() > 0) {
+            try {
+              release.await();
+            } catch (InterruptedException e) {
+              // a blocking read from object storage would not honor the interrupt either
+            }
+          }
+        };
+    committer.cleanupSource = source;
+    Coordinator coordinator = startCoordinator(committer);
+    String orphan = source.put("task-0/epoch/0.avro");
+    consumer.updateEndOffsets(
+        ImmutableMap.of(controlTopicPartition(0), 0L, controlTopicPartition(1), 0L));
+    coordinator.process();
+    assertThat(reading.await(10, TimeUnit.SECONDS)).as("the pass reads the table").isTrue();
+
+    AtomicBoolean passOverAtStop = new AtomicBoolean(false);
+    committer.onStop =
+        pool -> {
+          // the pass goes on while the committer stops, and ends before stop() returns
+          release.countDown();
+          pool.shutdown();
+          try {
+            passOverAtStop.set(pool.awaitTermination(30, TimeUnit.SECONDS));
+          } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+          }
+        };
+    Thread terminating = new Thread(coordinator::terminate, "terminating");
+    terminating.start();
+    try {
+      assertThat(committer.stopCalled.await(10, TimeUnit.SECONDS))
+          .as("terminate() told the committer")
+          .isTrue();
+    } finally {
+      release.countDown();
+    }
+    terminating.join(TimeUnit.SECONDS.toMillis(30));
+
+    assertThat(terminating.isAlive()).as("terminate() is over").isFalse();
+    assertThat(passOverAtStop).as("the pass ended while the committer stopped").isTrue();
+    assertThat(source.listed.get()).as("the pass went on to list its prefix").isTrue();
+    assertThat(source.exists(orphan)).as("no delete after the flag").isTrue();
   }
 
   private void assertCommitsStopAt(Function<UUID, byte[]> undecodable) {
@@ -1134,14 +1477,7 @@ public class TestCoordinator extends ChannelTestBase {
     when(config.commitIntervalMs()).thenReturn(0);
     when(config.commitTimeoutMs()).thenReturn(Integer.MAX_VALUE);
 
-    Coordinator coordinator =
-        new Coordinator(
-            config,
-            ImmutableList.of(),
-            clientFactory,
-            mock(SinkTaskContext.class),
-            (send, sendInOneTransaction, transitionExec, controlTopicCaughtUp) ->
-                committer.startedWith(transitionExec));
+    Coordinator coordinator = scriptedCoordinator(committer, new StatisticsStep());
     coordinator.start();
     consumer.rebalance(ImmutableList.of(controlTopicPartition(0), controlTopicPartition(1)));
     consumer.updateBeginningOffsets(
@@ -1149,6 +1485,34 @@ public class TestCoordinator extends ChannelTestBase {
 
     coordinator.process();
     return coordinator;
+  }
+
+  private Coordinator scriptedCoordinator(ScriptedTableCommitter committer, StatisticsStep step) {
+    return scriptedCoordinator(committer, step, null);
+  }
+
+  private Coordinator scriptedCoordinator(
+      ScriptedTableCommitter committer, StatisticsStep step, StatisticsMetrics metrics) {
+    return new Coordinator(
+        config,
+        ImmutableList.of(),
+        clientFactory,
+        mock(SinkTaskContext.class),
+        step,
+        (send, sendInOneTransaction, transitionExec, health, statisticsStep) ->
+            committer.startedWith(transitionExec, health, statisticsStep),
+        metrics);
+  }
+
+  private static void holdUninterruptibly(CountDownLatch started, CountDownLatch release) {
+    started.countDown();
+    while (release.getCount() > 0) {
+      try {
+        release.await();
+      } catch (InterruptedException e) {
+        // a blocking read from object storage would not honor the interrupt either
+      }
+    }
   }
 
   private static TopicPartition controlTopicPartition(int partition) {
@@ -1161,6 +1525,23 @@ public class TestCoordinator extends ChannelTestBase {
 
   private static TableReference tableReference(String tableName) {
     return new TableReference("catalog", ImmutableList.of("db"), tableName);
+  }
+
+  private static TableReference tableReference(String tableName, UUID tableUuid) {
+    return TableReference.of("catalog", TableIdentifier.of("db", tableName), tableUuid);
+  }
+
+  private void addDataWritten(UUID commitId, TableReference reference, long ctlOffset) {
+    Event dataWritten =
+        new Event(
+            config.connectGroupId(),
+            new DataWritten(
+                StructType.of(),
+                commitId,
+                reference,
+                ImmutableList.of(EventTestUtil.createDataFile()),
+                ImmutableList.of()));
+    addRecord(AvroUtil.encode(dataWritten), ctlOffset);
   }
 
   /** Envelopes as {@code partition:offset}, which is what tells them apart. */
@@ -1424,11 +1805,21 @@ public class TestCoordinator extends ChannelTestBase {
     private final List<Envelope> received = Lists.newArrayList();
     private final List<Integer> bufferSeenOnEachTick = Lists.newArrayList();
     private Executor transitionExec;
+    private StatisticsHealth health;
+    private StatisticsStep step;
     // null until stop()
     private volatile Boolean transitionPoolShutDownAtStop;
+    private final CountDownLatch stopCalled = new CountDownLatch(1);
+    private volatile StagingCleanupSource cleanupSource;
+    private volatile Runnable onProcess = () -> {};
+    // run by stop() with the transition pool of the coordinator
+    private volatile Consumer<ExecutorService> onStop = pool -> {};
 
-    private TableCommitter startedWith(Executor exec) {
+    private TableCommitter startedWith(
+        Executor exec, StatisticsHealth statisticsHealth, StatisticsStep statisticsStep) {
       this.transitionExec = exec;
+      this.health = statisticsHealth;
+      this.step = statisticsStep;
       return this;
     }
 
@@ -1438,6 +1829,10 @@ public class TestCoordinator extends ChannelTestBase {
 
     private void drainInFlight(String tableName) {
       pendingTables.add(tableReference(tableName));
+    }
+
+    private void pending(TableReference reference) {
+      pendingTables.add(reference);
     }
 
     private List<TableCommitRequest> requests(String tableName) {
@@ -1479,6 +1874,12 @@ public class TestCoordinator extends ChannelTestBase {
     @Override
     public void process(long nowMs, Supplier<Collection<Envelope>> bufferedResponses) {
       bufferSeenOnEachTick.add(bufferedResponses.get().size());
+      onProcess.run();
+    }
+
+    @Override
+    public StagingCleanupSource stagingCleanupSource() {
+      return cleanupSource;
     }
 
     @Override
@@ -1496,6 +1897,78 @@ public class TestCoordinator extends ChannelTestBase {
     @Override
     public void stop() {
       transitionPoolShutDownAtStop = ((ExecutorService) transitionExec).isShutdown();
+      stopCalled.countDown();
+      onStop.accept((ExecutorService) transitionExec);
+    }
+  }
+
+  /**
+   * The source of one table whose staging lives in the in-memory files of the JVM, under a prefix
+   * of its own; its reads of the persisted state run what the test scripts.
+   */
+  private static final class ScriptedCleanupSource implements StagingCleanupSource {
+    private final TableReference tableReference =
+        tableReference("swept_" + UUID.randomUUID().toString().replace("-", ""), UUID.randomUUID());
+    private final String stagingLocation = "mem://staging-" + UUID.randomUUID();
+    private final String prefix =
+        StagedChangeFileWriter.stagingDirectory(
+            stagingLocation, tableReference, CONNECT_CONSUMER_GROUP_ID);
+    private final InMemoryStagingCleanup.ListingInMemoryFileIO io =
+        new InMemoryStagingCleanup.ListingInMemoryFileIO() {
+          @Override
+          public Iterable<FileInfo> listPrefix(String listedPrefix) {
+            listed.set(true);
+            return super.listPrefix(listedPrefix);
+          }
+        };
+    private final Table table = mock(Table.class);
+    private final List<String> calls;
+    private final AtomicBoolean listed = new AtomicBoolean(false);
+    private volatile Runnable persisted = () -> {};
+
+    private ScriptedCleanupSource(List<String> calls) {
+      this.calls = calls;
+      when(table.uuid()).thenReturn(tableReference.uuid());
+      when(table.io()).thenReturn(io);
+      when(table.name()).thenReturn(tableReference.identifier().toString());
+    }
+
+    private String put(String relative) {
+      String location = prefix + "/" + relative;
+      io.addFile(location, new byte[] {1});
+      return location;
+    }
+
+    private boolean exists(String location) {
+      return io.fileExists(location);
+    }
+
+    @Override
+    public Collection<TableReference> tables() {
+      calls.add("cleanup");
+      return ImmutableList.of(tableReference);
+    }
+
+    @Override
+    public CleanupTarget snapshot(TableReference reference) {
+      return new CleanupTarget(
+          table.name(),
+          table.uuid(),
+          null,
+          reference,
+          stagingLocation,
+          prefix,
+          new ReachableFileSet());
+    }
+
+    @Override
+    public Table load(TableIdentifier identifier) {
+      return table;
+    }
+
+    @Override
+    public void addPersistedReachable(Table loaded, CleanupTarget target, ReachableFileSet into) {
+      persisted.run();
     }
   }
 }

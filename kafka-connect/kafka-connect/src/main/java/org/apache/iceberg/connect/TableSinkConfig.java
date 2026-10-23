@@ -27,13 +27,30 @@ public class TableSinkConfig {
   private final List<String> idColumns;
   private final List<String> partitionBy;
   private final String commitBranch;
+  private final boolean statisticsEnabled;
+  private final boolean partitionStatsEnabled;
+  private final List<String> statisticsColumns;
 
   public TableSinkConfig(
       Pattern routeRegex, List<String> idColumns, List<String> partitionBy, String commitBranch) {
+    this(routeRegex, idColumns, partitionBy, commitBranch, false, false, null);
+  }
+
+  public TableSinkConfig(
+      Pattern routeRegex,
+      List<String> idColumns,
+      List<String> partitionBy,
+      String commitBranch,
+      boolean statisticsEnabled,
+      boolean partitionStatsEnabled,
+      List<String> statisticsColumns) {
     this.routeRegex = routeRegex;
     this.idColumns = idColumns;
     this.partitionBy = partitionBy;
     this.commitBranch = commitBranch;
+    this.statisticsEnabled = statisticsEnabled;
+    this.partitionStatsEnabled = statisticsEnabled && partitionStatsEnabled;
+    this.statisticsColumns = statisticsColumns;
   }
 
   public Pattern routeRegex() {
@@ -50,5 +67,17 @@ public class TableSinkConfig {
 
   public String commitBranch() {
     return commitBranch;
+  }
+
+  public boolean statisticsEnabled() {
+    return statisticsEnabled;
+  }
+
+  public boolean partitionStatsEnabled() {
+    return partitionStatsEnabled;
+  }
+
+  public List<String> statisticsColumns() {
+    return statisticsColumns;
   }
 }

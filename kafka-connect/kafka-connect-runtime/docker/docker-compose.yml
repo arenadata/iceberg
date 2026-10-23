@@ -110,6 +110,8 @@ services:
     hostname: connect
     ports:
       - 8083:8083
+      # JMX of the worker: the integration tests read the metrics of the sink (kafka.connect:type=plugins)
+      - 9102:9102
     volumes:
       - ../build/install:/test/kafka-connect
       - ./kms/iceberg-test-kms-1.0.0.jar:/test/kafka-connect/iceberg-kafka-connect-runtime/lib/iceberg-test-kms-1.0.0.jar:ro
@@ -121,6 +123,12 @@ services:
       - ./connect-libs/hive-storage-api-2.7.2.jar:/test/kafka-connect/iceberg-kafka-connect-runtime/lib/hive-storage-api-2.7.2.jar:ro
 
     environment:
+      JMX_PORT: 9102
+      KAFKA_JMX_OPTS: >-
+        -Dcom.sun.management.jmxremote=true
+        -Dcom.sun.management.jmxremote.authenticate=false
+        -Dcom.sun.management.jmxremote.ssl=false
+        -Djava.rmi.server.hostname=localhost
       CONNECT_REST_ADVERTISED_HOST_NAME: localhost
       CONNECT_REST_PORT: 8083
       CONNECT_GROUP_ID: kc
@@ -210,3 +218,21 @@ services:
       - ./connect-libs/iceberg-spark-runtime.jar:/opt/spark/jars/iceberg-spark-runtime.jar:ro
       - ./connect-libs/hadoop-aws-3.4.1.jar:/opt/spark/jars/hadoop-aws-3.4.1.jar
       - ./connect-libs/s3-transfer-manager-2.42.39.jar:/opt/spark/jars/s3-transfer-manager-2.42.39.jar
+
+  trino:
+    image: trinodb/trino:479
+    hostname: trino
+    depends_on:
+      iceberg:
+        condition: service_started
+      create-bucket:
+        condition: service_completed_successfully
+    volumes:
+      - ./trino/catalog:/etc/trino/catalog:ro
+    mem_limit: 2g
+    healthcheck:
+      test: ["CMD", "/usr/lib/trino/bin/health-check"]
+      interval: 5s
+      timeout: 10s
+      retries: 40
+      start_period: 10s

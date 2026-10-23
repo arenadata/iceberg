@@ -22,7 +22,10 @@ import static org.apache.iceberg.types.Types.NestedField.optional;
 import static org.apache.iceberg.types.Types.NestedField.required;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.AdditionalAnswers.delegatesTo;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -32,9 +35,12 @@ import static org.mockito.Mockito.withSettings;
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
+import org.apache.iceberg.HasTableOperations;
 import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.RowLevelOperationMode;
 import org.apache.iceberg.Schema;
+import org.apache.iceberg.Table;
 import org.apache.iceberg.TableProperties;
 import org.apache.iceberg.catalog.Catalog;
 import org.apache.iceberg.catalog.Namespace;
@@ -42,6 +48,9 @@ import org.apache.iceberg.catalog.SupportsNamespaces;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.connect.IcebergSinkConfig;
 import org.apache.iceberg.connect.TableSinkConfig;
+import org.apache.iceberg.connect.data.copyonwrite.StagedChangeFileWriter;
+import org.apache.iceberg.connect.events.SketchFile;
+import org.apache.iceberg.connect.events.TableReference;
 import org.apache.iceberg.exceptions.NoSuchTableException;
 import org.apache.iceberg.inmemory.InMemoryCatalog;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
@@ -52,17 +61,20 @@ import org.apache.iceberg.types.Types.NestedField;
 import org.apache.iceberg.types.Types.StringType;
 import org.apache.iceberg.types.Types.StructType;
 import org.apache.kafka.common.config.ConfigException;
+import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.connect.sink.SinkRecord;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 
 public class TestIcebergWriterFactory {
 
+  private static final UUID COMMIT_ID = UUID.randomUUID();
   private static final Namespace NAMESPACE = Namespace.of("db");
   private static final TableIdentifier KEYED = TableIdentifier.of(NAMESPACE, "keyed");
   private static final TableIdentifier UNKEYED = TableIdentifier.of(NAMESPACE, "unkeyed");
@@ -269,6 +281,116 @@ public class TestIcebergWriterFactory {
         .isInstanceOf(IcebergWriter.class);
     assertThat(factory.createWriter(UNKEYED.toString(), sample(), false))
         .isInstanceOf(IcebergWriter.class);
+  }
+
+  @ParameterizedTest
+  @EnumSource(RowLevelOperationMode.class)
+  public void testStatisticsOnForTableGiveWriterSketches(RowLevelOperationMode mode) {
+    IcebergSinkConfig config = config(mode, List.of());
+    statistics(config, true);
+    IcebergWriterFactory factory = new IcebergWriterFactory(inMemoryCatalog, config);
+
+    List<RecordWriteResult> results = writeTwoRows(factory);
+
+    Table table = inMemoryCatalog.loadTable(KEYED);
+    SketchFile sketchFile = sketchFileOf(results.get(0));
+    assertThat(sketchFile).as("a file for the rows").isNotNull();
+    String stagingDirectory =
+        StagedChangeFileWriter.stagingDirectory(
+            StagedChangeFileWriter.stagingLocation(table, null),
+            TableReference.of("catalog", KEYED),
+            "cg-connect");
+    assertThat(sketchFile.location()).startsWith(stagingDirectory + "/stats/" + COMMIT_ID + "-0-");
+    SketchFiles.Content content = SketchFiles.read(table.io(), sketchFile);
+    assertThat(content.properties()).containsEntry("row-count", "2");
+    assertThat(content.ndv()).containsEntry(1, 2.0).containsEntry(2, 2.0);
+  }
+
+  @ParameterizedTest
+  @EnumSource(RowLevelOperationMode.class)
+  public void testStatisticsOffForTableGiveWriterNoSketches(RowLevelOperationMode mode) {
+    IcebergSinkConfig config = config(mode, List.of());
+    statistics(config, false);
+    SketchFiles.RecordingFileIO io = new SketchFiles.RecordingFileIO();
+    IcebergWriterFactory factory = new IcebergWriterFactory(catalogWithFileIo(io), config);
+
+    List<RecordWriteResult> results = writeTwoRows(factory);
+
+    assertThat(sketchFileOf(results.get(0))).isNull();
+    assertThat(io.otherFiles()).as("the rows were written").isNotEmpty();
+    assertThat(io.statsFilesAttempted()).as("no file asked for in stats/").isEmpty();
+    assertThat(io.statsFiles()).isEmpty();
+  }
+
+  @Test
+  public void testStatisticsThatCannotBeSetUpDoNotFailWriter() {
+    IcebergSinkConfig config = config(RowLevelOperationMode.MERGE_ON_READ, List.of());
+    statistics(config, true);
+    // the staging directory cannot be named without the group id
+    when(config.connectGroupId()).thenReturn(null);
+    IcebergWriterFactory factory = new IcebergWriterFactory(inMemoryCatalog, config);
+
+    List<RecordWriteResult> results = writeTwoRows(factory);
+
+    assertThat(results).hasSize(1);
+    assertThat(((IcebergWriterResult) results.get(0)).dataFiles()).isNotEmpty();
+    assertThat(sketchFileOf(results.get(0))).isNull();
+  }
+
+  private Catalog catalogWithFileIo(SketchFiles.RecordingFileIO io) {
+    Catalog wrapped = mock(Catalog.class, delegatesTo(inMemoryCatalog));
+    doAnswer(
+            invocation -> {
+              // the writer reads the format version through the table operations
+              Table table =
+                  mock(
+                      Table.class,
+                      withSettings()
+                          .extraInterfaces(HasTableOperations.class)
+                          .defaultAnswer(delegatesTo(inMemoryCatalog.loadTable(KEYED))));
+              doReturn(io).when(table).io();
+              return table;
+            })
+        .when(wrapped)
+        .loadTable(any());
+    return wrapped;
+  }
+
+  private List<RecordWriteResult> writeTwoRows(IcebergWriterFactory factory) {
+    RecordWriter writer = factory.createWriter(KEYED.toString(), sample(), false);
+    writer.write(row(1L, "a"));
+    writer.write(row(2L, "b"));
+    List<RecordWriteResult> results = writer.complete(COMMIT_ID);
+    writer.close();
+    assertThat(results).hasSize(1);
+    return results;
+  }
+
+  private static SketchFile sketchFileOf(RecordWriteResult result) {
+    return result.kind() == RecordWriteResult.Kind.DATA_FILES
+        ? ((IcebergWriterResult) result).sketchFile()
+        : ((StagedChangesResult) result).sketchFile();
+  }
+
+  private static SinkRecord row(long id, String data) {
+    return new SinkRecord(
+        "topic",
+        0,
+        null,
+        "key",
+        null,
+        ImmutableMap.of("id", id, "data", data),
+        id,
+        0L,
+        TimestampType.LOG_APPEND_TIME);
+  }
+
+  private static void statistics(IcebergSinkConfig config, boolean enabled) {
+    TableSinkConfig tableConfig = config.tableConfig(KEYED.toString());
+    when(tableConfig.statisticsEnabled()).thenReturn(enabled);
+    // the mock answers an empty list, which is an explicit list without a column
+    when(tableConfig.statisticsColumns()).thenReturn(null);
+    when(config.statisticsLgNominalEntries()).thenReturn(12);
   }
 
   private static SinkRecord sample() {
