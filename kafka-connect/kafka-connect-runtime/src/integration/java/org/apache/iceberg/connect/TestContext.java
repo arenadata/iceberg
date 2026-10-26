@@ -64,7 +64,7 @@ public class TestContext {
   private TestContext() {
     ComposeContainer container =
         new ComposeContainer(new File("./docker/docker-compose.yml"))
-            .withStartupTimeout(Duration.ofMinutes(4))
+            .withStartupTimeout(Duration.ofMinutes(8))
             .waitingFor(CONNECT_SERVICE, Wait.forHttp("/connectors"))
             .waitingFor("iceberg", Wait.forHealthcheck())
             .waitingFor("openmetadata", Wait.forHealthcheck());
