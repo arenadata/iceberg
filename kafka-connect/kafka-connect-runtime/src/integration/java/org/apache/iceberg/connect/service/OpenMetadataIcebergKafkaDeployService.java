@@ -38,14 +38,14 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
-import org.apache.commons.lang3.tuple.Pair;
 import org.apache.hc.client5.http.classic.HttpClient;
 import org.apache.hc.client5.http.classic.methods.HttpPost;
 import org.apache.hc.client5.http.impl.classic.HttpClients;
 import org.apache.hc.core5.http.io.entity.StringEntity;
 import org.apache.iceberg.connect.TestContext;
+import org.openmetadata.client.api.DatabaseSchemasApi;
 import org.openmetadata.client.api.DatabaseServicesApi;
 import org.openmetadata.client.api.DatabasesApi;
 import org.openmetadata.client.api.IngestionPipelinesApi;
@@ -57,33 +57,26 @@ import org.openmetadata.client.api.TablesApi;
 import org.openmetadata.client.api.TopicsApi;
 import org.openmetadata.client.api.UsersApi;
 import org.openmetadata.client.gateway.OpenMetadata;
-import org.openmetadata.client.model.AirflowConfig;
+import org.openmetadata.client.model.Column;
+import org.openmetadata.client.model.CreateDatabase;
+import org.openmetadata.client.model.CreateDatabaseSchema;
 import org.openmetadata.client.model.CreateDatabaseService;
-import org.openmetadata.client.model.CreateIngestionPipeline;
 import org.openmetadata.client.model.CreateMessagingService;
 import org.openmetadata.client.model.CreatePipeline;
 import org.openmetadata.client.model.CreatePipelineService;
+import org.openmetadata.client.model.CreateTable;
 import org.openmetadata.client.model.CreateTopic;
-import org.openmetadata.client.model.Database;
 import org.openmetadata.client.model.DatabaseConnection;
-import org.openmetadata.client.model.DatabaseList;
 import org.openmetadata.client.model.Edge;
 import org.openmetadata.client.model.EntityLineage;
 import org.openmetadata.client.model.EntityReference;
 import org.openmetadata.client.model.Field;
-import org.openmetadata.client.model.IngestionPipeline;
 import org.openmetadata.client.model.MessageSchema;
 import org.openmetadata.client.model.MessagingConnection;
 import org.openmetadata.client.model.PipelineConnection;
-import org.openmetadata.client.model.PipelineStatus;
-import org.openmetadata.client.model.SourceConfig;
 import org.openmetadata.client.model.Table;
 import org.openmetadata.client.model.Task;
-import org.openmetadata.client.model.Topic;
-import org.openmetadata.schema.metadataIngestion.DatabaseServiceMetadataPipeline;
 import org.openmetadata.schema.metadataIngestion.FilterPattern;
-import org.openmetadata.schema.metadataIngestion.Incremental;
-import org.openmetadata.schema.metadataIngestion.MessagingServiceMetadataPipeline;
 import org.openmetadata.schema.security.client.OpenMetadataJWTClientConfig;
 import org.openmetadata.schema.security.credentials.AWSCredentials;
 import org.openmetadata.schema.services.common.SSLCertPaths;
@@ -102,10 +95,10 @@ public class OpenMetadataIcebergKafkaDeployService {
   public static final String KAFKA_CONNECT_HOST_PORT = "http://connect:8083";
   private final String token;
   private final UUID userId;
-  private final IngestionPipelinesApi pipelineApi;
   private final TopicsApi topicsApi;
   private final LineageApi lineageApi;
   private final DatabasesApi databasesApi;
+  private final DatabaseSchemasApi databaseSchemasApi;
   private final DatabaseServicesApi databaseServicesApi;
   private final IngestionPipelinesApi ingestionPipelinesApi;
   private final UsersApi usersApi;
@@ -126,10 +119,10 @@ public class OpenMetadataIcebergKafkaDeployService {
                 .withHostPort(format("http://localhost:%s/api", OPENMETADATA_PORT))
                 .withAuthProvider(AuthProvider.OPENMETADATA)
                 .withSecurityConfig(openMetadataJWTClientConfig));
-    this.pipelineApi = openMetadata.buildClient(IngestionPipelinesApi.class);
     this.topicsApi = openMetadata.buildClient(TopicsApi.class);
     this.lineageApi = openMetadata.buildClient(LineageApi.class);
     this.databasesApi = openMetadata.buildClient(DatabasesApi.class);
+    this.databaseSchemasApi = openMetadata.buildClient(DatabaseSchemasApi.class);
     this.databaseServicesApi = openMetadata.buildClient(DatabaseServicesApi.class);
     this.ingestionPipelinesApi = openMetadata.buildClient(IngestionPipelinesApi.class);
     this.usersApi = openMetadata.buildClient(UsersApi.class);
@@ -170,14 +163,13 @@ public class OpenMetadataIcebergKafkaDeployService {
     return token;
   }
 
-  public Pair<UUID, UUID> deployIcebergService(String icebergServiceName)
+  public UUID deployIcebergService(String icebergServiceName, String databaseName, String schemaName, Map<String, List<Column>> tablesData)
       throws URISyntaxException {
     UUID icebergServiceId = createIcebergService(icebergServiceName);
-    UUID icebergIngestionPipelineId =
-        createIcebergIngestionPipeline(icebergServiceName, icebergServiceId);
-    deployIngestionPipeline(icebergIngestionPipelineId);
-    triggerPipelineRun(icebergIngestionPipelineId);
-    return Pair.of(icebergServiceId, icebergIngestionPipelineId);
+    databasesApi.createOrUpdateDatabase(new CreateDatabase().name(databaseName).service(icebergServiceName));
+    databaseSchemasApi.createOrUpdateDBSchema(new CreateDatabaseSchema().name(schemaName).database(getIcebergDatabaseName(icebergServiceName, databaseName)));
+    tablesData.forEach((tableName, tableSchema) -> registerIcebergTable(icebergServiceName, databaseName, schemaName, tableName, tableSchema));
+    return icebergServiceId;
   }
 
   public UUID createIcebergService(String icebergServiceName) throws URISyntaxException {
@@ -223,120 +215,12 @@ public class OpenMetadataIcebergKafkaDeployService {
     return databaseServicesApi.createOrUpdateDatabaseService(createDatabaseService).getId();
   }
 
-  public UUID createIcebergIngestionPipeline(String icebergServiceName, UUID icebergServiceId) {
-    DatabaseServiceMetadataPipeline databaseServiceMetadataPipeline =
-        new DatabaseServiceMetadataPipeline()
-            .withMarkDeletedStoredProcedures(true)
-            .withQueryLogDuration(1)
-            .withIncludeTables(true)
-            .withQueryParsingTimeoutLimit(300)
-            .withType(DatabaseServiceMetadataPipeline.DatabaseMetadataConfigType.DATABASE_METADATA)
-            .withIncludeDDL(false)
-            .withIncludeTags(true)
-            .withIncremental(
-                new Incremental().withEnabled(false).withSafetyMarginDays(1).withLookbackDays(7))
-            .withThreads(1)
-            .withMarkDeletedTables(true)
-            .withIncludeOwners(false)
-            .withUseFqnForFiltering(false)
-            .withIncludeViews(true)
-            .withIncludeStoredProcedures(true)
-            .withOverrideMetadata(false);
-    CreateIngestionPipeline ingestionPipeline =
-        new CreateIngestionPipeline()
-            .raiseOnError(true)
-            .owners(List.of(new EntityReference().type("user").id(userId)))
-            .name(ingestionPipelineName(icebergServiceName))
-            .sourceConfig(new SourceConfig().config(databaseServiceMetadataPipeline))
-            .service(new EntityReference().type("databaseService").id(icebergServiceId))
-            .loggerLevel(CreateIngestionPipeline.LoggerLevelEnum.INFO)
-            .displayName(ingestionPipelineName(icebergServiceName))
-            .pipelineType(CreateIngestionPipeline.PipelineTypeEnum.METADATA)
-            .airflowConfig(new AirflowConfig().retries(0).startDate(getTime()));
-    return ingestionPipelinesApi.createOrUpdateIngestionPipeline(ingestionPipeline).getId();
-  }
-
   private OffsetDateTime getTime() {
     return OffsetDateTime.now(ZoneOffset.UTC).truncatedTo(ChronoUnit.SECONDS);
   }
 
-  public void deployIngestionPipeline(UUID ingestionPipelineId) {
-    final AtomicBoolean isDeploySent = new AtomicBoolean(false);
-    await()
-        .atMost(45, SECONDS)
-        .with()
-        .pollInterval(2, SECONDS)
-        .until(
-            () -> {
-              if (!isDeploySent.get()) {
-                try {
-                  pipelineApi.deployIngestion(ingestionPipelineId);
-                  isDeploySent.set(true);
-                } catch (Exception e) {
-                  return false;
-                }
-              }
-              IngestionPipeline ingestionPipeline = getIngestionPipeline(ingestionPipelineId);
-              return ingestionPipeline.getDeployed() != null && ingestionPipeline.getDeployed();
-            });
-  }
-
-  public void triggerPipelineRun(UUID ingestionPipelineId) {
-    AtomicBoolean isTriggerSent = new AtomicBoolean(false);
-    await()
-        .atMost(60, SECONDS)
-        .with()
-        .pollInterval(2, SECONDS)
-        .until(
-            () -> {
-              if (!isTriggerSent.get()) {
-                try {
-                  pipelineApi.triggerIngestionPipelineRun(ingestionPipelineId);
-                  isTriggerSent.set(true);
-                } catch (Exception e) {
-                  return false;
-                }
-              }
-              IngestionPipeline pipeline = getIngestionPipeline(ingestionPipelineId);
-              if (pipeline != null
-                  && pipeline.getPipelineStatuses() != null
-                  && pipeline.getPipelineStatuses().getPipelineState() != null) {
-                return pipeline
-                    .getPipelineStatuses()
-                    .getPipelineState()
-                    .equals(PipelineStatus.PipelineStateEnum.SUCCESS);
-              }
-              return false;
-            });
-  }
-
-  public String ingestionPipelineName(String serviceName) {
-    return serviceName + "_ingestion_pipeline";
-  }
-
-  public IngestionPipeline getIngestionPipeline(UUID ingestionPipelineId) {
-    return pipelineApi.getIngestionPipelineByID(
-        ingestionPipelineId, "pipelineStatuses", "non-deleted");
-  }
-
-  public void checkIcebergServiceDatabases(String icebergServiceName, String databaseName) {
-    await()
-        .atMost(15, SECONDS)
-        .pollInterval(1, SECONDS)
-        .until(
-            () -> {
-              try {
-                DatabaseList databaseList =
-                    databasesApi.listDatabases(
-                        "", icebergServiceName, 10, null, null, "non-deleted");
-                return databaseList.getData().stream()
-                    .map(Database::getName)
-                    .toList()
-                    .contains(databaseName);
-              } catch (Exception e) {
-                return false;
-              }
-            });
+  public void registerIcebergTable(String icebergServiceName, String databaseName, String schemaName, String tableName, List<Column> tableSchema) {
+    tablesApi.createOrUpdateTable(new CreateTable().name(tableName).databaseSchema(format("%s.%s.%s", icebergServiceName, databaseName, schemaName)).columns(tableSchema));
   }
 
   public void checkIcebergTable(String icebergTableName) {
@@ -370,13 +254,10 @@ public class OpenMetadataIcebergKafkaDeployService {
     assertThat(tables).containsAll(icebergTables);
   }
 
-  public Pair<UUID, UUID> deployKafkaService(String kafkaServiceName, List<String> kafkaTopics) {
+  public UUID deployKafkaService(String kafkaServiceName, Map<String, List<Field>> topicsData) {
     UUID kafkaServiceId = createKafkaService(kafkaServiceName);
-    UUID kafkaIngestionPipelineId = createKafkaIngestionPipeline(kafkaServiceName, kafkaServiceId);
-    deployIngestionPipeline(kafkaIngestionPipelineId);
-    triggerPipelineRun(kafkaIngestionPipelineId);
-    checkKafkaServiceTopics(kafkaServiceName, kafkaTopics);
-    return Pair.of(kafkaServiceId, kafkaIngestionPipelineId);
+    topicsData.forEach((topicName, topicSchema) -> updateTopicSchema(kafkaServiceName, topicName, topicSchema));
+    return kafkaServiceId;
   }
 
   public UUID createKafkaService(String kafkaServiceName) {
@@ -398,52 +279,6 @@ public class OpenMetadataIcebergKafkaDeployService {
             .connection(messagingConnection)
             .owners(List.of(new EntityReference().id(userId).type("user")));
     return messagingServicesApi.createOrUpdateMessagingService(createMessagingService).getId();
-  }
-
-  public UUID createKafkaIngestionPipeline(String kafkaServiceName, UUID kafkaServiceId) {
-    CreateIngestionPipeline createIngestionPipeline =
-        new CreateIngestionPipeline()
-            .airflowConfig(new AirflowConfig().retries(0).startDate(getTime()))
-            .raiseOnError(true)
-            .loggerLevel(CreateIngestionPipeline.LoggerLevelEnum.INFO)
-            .name(ingestionPipelineName(kafkaServiceName))
-            .displayName(ingestionPipelineName(kafkaServiceName))
-            .owners(List.of(new EntityReference().type("user").id(userId)))
-            .pipelineType(CreateIngestionPipeline.PipelineTypeEnum.METADATA)
-            .service(new EntityReference().type("messagingService").id(kafkaServiceId))
-            .sourceConfig(
-                new SourceConfig()
-                    .config(
-                        new MessagingServiceMetadataPipeline()
-                            .withType(
-                                MessagingServiceMetadataPipeline.MessagingMetadataConfigType
-                                    .MESSAGING_METADATA)
-                            .withGenerateSampleData(false)
-                            .withMarkDeletedTopics(true)
-                            .withOverrideMetadata(false)));
-    return ingestionPipelinesApi.createOrUpdateIngestionPipeline(createIngestionPipeline).getId();
-  }
-
-  public void checkKafkaServiceTopics(String kafkaServiceName, List<String> kafkaServiceTopics) {
-    TopicsApi.ListTopicsQueryParams topicsSearchParam =
-        new TopicsApi.ListTopicsQueryParams().service(kafkaServiceName).fields("").limit(20);
-    await()
-        .atMost(30, SECONDS)
-        .pollInterval(1, SECONDS)
-        .until(
-            () -> {
-              try {
-                var response = topicsApi.listTopics(topicsSearchParam);
-                if (response == null || response.getData() == null) {
-                  return false;
-                }
-                List<String> currentTopics =
-                    response.getData().stream().map(Topic::getName).toList();
-                return currentTopics.containsAll(kafkaServiceTopics);
-              } catch (Exception e) {
-                return false;
-              }
-            });
   }
 
   public void updateTopicSchema(
@@ -571,5 +406,13 @@ public class OpenMetadataIcebergKafkaDeployService {
 
   public EntityLineage getEntityLineage(String entity, String fqn) {
     return lineageApi.getLineageByFQN(entity, fqn, 1, 1);
+  }
+
+  public String getIcebergTableFullName(String icebergServiceName, String databaseName, String schemaName, String tableName) {
+    return format("%s.%s.%s.%s", icebergServiceName, databaseName, schemaName, tableName);
+  }
+
+  public String getIcebergDatabaseName(String icebergServiceName, String databaseName) {
+    return format("%s.%s", icebergServiceName, databaseName);
   }
 }
