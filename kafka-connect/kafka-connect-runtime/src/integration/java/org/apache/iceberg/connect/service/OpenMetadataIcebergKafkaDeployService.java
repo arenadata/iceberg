@@ -96,7 +96,6 @@ import org.openmetadata.schema.services.connections.messaging.SaslMechanismType;
 import org.openmetadata.schema.services.connections.metadata.AuthProvider;
 import org.openmetadata.schema.services.connections.metadata.OpenMetadataConnection;
 import org.openmetadata.schema.services.connections.pipeline.KafkaConnectConnection;
-import org.openmetadata.schema.type.OwnerConfig;
 
 public class OpenMetadataIcebergKafkaDeployService {
   public static final int OPENMETADATA_PORT = 8585;
@@ -234,16 +233,13 @@ public class OpenMetadataIcebergKafkaDeployService {
             .withType(DatabaseServiceMetadataPipeline.DatabaseMetadataConfigType.DATABASE_METADATA)
             .withIncludeDDL(false)
             .withIncludeTags(true)
-            .withMarkDeletedSchemas(false)
             .withIncremental(
                 new Incremental().withEnabled(false).withSafetyMarginDays(1).withLookbackDays(7))
             .withThreads(1)
-            .withMarkDeletedDatabases(false)
             .withMarkDeletedTables(true)
             .withIncludeOwners(false)
             .withUseFqnForFiltering(false)
             .withIncludeViews(true)
-            .withOwnerConfig(new OwnerConfig().withEnableInheritance(true))
             .withIncludeStoredProcedures(true)
             .withOverrideMetadata(false);
     CreateIngestionPipeline ingestionPipeline =
@@ -480,7 +476,6 @@ public class OpenMetadataIcebergKafkaDeployService {
             .withHostPort(new URI(KAFKA_CONNECT_HOST_PORT))
             .withVerifySSL(false)
             .withMessagingServiceName(kafkaServiceName)
-            .withSupportsMetadataExtraction(true)
             .withPipelineFilterPattern(
                 new FilterPattern().withIncludes(List.of(".*")).withExcludes(List.of()));
     PipelineConnection pipelineConnection = new PipelineConnection().config(kafkaConnectConnection);
@@ -488,7 +483,7 @@ public class OpenMetadataIcebergKafkaDeployService {
         new CreatePipelineService()
             .name(kafkaConnectServiceName)
             .description("")
-            .serviceType(CreatePipelineService.ServiceTypeEnum.KAFKA_CONNECT)
+            .serviceType(CreatePipelineService.ServiceTypeEnum.KAFKACONNECT)
             .connection(pipelineConnection)
             .owners(List.of(new EntityReference().id(userId).type("user")));
     return pipelineServicesApi.createOrUpdatePipelineService(createPipelineService).getId();
