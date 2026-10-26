@@ -320,7 +320,7 @@ public class OpenMetadataIcebergKafkaDeployService {
 
   public IngestionPipeline getIngestionPipeline(UUID ingestionPipelineId) {
     return pipelineApi.getIngestionPipelineByID(
-        ingestionPipelineId, "pipelineStatuses", "non-deleted", "all");
+        ingestionPipelineId, "pipelineStatuses", "non-deleted");
   }
 
   public void checkIcebergServiceDatabases(String icebergServiceName, String databaseName) {
