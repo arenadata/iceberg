@@ -287,13 +287,13 @@ services:
       ELASTICSEARCH_SCHEME: http
       SEMANTIC_SEARCH_ENABLED: "false"
       FORCE_REINDEX: "false"
-      OPENMETADATA_OPERATIONS_OPTS: "-Dopenmetadata.search.semantic.enabled=false"
+      OPENMETADATA_OPERATIONS_OPTS: "-Dopenmetadata.search.semantic.enabled=false -Dopenmetadata.search.reindex.enabled=false"
       SERVER_HOST_API_URL: http://openmetadata:8585/api
     healthcheck:
       test: [ "CMD", "wget", "-q", "--spider", "http://localhost:8586/healthcheck" ]
       interval: 15s
       timeout: 10s
-      retries: 10
+      retries: 30
     depends_on:
       openmetadata-db:
         condition: service_healthy
