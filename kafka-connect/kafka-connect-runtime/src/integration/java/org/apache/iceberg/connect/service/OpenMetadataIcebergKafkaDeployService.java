@@ -350,7 +350,7 @@ public class OpenMetadataIcebergKafkaDeployService {
         .until(
             () -> {
               try {
-                Table table = tablesApi.getTableByFQN(icebergTableName, null, "non-deleted", null);
+                Table table = tablesApi.getTableByFQN(icebergTableName, null, "non-deleted");
                 return table != null;
               } catch (Exception e) {
                 return false;
