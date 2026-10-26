@@ -113,8 +113,8 @@ public class TestOpenMetadata extends AbstractTestBase {
         Map.of(),
         List.of(TABLE_IDENTIFIER_1),
         Map.of(testTopic(), getEvents(TABLE_EVENTS_PACK_1, TABLE_IDENTIFIER_1)));
-    openMetadataService.assertIcebergServiceDatabases(icebergServiceName, ICEBERG_DATABASE_NAME);
-    openMetadataService.assertIcebergServiceTables(
+    openMetadataService.checkIcebergServiceDatabases(icebergServiceName, ICEBERG_DATABASE_NAME);
+    openMetadataService.checkIcebergServiceTables(
         icebergServiceName, ICEBERG_DATABASE_NAME, TEST_DB, List.of(TEST_TABLE_1));
 
     String icebergFullTestTable1Name = getIcebergTableFullName(TABLE_IDENTIFIER_1);
@@ -134,8 +134,8 @@ public class TestOpenMetadata extends AbstractTestBase {
     catalog().createTable(TABLE_IDENTIFIER_1, TABLE_SCHEMA, SPEC, Map.of());
     catalog().createTable(TABLE_IDENTIFIER_2, TABLE_SCHEMA, SPEC, Map.of());
     deployFullEnv();
-    openMetadataService.assertIcebergServiceDatabases(icebergServiceName, ICEBERG_DATABASE_NAME);
-    openMetadataService.assertIcebergServiceTables(
+    openMetadataService.checkIcebergServiceDatabases(icebergServiceName, ICEBERG_DATABASE_NAME);
+    openMetadataService.checkIcebergServiceTables(
         icebergServiceName, ICEBERG_DATABASE_NAME, TEST_DB, List.of(TEST_TABLE_1, TEST_TABLE_2));
 
     runTest(
@@ -172,8 +172,8 @@ public class TestOpenMetadata extends AbstractTestBase {
   public void testOpenMetadataManyToOne(boolean useSchema) throws URISyntaxException {
     catalog().createTable(TABLE_IDENTIFIER_1, TABLE_SCHEMA, SPEC, Map.of());
     deployFullEnv();
-    openMetadataService.assertIcebergServiceDatabases(icebergServiceName, ICEBERG_DATABASE_NAME);
-    openMetadataService.assertIcebergServiceTables(
+    openMetadataService.checkIcebergServiceDatabases(icebergServiceName, ICEBERG_DATABASE_NAME);
+    openMetadataService.checkIcebergServiceTables(
         icebergServiceName, ICEBERG_DATABASE_NAME, TEST_DB, List.of(TEST_TABLE_1));
 
     runTest(
@@ -282,7 +282,7 @@ public class TestOpenMetadata extends AbstractTestBase {
             openMetadataService.getEntityLineage("topic", fullKafkaTopicName).getDownstreamEdges())
         .isEmpty();
     openMetadataService.triggerPipelineRun(icebergIngestionPipelineId);
-    openMetadataService.assertTable(getIcebergTableFullName(TABLE_IDENTIFIER_1));
+    openMetadataService.checkIcebergTable(getIcebergTableFullName(TABLE_IDENTIFIER_1));
     List<Edge> icebergTableLineageUpstreamEdges =
         openMetadataService.extractNonEmptyUpstreamEdges(
             "table", getIcebergTableFullName(TABLE_IDENTIFIER_1), 1);

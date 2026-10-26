@@ -323,7 +323,7 @@ public class OpenMetadataIcebergKafkaDeployService {
         ingestionPipelineId, "pipelineStatuses", "non-deleted", "all");
   }
 
-  public void assertIcebergServiceDatabases(String icebergServiceName, String databaseName) {
+  public void checkIcebergServiceDatabases(String icebergServiceName, String databaseName) {
     await()
         .atMost(15, SECONDS)
         .pollInterval(1, SECONDS)
@@ -343,7 +343,7 @@ public class OpenMetadataIcebergKafkaDeployService {
             });
   }
 
-  public void assertTable(String icebergTableName) {
+  public void checkIcebergTable(String icebergTableName) {
     await()
         .atMost(15, SECONDS)
         .pollInterval(1, SECONDS)
@@ -358,7 +358,7 @@ public class OpenMetadataIcebergKafkaDeployService {
             });
   }
 
-  public void assertIcebergServiceTables(
+  public void checkIcebergServiceTables(
       String icebergServiceName,
       String databaseName,
       String schemaName,
@@ -379,7 +379,7 @@ public class OpenMetadataIcebergKafkaDeployService {
     UUID kafkaIngestionPipelineId = createKafkaIngestionPipeline(kafkaServiceName, kafkaServiceId);
     deployIngestionPipeline(kafkaIngestionPipelineId);
     triggerPipelineRun(kafkaIngestionPipelineId);
-    assertKafkaServiceTopics(kafkaServiceName, kafkaTopics);
+    checkKafkaServiceTopics(kafkaServiceName, kafkaTopics);
     return Pair.of(kafkaServiceId, kafkaIngestionPipelineId);
   }
 
@@ -428,7 +428,7 @@ public class OpenMetadataIcebergKafkaDeployService {
     return ingestionPipelinesApi.createOrUpdateIngestionPipeline(createIngestionPipeline).getId();
   }
 
-  public void assertKafkaServiceTopics(String kafkaServiceName, List<String> kafkaServiceTopics) {
+  public void checkKafkaServiceTopics(String kafkaServiceName, List<String> kafkaServiceTopics) {
     TopicsApi.ListTopicsQueryParams topicsSearchParam =
         new TopicsApi.ListTopicsQueryParams().service(kafkaServiceName).fields("").limit(20);
     await()
