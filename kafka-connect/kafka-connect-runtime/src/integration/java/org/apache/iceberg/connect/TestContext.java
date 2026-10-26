@@ -67,7 +67,7 @@ public class TestContext {
             .withStartupTimeout(Duration.ofMinutes(8))
             .waitingFor(CONNECT_SERVICE, Wait.forHttp("/connectors"))
             .waitingFor("iceberg", Wait.forHealthcheck())
-            .waitingFor("openmetadata", Wait.forHealthcheck());
+            .waitingFor("openmetadata", Wait.forHealthcheck().withStartupTimeout(Duration.ofMinutes(8)));
     container.start();
     this.composeProject =
         container
