@@ -38,7 +38,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import org.apache.hc.client5.http.classic.HttpClient;
 import org.apache.hc.client5.http.classic.methods.HttpPost;
@@ -163,12 +162,23 @@ public class OpenMetadataIcebergKafkaDeployService {
     return token;
   }
 
-  public UUID deployIcebergService(String icebergServiceName, String databaseName, String schemaName, Map<String, List<Column>> tablesData)
+  public UUID deployIcebergService(
+      String icebergServiceName,
+      String databaseName,
+      String schemaName,
+      Map<String, List<Column>> tablesData)
       throws URISyntaxException {
     UUID icebergServiceId = createIcebergService(icebergServiceName);
-    databasesApi.createOrUpdateDatabase(new CreateDatabase().name(databaseName).service(icebergServiceName));
-    databaseSchemasApi.createOrUpdateDBSchema(new CreateDatabaseSchema().name(schemaName).database(getIcebergDatabaseName(icebergServiceName, databaseName)));
-    tablesData.forEach((tableName, tableSchema) -> registerIcebergTable(icebergServiceName, databaseName, schemaName, tableName, tableSchema));
+    databasesApi.createOrUpdateDatabase(
+        new CreateDatabase().name(databaseName).service(icebergServiceName));
+    databaseSchemasApi.createOrUpdateDBSchema(
+        new CreateDatabaseSchema()
+            .name(schemaName)
+            .database(getIcebergDatabaseName(icebergServiceName, databaseName)));
+    tablesData.forEach(
+        (tableName, tableSchema) ->
+            registerIcebergTable(
+                icebergServiceName, databaseName, schemaName, tableName, tableSchema));
     return icebergServiceId;
   }
 
@@ -219,8 +229,17 @@ public class OpenMetadataIcebergKafkaDeployService {
     return OffsetDateTime.now(ZoneOffset.UTC).truncatedTo(ChronoUnit.SECONDS);
   }
 
-  public void registerIcebergTable(String icebergServiceName, String databaseName, String schemaName, String tableName, List<Column> tableSchema) {
-    tablesApi.createOrUpdateTable(new CreateTable().name(tableName).databaseSchema(format("%s.%s.%s", icebergServiceName, databaseName, schemaName)).columns(tableSchema));
+  public void registerIcebergTable(
+      String icebergServiceName,
+      String databaseName,
+      String schemaName,
+      String tableName,
+      List<Column> tableSchema) {
+    tablesApi.createOrUpdateTable(
+        new CreateTable()
+            .name(tableName)
+            .databaseSchema(format("%s.%s.%s", icebergServiceName, databaseName, schemaName))
+            .columns(tableSchema));
   }
 
   public void checkIcebergTable(String icebergTableName) {
@@ -256,7 +275,8 @@ public class OpenMetadataIcebergKafkaDeployService {
 
   public UUID deployKafkaService(String kafkaServiceName, Map<String, List<Field>> topicsData) {
     UUID kafkaServiceId = createKafkaService(kafkaServiceName);
-    topicsData.forEach((topicName, topicSchema) -> updateTopicSchema(kafkaServiceName, topicName, topicSchema));
+    topicsData.forEach(
+        (topicName, topicSchema) -> updateTopicSchema(kafkaServiceName, topicName, topicSchema));
     return kafkaServiceId;
   }
 
@@ -408,7 +428,8 @@ public class OpenMetadataIcebergKafkaDeployService {
     return lineageApi.getLineageByFQN(entity, fqn, 1, 1);
   }
 
-  public String getIcebergTableFullName(String icebergServiceName, String databaseName, String schemaName, String tableName) {
+  public String getIcebergTableFullName(
+      String icebergServiceName, String databaseName, String schemaName, String tableName) {
     return format("%s.%s.%s.%s", icebergServiceName, databaseName, schemaName, tableName);
   }
 
