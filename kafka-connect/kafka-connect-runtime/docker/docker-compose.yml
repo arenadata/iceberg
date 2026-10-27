@@ -266,7 +266,7 @@ services:
       - "9200:9200"
 
   openmetadata:
-    image: openmetadata/server:1.12.12
+    image: openmetadata/server:2.0.6
     restart: always
     ports:
       - "8585:8585"

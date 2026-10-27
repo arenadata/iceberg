@@ -30,9 +30,6 @@ import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
-import java.time.OffsetDateTime;
-import java.time.ZoneOffset;
-import java.time.temporal.ChronoUnit;
 import java.util.Base64;
 import java.util.List;
 import java.util.Locale;
@@ -77,12 +74,7 @@ import org.openmetadata.client.model.Table;
 import org.openmetadata.client.model.Task;
 import org.openmetadata.schema.metadataIngestion.FilterPattern;
 import org.openmetadata.schema.security.client.OpenMetadataJWTClientConfig;
-import org.openmetadata.schema.security.credentials.AWSCredentials;
-import org.openmetadata.schema.services.common.SSLCertPaths;
-import org.openmetadata.schema.services.connections.database.IcebergConnection;
-import org.openmetadata.schema.services.connections.database.iceberg.IcebergCatalog;
-import org.openmetadata.schema.services.connections.database.iceberg.IcebergFileSystem;
-import org.openmetadata.schema.services.connections.database.iceberg.RestCatalogConnection;
+import org.openmetadata.schema.services.connections.database.ConnectionOptions;
 import org.openmetadata.schema.services.connections.messaging.KafkaConnection;
 import org.openmetadata.schema.services.connections.messaging.SaslMechanismType;
 import org.openmetadata.schema.services.connections.metadata.AuthProvider;
@@ -166,8 +158,7 @@ public class OpenMetadataIcebergKafkaDeployService {
       String icebergServiceName,
       String databaseName,
       String schemaName,
-      Map<String, List<Column>> tablesData)
-      throws URISyntaxException {
+      Map<String, List<Column>> tablesData) {
     UUID icebergServiceId = createIcebergService(icebergServiceName);
     databasesApi.createOrUpdateDatabase(
         new CreateDatabase().name(databaseName).service(icebergServiceName));
@@ -182,51 +173,25 @@ public class OpenMetadataIcebergKafkaDeployService {
     return icebergServiceId;
   }
 
-  public UUID createIcebergService(String icebergServiceName) throws URISyntaxException {
-    IcebergFileSystem icebergFileSystem = new IcebergFileSystem();
-    icebergFileSystem.withType(
-        new AWSCredentials()
-            .withAwsAccessKeyId(AWS_ACCESS_KEY)
-            .withAwsSecretAccessKey(AWS_SECRET_KEY)
-            .withAssumeRoleSessionName(AWS_REGION)
-            .withEndPointURL(new URI("http://localhost:9000"))
-            .withAwsRegion(AWS_REGION));
-    RestCatalogConnection restCatalogConnection =
-        new RestCatalogConnection()
-            .withFileSystem(icebergFileSystem)
-            .withUri(new URI("http://iceberg:8181"))
-            .withSsl(new SSLCertPaths())
-            .withSigv4(null)
-            .withCredential(null);
-    IcebergCatalog icebergCatalog =
-        new IcebergCatalog()
-            .withWarehouseLocation("s3://bucket/warehouse")
-            .withName("iceberg")
-            .withConnection(restCatalogConnection);
-    IcebergConnection icebergConnection =
-        new IcebergConnection()
-            .withOwnershipProperty("owner")
-            .withType(IcebergConnection.IcebergType.ICEBERG)
-            .withCatalog(icebergCatalog)
-            .withSupportsMetadataExtraction(true)
-            .withSchemaFilterPattern(
-                new FilterPattern().withIncludes(List.of()).withExcludes(List.of()))
-            .withTableFilterPattern(
-                new FilterPattern().withIncludes(List.of()).withExcludes(List.of()))
-            .withDatabaseFilterPattern(
-                new FilterPattern().withIncludes(List.of()).withExcludes(List.of()));
+  public UUID createIcebergService(String icebergServiceName) {
+    ConnectionOptions connectionOptions =
+        new ConnectionOptions()
+            .withAdditionalProperty("catalogUri", "http://iceberg:8181")
+            .withAdditionalProperty("warehouseLocation", "s3://bucket/warehouse")
+            .withAdditionalProperty("awsAccessKeyId", AWS_ACCESS_KEY)
+            .withAdditionalProperty("awsSecretAccessKey", AWS_SECRET_KEY)
+            .withAdditionalProperty("awsRegion", AWS_REGION)
+            .withAdditionalProperty("minioEndpoint", "http://localhost:9000");
+    DatabaseConnection databaseConnection = new DatabaseConnection().config(connectionOptions);
     CreateDatabaseService createDatabaseService =
         new CreateDatabaseService()
             .name(icebergServiceName)
-            .serviceType(CreateDatabaseService.ServiceTypeEnum.ICEBERG)
-            .connection(new DatabaseConnection().config(icebergConnection))
+            .serviceType(CreateDatabaseService.ServiceTypeEnum.CUSTOMDATABASE)
+            .connection(databaseConnection)
             .description("")
-            .owners(List.of(new EntityReference().id(userId).type("user")));
+            .owners(List.of(new EntityReference().type("user").id(userId)));
+    databaseServicesApi.createOrUpdateDatabaseService(createDatabaseService);
     return databaseServicesApi.createOrUpdateDatabaseService(createDatabaseService).getId();
-  }
-
-  private OffsetDateTime getTime() {
-    return OffsetDateTime.now(ZoneOffset.UTC).truncatedTo(ChronoUnit.SECONDS);
   }
 
   public void registerIcebergTable(
