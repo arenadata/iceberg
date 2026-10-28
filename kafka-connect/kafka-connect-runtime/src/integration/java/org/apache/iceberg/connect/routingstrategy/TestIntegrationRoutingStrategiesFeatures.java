@@ -39,8 +39,8 @@ import org.apache.hc.client5.http.impl.classic.HttpClients;
 import org.apache.hc.core5.http.HttpStatus;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.connect.KafkaConnectUtils;
+import org.apache.iceberg.connect.TableUserEvent;
 import org.apache.iceberg.connect.TestContext;
-import org.apache.iceberg.connect.routingstrategy.dto.TableUserEvent;
 import org.awaitility.Awaitility;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -109,7 +109,7 @@ public class TestIntegrationRoutingStrategiesFeatures
   public void testTopicToTableRoutingStrategyNegative() {
     KafkaConnectUtils.Config connectorConfig =
         initConnectorConfig(
-            true,
+            createConfig(true),
             addConnectorConfigs(
                 connectorConfigs(),
                 Map.of(

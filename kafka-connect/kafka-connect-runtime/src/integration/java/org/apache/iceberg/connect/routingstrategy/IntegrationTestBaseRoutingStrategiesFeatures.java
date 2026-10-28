@@ -18,20 +18,16 @@
  */
 package org.apache.iceberg.connect.routingstrategy;
 
-import static org.apache.iceberg.connect.routingstrategy.dto.TableUserEvent.USER_SCHEMA;
-import static org.apache.iceberg.connect.routingstrategy.dto.TableUserEvent.USER_SPEC;
+import static org.apache.iceberg.connect.TableUserEvent.USER_SCHEMA;
+import static org.apache.iceberg.connect.TableUserEvent.USER_SPEC;
 
-import java.time.Duration;
 import java.util.List;
-import java.util.Map;
 import org.apache.iceberg.catalog.TableIdentifier;
-import org.apache.iceberg.connect.AbstractTestBase;
 import org.apache.iceberg.connect.KafkaConnectUtils;
-import org.apache.iceberg.connect.routingstrategy.dto.TableUserEvent;
-import org.awaitility.Awaitility;
+import org.apache.iceberg.connect.SchemaTestBase;
 import org.junit.jupiter.api.BeforeEach;
 
-public abstract class IntegrationTestBaseRoutingStrategiesFeatures extends AbstractTestBase {
+public class IntegrationTestBaseRoutingStrategiesFeatures extends SchemaTestBase {
   private static final String TABLE_TEST_SUFFIX = "123";
   protected static final String CUSTOMERS_1_TABLE = "customers_first";
   protected static final String CUSTOMERS_1_TABLE_ALT = CUSTOMERS_1_TABLE + TABLE_TEST_SUFFIX;
@@ -52,32 +48,6 @@ public abstract class IntegrationTestBaseRoutingStrategiesFeatures extends Abstr
             CUSTOMERS_1_TABLE_IDENTIFIER, CUSTOMERS_1_TABLE_ALT_IDENTIFIER,
             CUSTOMERS_2_TABLE_IDENTIFIER, CUSTOMERS_2_TABLE_ALT_IDENTIFIER)
         .forEach(table -> catalog().createTable(table, USER_SCHEMA, USER_SPEC));
-  }
-
-  protected void runTest(
-      boolean useSchema,
-      Map<String, Object> extraConfig,
-      List<TableIdentifier> tableIdentifiers,
-      List<? extends TableUserEvent> events) {
-    KafkaConnectUtils.Config connectorConfig = initConnectorConfig(useSchema, extraConfig);
-    events.forEach(event -> send(testTopic(), event, useSchema));
-
-    context().startConnector(connectorConfig);
-
-    flush();
-
-    Awaitility.await()
-        .atMost(Duration.ofSeconds(60))
-        .pollInterval(Duration.ofSeconds(1))
-        .untilAsserted(() -> assertSnapshotAdded(tableIdentifiers));
-  }
-
-  protected KafkaConnectUtils.Config initConnectorConfig(
-      boolean useSchema, Map<String, Object> extraConfig) {
-    KafkaConnectUtils.Config connectorConfig = createConfig(useSchema);
-    context().connectorCatalogProperties().forEach(connectorConfig::config);
-    extraConfig.forEach(connectorConfig::config);
-    return connectorConfig;
   }
 
   @Override
