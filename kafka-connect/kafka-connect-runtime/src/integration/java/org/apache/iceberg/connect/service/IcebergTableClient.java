@@ -41,6 +41,8 @@ import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
+import software.amazon.awssdk.services.s3.model.S3Object;
 
 public class IcebergTableClient {
 
@@ -57,6 +59,18 @@ public class IcebergTableClient {
           .build();
 
   private IcebergTableClient() {}
+
+  public static String getTablePath(Catalog catalog, TableIdentifier tableIdentifier) {
+    return format("%s/data/", loadCatalogTableLocation(loadCatalogTable(catalog, tableIdentifier)))
+        .replaceFirst("/", "");
+  }
+
+  public static List<S3Object> extractTableFiles(String tableDataPath) {
+    return S3_CLIENT
+        .listObjectsV2(
+            ListObjectsV2Request.builder().bucket("bucket").prefix(tableDataPath).build())
+        .contents();
+  }
 
   public static List<org.apache.iceberg.data.Record> extractTableRecords(Table table) {
     return Lists.newArrayList(IcebergGenerics.read(table).build());

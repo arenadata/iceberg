@@ -16,75 +16,71 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.iceberg.connect.v3.dto;
+package org.apache.iceberg.connect;
 
 import static java.util.stream.Collectors.joining;
-import static org.apache.iceberg.connect.v3.dto.UserEventExtended.INFO_WRITE_DEFAULT;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import java.util.stream.Stream;
 import org.apache.iceberg.PartitionSpec;
+import org.apache.iceberg.Schema;
 import org.apache.iceberg.common.DynMethods;
-import org.apache.iceberg.connect.TestContext;
 import org.apache.iceberg.expressions.Literal;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableSet;
 import org.apache.iceberg.types.Types;
-import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.json.JsonConverter;
 
-public class StructUserEvent<T extends Info> extends UserEvent {
-  private final T info;
+public class UserEventExtended extends UserEvent {
+  public static final String INFO_WRITE_DEFAULT = "active";
+  private final String info;
 
-  public StructUserEvent(long id, String username, T info) {
+  public static final Schema EVENT_EXTENDED_TABLE_SCHEMA =
+      new Schema(
+          ImmutableList.of(
+              Types.NestedField.required(1, "id", Types.LongType.get()),
+              Types.NestedField.optional(2, "username", Types.StringType.get()),
+              Types.NestedField.optional("info")
+                  .withId(3)
+                  .ofType(Types.StringType.get())
+                  .withInitialDefault(Literal.of("non-active"))
+                  .withWriteDefault(Literal.of(INFO_WRITE_DEFAULT))
+                  .build()),
+          ImmutableSet.of(1));
+
+  public static final org.apache.kafka.connect.data.Schema EVENT_EXTENDED_CONNECT_SCHEMA =
+      SchemaBuilder.struct()
+          .field("id", org.apache.kafka.connect.data.Schema.INT64_SCHEMA)
+          .field("username", org.apache.kafka.connect.data.Schema.STRING_SCHEMA)
+          .field("info", org.apache.kafka.connect.data.Schema.OPTIONAL_STRING_SCHEMA);
+
+  public static final PartitionSpec EVENT_EXTENDED_SPEC =
+      PartitionSpec.builderFor(EVENT_EXTENDED_TABLE_SCHEMA).build();
+
+  public UserEventExtended(Long id, String username, String info) {
     super(id, username);
     this.info = info;
   }
 
-  public T info() {
+  public UserEventExtended(UserEvent event, String info) {
+    this(event.id(), event.username(), info);
+  }
+
+  public String info() {
     return info;
   }
-
-  public static org.apache.kafka.connect.data.Schema eventStructConnectSchema(Schema infoSchema) {
-    return SchemaBuilder.struct()
-        .field("id", org.apache.kafka.connect.data.Schema.INT64_SCHEMA)
-        .field("username", org.apache.kafka.connect.data.Schema.STRING_SCHEMA)
-        .field("info", infoSchema)
-        .build();
-  }
-
-  public static final org.apache.iceberg.Schema EVENT_STRUCT_TABLE_SCHEMA =
-      new org.apache.iceberg.Schema(
-          ImmutableList.of(
-              Types.NestedField.required(1, "id", Types.LongType.get()),
-              Types.NestedField.optional(2, "username", Types.StringType.get()),
-              Types.NestedField.optional(
-                  3,
-                  "info",
-                  Types.StructType.of(
-                      Types.NestedField.optional(4, "age", Types.IntegerType.get()),
-                      Types.NestedField.optional("status")
-                          .withId(5)
-                          .ofType(Types.StringType.get())
-                          .withInitialDefault(Literal.of("non-active"))
-                          .withWriteDefault(Literal.of(INFO_WRITE_DEFAULT))
-                          .build()))),
-          ImmutableSet.of(1));
-
-  public static final PartitionSpec TEST_STRUCT_SPEC =
-      PartitionSpec.builderFor(EVENT_STRUCT_TABLE_SCHEMA).build();
 
   @Override
   protected String serialize(boolean useSchema) {
     try {
       Struct value =
-          new Struct(eventStructConnectSchema(info.schema()))
+          new Struct(EVENT_EXTENDED_CONNECT_SCHEMA)
               .put("id", id())
               .put("username", username())
-              .put("info", info.struct());
+              .put("info", info);
 
       String convertMethod =
           useSchema ? "convertToJsonWithEnvelope" : "convertToJsonWithoutEnvelope";
@@ -93,7 +89,7 @@ public class StructUserEvent<T extends Info> extends UserEvent {
               .hiddenImpl(
                   JsonConverter.class, org.apache.kafka.connect.data.Schema.class, Object.class)
               .build(JSON_CONVERTER)
-              .invoke(eventStructConnectSchema(info.schema()), value);
+              .invoke(EVENT_EXTENDED_CONNECT_SCHEMA, value);
       return TestContext.MAPPER.writeValueAsString(json);
     } catch (JsonProcessingException e) {
       throw new RuntimeException(e);
@@ -102,8 +98,6 @@ public class StructUserEvent<T extends Info> extends UserEvent {
 
   @Override
   public String castToString() {
-    return Stream.of(String.valueOf(id()), username(), info.castToString())
-        .collect(joining("|"))
-        .toString();
+    return Stream.of(String.valueOf(id()), username(), info()).collect(joining("|")).toString();
   }
 }

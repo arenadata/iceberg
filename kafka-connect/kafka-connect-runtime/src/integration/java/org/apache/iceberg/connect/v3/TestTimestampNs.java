@@ -33,7 +33,7 @@ import java.util.Map;
 import java.util.stream.Stream;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.Table;
-import org.apache.iceberg.connect.v3.dto.TimestampNsEvent;
+import org.apache.iceberg.connect.TimestampNsEvent;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableSet;
 import org.apache.iceberg.types.Type;

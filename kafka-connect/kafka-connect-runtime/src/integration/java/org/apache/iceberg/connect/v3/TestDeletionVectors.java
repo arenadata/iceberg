@@ -19,12 +19,14 @@
 package org.apache.iceberg.connect.v3;
 
 import static java.lang.String.format;
+import static org.apache.iceberg.RowLevelOperationMode.COPY_ON_WRITE;
+import static org.apache.iceberg.RowLevelOperationMode.MERGE_ON_READ;
 import static org.apache.iceberg.connect.service.ConnectorService.V3_AUTO_CREATE_CONNECTOR_CONFIGS;
 import static org.apache.iceberg.connect.service.ConnectorService.addConnectorConfigs;
-import static org.apache.iceberg.connect.service.IcebergTableClient.S3_CLIENT;
+import static org.apache.iceberg.connect.service.IcebergTableClient.extractTableFiles;
 import static org.apache.iceberg.connect.service.IcebergTableClient.extractTableRecords;
+import static org.apache.iceberg.connect.service.IcebergTableClient.getTablePath;
 import static org.apache.iceberg.connect.service.IcebergTableClient.loadCatalogTable;
-import static org.apache.iceberg.connect.service.IcebergTableClient.loadCatalogTableLocation;
 import static org.apache.iceberg.connect.service.KafkaBaseEventsService.KAFKA_BASE_EVENTS;
 import static org.apache.iceberg.connect.service.KafkaBaseEventsService.castKafkaBaseEventsToRecords;
 import static org.apache.iceberg.connect.service.RestCatalogSparkClient.runSparkSqlQuery;
@@ -39,12 +41,9 @@ import org.apache.iceberg.Table;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
-import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
 
 public class TestDeletionVectors extends IntegrationTestBaseV3 {
   private static final String ICEBERG_REST_CATALOG = "spark_catalog";
-  private static final String STANDARD_DELETION_MECHANISM = "copy-on-write";
-  private static final String DELETION_VECTOR_MECHANISM = "merge-on-read";
 
   @ParameterizedTest
   @MethodSource("argsProvider")
@@ -70,11 +69,7 @@ public class TestDeletionVectors extends IntegrationTestBaseV3 {
             "DELETE FROM %1$s.%2$s WHERE id=2;REFRESH TABLE %1$s.%2$s;",
             ICEBERG_REST_CATALOG, TABLE_IDENTIFIER_V3));
 
-    String tableDataPath =
-        format(
-                "%s/data/",
-                loadCatalogTableLocation(loadCatalogTable(catalog(), TABLE_IDENTIFIER_V3)))
-            .replaceFirst("/", "");
+    String tableDataPath = getTablePath(catalog(), TABLE_IDENTIFIER_V3);
 
     await()
         .atMost(Duration.ofSeconds(60))
@@ -85,13 +80,7 @@ public class TestDeletionVectors extends IntegrationTestBaseV3 {
               assertThat(extractTableRecords(table).size()).isEqualTo(1);
             });
 
-    assertThat(
-            S3_CLIENT
-                .listObjectsV2(
-                    ListObjectsV2Request.builder().bucket("bucket").prefix(tableDataPath).build())
-                .contents()
-                .stream()
-                .anyMatch(o -> o.key().endsWith(".puffin")))
+    assertThat(extractTableFiles(tableDataPath).stream().anyMatch(o -> o.key().endsWith(".puffin")))
         .isEqualTo(isMergeOnReadEnabled);
 
     List<org.apache.iceberg.data.Record> remainedTableRecords = extractTableRecords(table);
@@ -100,10 +89,10 @@ public class TestDeletionVectors extends IntegrationTestBaseV3 {
 
   private static Stream<Arguments> argsProvider() {
     return Stream.of(
-        Arguments.of(true, DELETION_VECTOR_MECHANISM, true),
-        Arguments.of(false, DELETION_VECTOR_MECHANISM, true),
-        Arguments.of(true, STANDARD_DELETION_MECHANISM, false),
-        Arguments.of(false, STANDARD_DELETION_MECHANISM, false));
+        Arguments.of(true, MERGE_ON_READ.modeName(), true),
+        Arguments.of(false, MERGE_ON_READ.modeName(), true),
+        Arguments.of(true, COPY_ON_WRITE.modeName(), false),
+        Arguments.of(false, COPY_ON_WRITE.modeName(), false));
   }
 
   @Override

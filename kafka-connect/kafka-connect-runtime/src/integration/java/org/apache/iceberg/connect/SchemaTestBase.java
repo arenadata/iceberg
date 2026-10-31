@@ -31,17 +31,20 @@ public abstract class SchemaTestBase extends AbstractTestBase {
       Map<String, Object> extraConfig,
       List<TableIdentifier> tableIdentifiers,
       List<? extends BaseTestEvent> events) {
-    KafkaConnectUtils.Config connectorConfig =
-        initConnectorConfig(createConfig(useSchema), extraConfig);
     events.forEach(event -> send(testTopic(), event, useSchema));
 
-    context().startConnector(connectorConfig);
-
-    flush();
+    launchConnector(useSchema, extraConfig);
 
     Awaitility.await()
         .atMost(Duration.ofSeconds(60))
         .pollInterval(Duration.ofSeconds(1))
         .untilAsserted(() -> assertSnapshotAdded(tableIdentifiers));
+  }
+
+  protected void launchConnector(boolean useSchema, Map<String, Object> extraConfig) {
+    KafkaConnectUtils.Config connectorConfig =
+        initConnectorConfig(createConfig(useSchema), extraConfig);
+    context().startConnector(connectorConfig);
+    flush();
   }
 }

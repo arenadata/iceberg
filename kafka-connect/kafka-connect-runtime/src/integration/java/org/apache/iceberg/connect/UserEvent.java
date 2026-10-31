@@ -16,7 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.iceberg.connect.v3.dto;
+package org.apache.iceberg.connect;
 
 import static java.util.stream.Collectors.joining;
 
@@ -24,14 +24,12 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import java.util.stream.Stream;
 import org.apache.iceberg.common.DynMethods;
-import org.apache.iceberg.connect.BaseTestEvent;
-import org.apache.iceberg.connect.TestContext;
 import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.json.JsonConverter;
 
 public class UserEvent extends BaseTestEvent {
-  private final String username;
+  private String username;
 
   public static final org.apache.kafka.connect.data.Schema EVENT_CONNECT_SCHEMA =
       SchemaBuilder.struct()
@@ -43,6 +41,10 @@ public class UserEvent extends BaseTestEvent {
     this.username = username;
   }
 
+  public UserEvent(long id) {
+    super(id);
+  }
+
   public String castToString() {
     return Stream.of(String.valueOf(id()), username()).collect(joining("|")).toString();
   }
@@ -50,7 +52,7 @@ public class UserEvent extends BaseTestEvent {
   @Override
   protected String serialize(boolean useSchema) {
     try {
-      Struct value = new Struct(EVENT_CONNECT_SCHEMA).put("id", id()).put("username", username);
+      Struct value = new Struct(EVENT_CONNECT_SCHEMA).put("id", id()).put("username", username());
 
       String convertMethod =
           useSchema ? "convertToJsonWithEnvelope" : "convertToJsonWithoutEnvelope";

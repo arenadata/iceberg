@@ -18,23 +18,23 @@
  */
 package org.apache.iceberg.connect.v3;
 
+import static org.apache.iceberg.connect.StructUserEvent.EVENT_STRUCT_TABLE_SCHEMA;
+import static org.apache.iceberg.connect.StructUserEvent.TEST_STRUCT_SPEC;
+import static org.apache.iceberg.connect.UserEventExtended.INFO_WRITE_DEFAULT;
 import static org.apache.iceberg.connect.service.IcebergTableClient.BASE_V3_TABLE_CONFIG;
 import static org.apache.iceberg.connect.service.IcebergTableClient.extractTableRecords;
 import static org.apache.iceberg.connect.service.IcebergTableClient.extractTableRecordsAsString;
 import static org.apache.iceberg.connect.service.IcebergTableClient.loadCatalogTable;
-import static org.apache.iceberg.connect.v3.dto.StructUserEvent.EVENT_STRUCT_TABLE_SCHEMA;
-import static org.apache.iceberg.connect.v3.dto.StructUserEvent.TEST_STRUCT_SPEC;
-import static org.apache.iceberg.connect.v3.dto.UserEventExtended.INFO_WRITE_DEFAULT;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
 import org.apache.iceberg.Table;
-import org.apache.iceberg.connect.v3.dto.Info;
-import org.apache.iceberg.connect.v3.dto.InfoExtended;
-import org.apache.iceberg.connect.v3.dto.StructUserEvent;
-import org.apache.iceberg.connect.v3.dto.UserEvent;
+import org.apache.iceberg.connect.Info;
+import org.apache.iceberg.connect.InfoExtended;
+import org.apache.iceberg.connect.StructUserEvent;
+import org.apache.iceberg.connect.UserEvent;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
