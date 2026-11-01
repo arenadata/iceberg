@@ -75,11 +75,7 @@ public class TestIcebergTableWriteModes extends SchemaTestBase {
     String suffix = UUID.randomUUID().toString().substring(0, 4);
     String testTable = TEST_TABLE_BASE + "_" + suffix;
     tableIdentifier = TableIdentifier.of(TEST_DB, testTable);
-    createIcebergTable(
-        Map.of(
-            "write.update.mode", COPY_ON_WRITE.modeName(),
-            "write.delete.mode", COPY_ON_WRITE.modeName(),
-            "write.merge.mode", COPY_ON_WRITE.modeName()));
+    catalog().createTable(tableIdentifier, USER_EVENT_OP_TABLE_SCHEMA);
     insertTableRows(USER_EVENT_OP_LIST_INITIAL);
   }
 
@@ -174,15 +170,6 @@ public class TestIcebergTableWriteModes extends SchemaTestBase {
             USER_EVENT_OP_1_U,
             castUserEventOpListToRecords(USER_EVENT_OP_LIST_UPDATE),
             List.of(castUserEventOpToRecord(USER_EVENT_OP_1_U).toString())));
-  }
-
-  private void createIcebergTable(Map<String, String> tableConfig) {
-    catalog()
-        .createTable(
-            tableIdentifier,
-            USER_EVENT_OP_TABLE_SCHEMA,
-            UserEventOp.USER_EVENT_OP_SPEC,
-            tableConfig);
   }
 
   private void insertTableRows(List<UserEventOp> userEventOpList) throws InterruptedException {
