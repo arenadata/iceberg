@@ -25,6 +25,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import java.util.List;
 import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.common.DynMethods;
+import org.apache.iceberg.connect.v3.dto.UserEvent;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableSet;
 import org.apache.iceberg.types.Types;
 import org.apache.kafka.connect.data.Schema;

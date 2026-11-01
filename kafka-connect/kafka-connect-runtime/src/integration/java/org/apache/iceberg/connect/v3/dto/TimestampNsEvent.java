@@ -16,7 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.iceberg.connect;
+package org.apache.iceberg.connect.v3.dto;
 
 import static java.lang.String.format;
 import static java.util.stream.Collectors.joining;
@@ -25,6 +25,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import java.util.stream.Stream;
 import org.apache.iceberg.common.DynMethods;
+import org.apache.iceberg.connect.TestContext;
 import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.json.JsonConverter;

@@ -20,7 +20,7 @@ package org.apache.iceberg.connect.service;
 
 import java.util.List;
 import org.apache.iceberg.Schema;
-import org.apache.iceberg.connect.UserEvent;
+import org.apache.iceberg.connect.v3.dto.UserEvent;
 import org.apache.iceberg.data.GenericRecord;
 
 public class KafkaBaseEventsService {

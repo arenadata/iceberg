@@ -29,8 +29,8 @@ import java.util.List;
 import java.util.Map;
 import org.apache.iceberg.BaseTable;
 import org.apache.iceberg.Table;
-import org.apache.iceberg.connect.Info;
-import org.apache.iceberg.connect.StructUserEvent;
+import org.apache.iceberg.connect.v3.dto.Info;
+import org.apache.iceberg.connect.v3.dto.StructUserEvent;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 

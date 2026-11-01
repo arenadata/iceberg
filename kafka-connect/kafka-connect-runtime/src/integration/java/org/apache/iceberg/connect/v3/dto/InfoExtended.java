@@ -16,7 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.iceberg.connect;
+package org.apache.iceberg.connect.v3.dto;
 
 import static java.lang.String.format;
 
@@ -24,32 +24,37 @@ import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
 
-public class Info {
+public class InfoExtended extends Info {
 
   private final Schema infoSchema =
       SchemaBuilder.struct()
           .field("age", org.apache.kafka.connect.data.Schema.INT32_SCHEMA)
+          .field("status", org.apache.kafka.connect.data.Schema.OPTIONAL_STRING_SCHEMA)
           .build();
 
-  private final int age;
+  private final String status;
 
-  public Info(int age) {
-    this.age = age;
+  public String status() {
+    return status;
   }
 
-  public int age() {
-    return age;
+  public InfoExtended(int age, String status) {
+    super(age);
+    this.status = status;
   }
 
+  @Override
   public Schema schema() {
     return infoSchema;
   }
 
+  @Override
   public Struct struct() {
-    return new Struct(schema()).put("age", age());
+    return new Struct(schema()).put("age", age()).put("status", status);
   }
 
+  @Override
   public String castToString() {
-    return format("Record(%s)", age);
+    return format("Record(%s, %s)", age(), status);
   }
 }
