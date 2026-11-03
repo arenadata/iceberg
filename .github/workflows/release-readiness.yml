@@ -1,0 +1,61 @@
+#
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+#
+
+# Projects that run a license check (apache-rat in Apache forks): keep the project's own license header above this comment, copied from publish.yml.
+# Thin wrapper to place in the project at .github/workflows/release-readiness.yml. It must exist on the default
+# branch (GitHub dispatches from there) and on every line branch: ADRM dispatches it on the line branch itself
+# in mode=inspect to learn the declared project version of the branch head.
+# Pin the reusable workflow to a commit SHA of adrm-checks once it is published.
+name: Release readiness
+run-name: ${{ inputs.mode == 'inspect' && 'line' || 'publication' }} / ${{ inputs.request_id }}
+on:
+  workflow_dispatch:
+    inputs:
+      mode: { type: choice, options: [check, inspect], default: check, required: false }
+      request_id: { type: string, required: true }
+      generation: { type: string, required: true }
+      product_version: { type: string, required: true }
+      expected_checker_sha: { type: string, required: true }
+      target_tag: { type: string, required: false, default: '' }        # mode=check
+      target_sha: { type: string, required: false, default: '' }        # mode=check
+      target_version: { type: string, required: false, default: '' }    # mode=check
+      line_version: { type: string, required: false, default: '' }      # mode=inspect
+      expected_head_sha: { type: string, required: false, default: '' } # mode=inspect
+
+permissions:
+  contents: read
+  packages: read
+concurrency:
+  group: ${{ inputs.mode == 'inspect' && 'line' || 'publication' }}-${{ inputs.request_id }}
+  cancel-in-progress: false
+
+jobs:
+  publication:
+    uses: arenadata/adrm-checks/.github/workflows/publication-readiness.yml@e63ce686a8c4235104f56ea292e47b9003acbd9a
+    with:
+      mode: ${{ inputs.mode }}
+      request_id: ${{ inputs.request_id }}
+      generation: ${{ inputs.generation }}
+      product_version: ${{ inputs.product_version }}
+      expected_checker_sha: ${{ inputs.expected_checker_sha }}
+      target_tag: ${{ inputs.target_tag }}
+      target_sha: ${{ inputs.target_sha }}
+      target_version: ${{ inputs.target_version }}
+      line_version: ${{ inputs.line_version }}
+      expected_head_sha: ${{ inputs.expected_head_sha }}
