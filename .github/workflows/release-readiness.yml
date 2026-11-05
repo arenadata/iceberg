@@ -20,15 +20,16 @@
 # Projects that run a license check (apache-rat in Apache forks): keep the project's own license header above this comment, copied from publish.yml.
 # Thin wrapper to place in the project at .github/workflows/release-readiness.yml. It must exist on the default
 # branch (GitHub dispatches from there) and on every line branch: ADRM dispatches it on the line branch itself
-# in mode=inspect to learn the declared project version of the branch head and in mode=dependencies to read the
-# resolved dependency graph of the branch head from the build.
+# in mode=inspect to learn the declared project version of the branch head, in mode=dependencies to read the
+# resolved dependency graph of the branch head from the build and in mode=history to find the commits of older line
+# branches that the branch head lacks.
 # Pin the reusable workflow to a commit SHA of adrm-checks once it is published.
 name: Release readiness
-run-name: ${{ inputs.mode == 'inspect' && 'line' || inputs.mode == 'dependencies' && 'dependencies' || 'publication' }} / ${{ inputs.request_id }}
+run-name: ${{ inputs.mode == 'inspect' && 'line' || inputs.mode == 'dependencies' && 'dependencies' || inputs.mode == 'history' && 'history' || 'publication' }} / ${{ inputs.request_id }}
 on:
   workflow_dispatch:
     inputs:
-      mode: { type: choice, options: [check, inspect, dependencies], default: check, required: false }
+      mode: { type: choice, options: [check, inspect, dependencies, history], default: check, required: false }
       request_id: { type: string, required: true }
       generation: { type: string, required: true }
       product_version: { type: string, required: true }
@@ -36,19 +37,20 @@ on:
       target_tag: { type: string, required: false, default: '' }        # mode=check
       target_sha: { type: string, required: false, default: '' }        # mode=check
       target_version: { type: string, required: false, default: '' }    # mode=check
-      line_version: { type: string, required: false, default: '' }      # mode=inspect, mode=dependencies
-      expected_head_sha: { type: string, required: false, default: '' } # mode=inspect, mode=dependencies
+      line_version: { type: string, required: false, default: '' }      # mode=inspect, mode=dependencies, mode=history
+      expected_head_sha: { type: string, required: false, default: '' } # mode=inspect, mode=dependencies, mode=history
+      compare_refs: { type: string, required: false, default: '' }      # mode=history: `<branch>@<sha>` per line
 
 permissions:
   contents: read
   packages: read
 concurrency:
-  group: ${{ inputs.mode == 'inspect' && 'line' || inputs.mode == 'dependencies' && 'dependencies' || 'publication' }}-${{ inputs.request_id }}
+  group: ${{ inputs.mode == 'inspect' && 'line' || inputs.mode == 'dependencies' && 'dependencies' || inputs.mode == 'history' && 'history' || 'publication' }}-${{ inputs.request_id }}
   cancel-in-progress: false
 
 jobs:
   publication:
-    uses: arenadata/adrm-checks/.github/workflows/publication-readiness.yml@6be18fed3f222b843af0e9fcbf8bc7306047dedd
+    uses: arenadata/adrm-checks/.github/workflows/publication-readiness.yml@1e0cfbd8e03ee73c94739ceaaba3a85b7d9775f2
     with:
       mode: ${{ inputs.mode }}
       request_id: ${{ inputs.request_id }}
@@ -60,6 +62,7 @@ jobs:
       target_version: ${{ inputs.target_version }}
       line_version: ${{ inputs.line_version }}
       expected_head_sha: ${{ inputs.expected_head_sha }}
+      compare_refs: ${{ inputs.compare_refs }}
       # mode=dependencies: static values of this project, copied from its publisher workflow (flags and profiles
       # only, no goals or tasks). Maven: the publisher's JDK (JDK-activated profiles change the graph). Gradle: the
       # highest JDK the publisher uses (graph resolution does not depend on it). maven_server_ids: the server ids of
@@ -73,3 +76,6 @@ jobs:
         -DflinkVersions= -DsparkVersions=3.4 -DscalaVersion=2.13 -DkafkaVersions=
         -DflinkVersions= -DsparkVersions=3.5 -DscalaVersion=2.13 -DkafkaVersions=
         -DflinkVersions=2.2 -DsparkVersions= -DkafkaVersions=
+      # mode=history: the upstream repository whose release tags bound the comparison (default: the root of the fork
+      # network, e.g. apache/hadoop for arenadata/hadoop) and paths that differ between line branches by design
+      # (.github/ and .readiness/ always do). Set them only when the defaults are wrong.
