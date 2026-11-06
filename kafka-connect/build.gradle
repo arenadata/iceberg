@@ -190,6 +190,7 @@ project(':iceberg-kafka-connect:iceberg-kafka-connect-runtime') {
     implementation 'com.azure:azure-storage-file-datalake'
     implementation 'com.azure:azure-identity'
     testImplementation 'org.testcontainers:testcontainers:1.20.4'
+    testImplementation 'org.apache.parquet:parquet-column:1.16.0'
     testImplementation ('org.open-metadata:openmetadata-java-client:1.7.7') {
       exclude group: 'org.lz4', module: 'lz4-java'
     }
