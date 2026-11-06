@@ -31,7 +31,7 @@ import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.json.JsonConverter;
 
 public class UserEvent extends BaseTestEvent {
-  private final String username;
+  private String username;
 
   public static final org.apache.kafka.connect.data.Schema EVENT_CONNECT_SCHEMA =
       SchemaBuilder.struct()
@@ -43,6 +43,10 @@ public class UserEvent extends BaseTestEvent {
     this.username = username;
   }
 
+  public UserEvent(long id) {
+    super(id);
+  }
+
   public String castToString() {
     return Stream.of(String.valueOf(id()), username()).collect(joining("|")).toString();
   }
@@ -50,7 +54,7 @@ public class UserEvent extends BaseTestEvent {
   @Override
   protected String serialize(boolean useSchema) {
     try {
-      Struct value = new Struct(EVENT_CONNECT_SCHEMA).put("id", id()).put("username", username);
+      Struct value = new Struct(EVENT_CONNECT_SCHEMA).put("id", id()).put("username", username());
 
       String convertMethod =
           useSchema ? "convertToJsonWithEnvelope" : "convertToJsonWithoutEnvelope";
