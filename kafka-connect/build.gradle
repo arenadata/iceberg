@@ -154,7 +154,6 @@ project(':iceberg-kafka-connect:iceberg-kafka-connect-runtime') {
       exclude group: 'org.apache.curator'
       exclude group: 'org.apache.zookeeper'
       exclude group: 'org.apache.kerby'
-      exclude group: 'org.apache.hadoop', module: 'hadoop-auth'
       exclude group: 'org.apache.commons', module: 'commons-configuration2'
       exclude group: 'org.apache.hadoop.thirdparty', module: 'hadoop-shaded-protobuf_3_7'
       exclude group: 'org.eclipse.jetty'
@@ -226,22 +225,22 @@ project(':iceberg-kafka-connect:iceberg-kafka-connect-runtime') {
     integrationImplementation project(':iceberg-common')
     integrationImplementation project(':iceberg-core')
     integrationImplementation project(':iceberg-hive-metastore')
-    implementation("org.apache.hive:hive-metastore:2.3.10.2-4.3.0-0") {
+    implementation("org.apache.hive:hive-metastore:2.3.10.4-4.5.0-1") {
       transitive = false
     }
-    implementation("org.apache.hive:hive-common:2.3.10.2-4.3.0-0") {
+    implementation("org.apache.hive:hive-common:2.3.10.4-4.5.0-1") {
       transitive = false
     }
-    implementation("org.apache.hive:hive-serde:2.3.10.2-4.3.0-0") {
+    implementation("org.apache.hive:hive-serde:2.3.10.4-4.5.0-1") {
       transitive = false
     }
-    implementation("org.apache.hive:hive-shims:2.3.10.2-4.3.0-0") {
+    implementation("org.apache.hive:hive-shims:2.3.10.4-4.5.0-1") {
       transitive = false
     }
-    implementation("org.apache.hive.shims:hive-shims-common:2.3.10.2-4.3.0-0") {
+    implementation("org.apache.hive.shims:hive-shims-common:2.3.10.4-4.5.0-1") {
       transitive = false
     }
-    implementation("org.apache.hive.shims:hive-shims-0.23:2.3.10.2-4.3.0-0") {
+    implementation("org.apache.hive.shims:hive-shims-0.23:2.3.10.4-4.5.0-1") {
       transitive = false
     }
     implementation("org.apache.thrift:libthrift:0.16.0") {
@@ -250,17 +249,17 @@ project(':iceberg-kafka-connect:iceberg-kafka-connect-runtime') {
     implementation("org.apache.thrift:libfb303:0.9.3") {
       transitive = false
     }
-    implementation("org.apache.hadoop:hadoop-mapreduce-client-core:3.4.1") {
+    implementation("org.apache.hadoop:hadoop-mapreduce-client-core:3.4.3.3-4.5.0-1") {
       transitive = false
       exclude group: "org.apache.iceberg"
     }
     implementation("org.apache.commons:commons-configuration2:2.10.1") {
       transitive = false
     }
-    integrationRuntimeOnly("org.apache.hadoop:hadoop-common:3.4.1") {
+    integrationRuntimeOnly("org.apache.hadoop:hadoop-common:3.4.3.3-4.5.0-1") {
       exclude group: "org.apache.iceberg"
     }
-    integrationRuntimeOnly("org.apache.hadoop:hadoop-auth:3.4.1") {
+    integrationRuntimeOnly("org.apache.hadoop:hadoop-auth:3.4.3.3-4.5.0-1") {
       exclude group: "org.apache.iceberg"
     }
     integrationRuntimeOnly("org.apache.hive:hive-storage-api:2.7.2")
