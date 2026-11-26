@@ -96,7 +96,7 @@ public abstract class AbstractTestBase {
     this.producer = context.initLocalProducer();
     this.admin = context.initLocalAdmin();
     this.connectorName = initConnectorName();
-    this.testTopic = "test-topic-" + UUID.randomUUID();
+    this.testTopic = initTopicName();
     createTopic(testTopic(), TEST_TOPIC_PARTITIONS);
     createNamespace();
   }
@@ -120,6 +120,10 @@ public abstract class AbstractTestBase {
 
   protected String initConnectorName() {
     return "test_connector-" + UUID.randomUUID();
+  }
+
+  protected String initTopicName() {
+    return "test-topic-" + UUID.randomUUID();
   }
 
   protected void clearNamespace() {
@@ -196,10 +200,11 @@ public abstract class AbstractTestBase {
 
   protected KafkaConnectUtils.Config createCommonConfig(boolean useSchema) {
     // set offset reset to the earliest, so we don't miss any test messages
-    return createKafkaConnectConfig(useSchema, testTopic());
+    return createKafkaConnectConfig(useSchema, testTopic(), connectorName());
   }
 
-  protected KafkaConnectUtils.Config createKafkaConnectConfig(boolean useSchema, String topicName) {
+  protected KafkaConnectUtils.Config createKafkaConnectConfig(
+      boolean useSchema, String topicName, String connectorName) {
     // set offset reset to the earliest, so we don't miss any test messages
     return new KafkaConnectUtils.Config(connectorName)
         .config("topics", topicName)

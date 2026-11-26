@@ -27,6 +27,7 @@ import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.common.DynMethods;
 import org.apache.iceberg.connect.TestContext;
+import org.apache.iceberg.connect.UserEvent;
 import org.apache.iceberg.expressions.Literal;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableSet;

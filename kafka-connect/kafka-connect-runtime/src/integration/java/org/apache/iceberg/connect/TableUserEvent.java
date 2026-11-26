@@ -18,35 +18,24 @@
  */
 package org.apache.iceberg.connect;
 
+import static java.lang.String.format;
+
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
-import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.common.DynMethods;
-import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
-import org.apache.iceberg.relocated.com.google.common.collect.ImmutableSet;
-import org.apache.iceberg.types.Types;
 import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.json.JsonConverter;
 
-public class TableUserEvent extends BaseTestEvent {
+public class TableUserEvent extends UserEvent {
   private final String username;
   private String table;
 
-  public static final org.apache.kafka.connect.data.Schema USER_CONNECT_SCHEMA =
+  public static final org.apache.kafka.connect.data.Schema TABLE_USER_EVENT_CONNECT_SCHEMA =
       SchemaBuilder.struct()
           .field("id", org.apache.kafka.connect.data.Schema.INT64_SCHEMA)
           .field("username", org.apache.kafka.connect.data.Schema.OPTIONAL_STRING_SCHEMA)
           .field("table", org.apache.kafka.connect.data.Schema.STRING_SCHEMA);
-
-  public static final org.apache.iceberg.Schema USER_SCHEMA =
-      new org.apache.iceberg.Schema(
-          ImmutableList.of(
-              Types.NestedField.required(1, "id", Types.LongType.get()),
-              Types.NestedField.optional(2, "username", Types.StringType.get())),
-          ImmutableSet.of(1));
-
-  public static final PartitionSpec USER_SPEC = PartitionSpec.builderFor(USER_SCHEMA).build();
 
   public TableUserEvent(long id, String username, String table) {
     super(id);
@@ -65,14 +54,15 @@ public class TableUserEvent extends BaseTestEvent {
   }
 
   public String castToString() {
-    return String.join("|", String.valueOf(id()), username());
+    String tableUserEventString = String.join("|", String.valueOf(id()), username(), table());
+    return table() == null ? tableUserEventString : format("%s|%s", tableUserEventString, table());
   }
 
   @Override
   protected String serialize(boolean useSchema) {
     try {
       Struct value =
-          new Struct(USER_CONNECT_SCHEMA)
+          new Struct(TABLE_USER_EVENT_CONNECT_SCHEMA)
               .put("id", id())
               .put("username", username())
               .put("table", table());
@@ -84,7 +74,7 @@ public class TableUserEvent extends BaseTestEvent {
               .hiddenImpl(
                   JsonConverter.class, org.apache.kafka.connect.data.Schema.class, Object.class)
               .build(JSON_CONVERTER)
-              .invoke(TableUserEvent.USER_CONNECT_SCHEMA, value);
+              .invoke(TableUserEvent.TABLE_USER_EVENT_CONNECT_SCHEMA, value);
       return TestContext.MAPPER.writeValueAsString(json);
     } catch (JsonProcessingException e) {
       throw new RuntimeException(e);

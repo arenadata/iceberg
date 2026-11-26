@@ -18,8 +18,8 @@
  */
 package org.apache.iceberg.connect.routingstrategy;
 
-import static org.apache.iceberg.connect.TableUserEvent.USER_SCHEMA;
-import static org.apache.iceberg.connect.TableUserEvent.USER_SPEC;
+import static org.apache.iceberg.connect.UserEvent.USER_EVENT_SCHEMA;
+import static org.apache.iceberg.connect.UserEvent.USER_EVENT_SPEC;
 
 import java.util.List;
 import org.apache.iceberg.catalog.TableIdentifier;
@@ -47,7 +47,7 @@ public class IntegrationTestBaseRoutingStrategiesFeatures extends SchemaTestBase
     List.of(
             CUSTOMERS_1_TABLE_IDENTIFIER, CUSTOMERS_1_TABLE_ALT_IDENTIFIER,
             CUSTOMERS_2_TABLE_IDENTIFIER, CUSTOMERS_2_TABLE_ALT_IDENTIFIER)
-        .forEach(table -> catalog().createTable(table, USER_SCHEMA, USER_SPEC));
+        .forEach(table -> catalog().createTable(table, USER_EVENT_SCHEMA, USER_EVENT_SPEC));
   }
 
   @Override
