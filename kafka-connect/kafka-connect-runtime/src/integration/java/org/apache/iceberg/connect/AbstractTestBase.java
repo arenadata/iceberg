@@ -204,10 +204,10 @@ public abstract class AbstractTestBase {
   }
 
   protected KafkaConnectUtils.Config createKafkaConnectConfig(
-      boolean useSchema, String topicName, String connectorName) {
+      boolean useSchema, String topic, String connector) {
     // set offset reset to the earliest, so we don't miss any test messages
-    return new KafkaConnectUtils.Config(connectorName)
-        .config("topics", topicName)
+    return new KafkaConnectUtils.Config(connector)
+        .config("topics", topic)
         .config("connector.class", IcebergSinkConnector.class.getName())
         .config("tasks.max", 2)
         .config("consumer.override.auto.offset.reset", "earliest")

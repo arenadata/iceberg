@@ -18,6 +18,12 @@
  */
 package org.apache.iceberg.connect;
 
+import static java.lang.String.format;
+import static org.apache.iceberg.connect.service.IcebergTableClient.extractTableRecords;
+import static org.apache.iceberg.connect.service.IcebergTableClient.extractTableRecordsAsString;
+import static org.apache.iceberg.connect.service.IcebergTableClient.loadCatalogTable;
+import static org.assertj.core.api.AssertionsForInterfaceTypes.assertThat;
+
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -35,12 +41,6 @@ import org.apache.iceberg.types.Types;
 import org.assertj.core.api.AssertionsForClassTypes;
 import org.awaitility.Awaitility;
 import org.junit.jupiter.api.Test;
-
-import static java.lang.String.format;
-import static org.apache.iceberg.connect.service.IcebergTableClient.extractTableRecords;
-import static org.apache.iceberg.connect.service.IcebergTableClient.extractTableRecordsAsString;
-import static org.apache.iceberg.connect.service.IcebergTableClient.loadCatalogTable;
-import static org.assertj.core.api.AssertionsForInterfaceTypes.assertThat;
 
 public class TestIntegrationTableStatistics extends AbstractTestBase {
   private static final String TEST_TABLE_1 = "test_table_1";
@@ -191,7 +191,7 @@ public class TestIntegrationTableStatistics extends AbstractTestBase {
     Table testTable2 = loadCatalogTable(catalog(), TEST_TABLE_IDENTIFIER_2);
     assertAddedStatistics(testTable2, 1);
     assertThat(IcebergTableClient.extractTableRecords(testTable2).size()).isEqualTo(rowsCount);
-   assertThat(testTable2.statisticsFiles().get(0).fileSizeInBytes()).isGreaterThanOrEqualTo(3000);
+    assertThat(testTable2.statisticsFiles().get(0).fileSizeInBytes()).isGreaterThanOrEqualTo(3000);
   }
 
   private List<String> getTableStatisticsColumns(Table table) {
@@ -224,7 +224,8 @@ public class TestIntegrationTableStatistics extends AbstractTestBase {
     return createCustomConfig(useSchema, connectorName(), testTopic());
   }
 
-  private KafkaConnectUtils.Config createCustomConfig(boolean useSchema, String connectorName, String topicName) {
+  private KafkaConnectUtils.Config createCustomConfig(
+      boolean useSchema, String connectorName, String topicName) {
     return createKafkaConnectConfig(useSchema, topicName, connectorName)
         .config("iceberg.tables.dynamic-enabled", "true")
         .config("iceberg.tables.route-field", "table")
@@ -273,10 +274,7 @@ public class TestIntegrationTableStatistics extends AbstractTestBase {
       send(
           topicName,
           new TableUserEventExtended(
-              i,
-              UUID.randomUUID().toString().substring(0, 6),
-              tableIdentifier.toString(),
-              year),
+              i, UUID.randomUUID().toString().substring(0, 6), tableIdentifier.toString(), year),
           false);
       year++;
     }
