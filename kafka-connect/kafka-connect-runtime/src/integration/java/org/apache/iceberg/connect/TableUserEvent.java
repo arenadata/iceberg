@@ -18,8 +18,6 @@
  */
 package org.apache.iceberg.connect;
 
-import static java.lang.String.format;
-
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.apache.iceberg.common.DynMethods;
@@ -54,8 +52,7 @@ public class TableUserEvent extends UserEvent {
   }
 
   public String castToString() {
-    String tableUserEventString = String.join("|", String.valueOf(id()), username(), table());
-    return table() == null ? tableUserEventString : format("%s|%s", tableUserEventString, table());
+    return String.join("|", String.valueOf(id()), username(), table());
   }
 
   @Override

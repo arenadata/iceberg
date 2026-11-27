@@ -58,7 +58,11 @@ public class TestIntegrationRoutingStrategiesFeatures
           new TableUserEvent(4, "Emily", CUSTOMERS_2_TABLE_ALT_IDENTIFIER.toString()));
 
   private static final List<String> TABLE_USERS_DATA =
-      KAFKA_USER_EVENTS.stream().map(TableUserEvent::castToString).collect(Collectors.toList());
+      KAFKA_USER_EVENTS.stream()
+          .map(
+              tableUserEvent ->
+                  String.join("|", String.valueOf(tableUserEvent.id()), tableUserEvent.username()))
+          .collect(Collectors.toList());
 
   private static final List<TableIdentifier> FULL_TARGET_TABLES_LIST =
       List.of(
@@ -261,7 +265,9 @@ public class TestIntegrationRoutingStrategiesFeatures
   private static List<String> getExpectedUserEvents(List<String> tableNames) {
     return KAFKA_USER_EVENTS.stream()
         .filter(tableUserEvent -> tableNames.contains(tableUserEvent.table()))
-        .map(TableUserEvent::castToString)
+        .map(
+            tableUserEvent ->
+                String.join("|", String.valueOf(tableUserEvent.id()), tableUserEvent.username()))
         .collect(Collectors.toList());
   }
 

@@ -18,8 +18,6 @@
  */
 package org.apache.iceberg.connect;
 
-import static java.lang.String.format;
-
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.apache.iceberg.common.DynMethods;
@@ -36,11 +34,6 @@ public class TableUserEventExtended extends TableUserEvent {
     this.year = year;
   }
 
-  public TableUserEventExtended(long id, String username, int year) {
-    super(id, username);
-    this.year = year;
-  }
-
   public static final org.apache.kafka.connect.data.Schema
       TABLE_USER_EVENT_EXTENDED_CONNECT_SCHEMA =
           SchemaBuilder.struct()
@@ -50,10 +43,7 @@ public class TableUserEventExtended extends TableUserEvent {
               .field("year", org.apache.kafka.connect.data.Schema.OPTIONAL_INT32_SCHEMA);
 
   public String castToString() {
-    String tableUserEventString = String.join("|", String.valueOf(id()), username());
-    return table() == null
-        ? format("%s|%s", tableUserEventString, year())
-        : format("%s|%s|%s", tableUserEventString, table(), year());
+    return String.join("|", String.valueOf(id()), username(), table(), String.valueOf(year()));
   }
 
   @Override
