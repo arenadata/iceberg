@@ -339,7 +339,8 @@ public class TestOpenMetadata extends AbstractTestBase {
   }
 
   private KafkaConnectUtils.Config createCustomConfig(boolean useSchema, String topicName) {
-    return createOpenMetadataConfig(createKafkaConnectConfig(useSchema, topicName));
+    return createOpenMetadataConfig(
+        createKafkaConnectConfig(useSchema, topicName, connectorName()));
   }
 
   private KafkaConnectUtils.Config createOpenMetadataConfig(KafkaConnectUtils.Config config) {

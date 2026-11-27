@@ -16,16 +16,15 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.iceberg.connect.v3.dto;
-
-import static java.util.stream.Collectors.joining;
+package org.apache.iceberg.connect;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
-import java.util.stream.Stream;
+import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.common.DynMethods;
-import org.apache.iceberg.connect.BaseTestEvent;
-import org.apache.iceberg.connect.TestContext;
+import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
+import org.apache.iceberg.relocated.com.google.common.collect.ImmutableSet;
+import org.apache.iceberg.types.Types;
 import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.json.JsonConverter;
@@ -33,10 +32,20 @@ import org.apache.kafka.connect.json.JsonConverter;
 public class UserEvent extends BaseTestEvent {
   private String username;
 
-  public static final org.apache.kafka.connect.data.Schema EVENT_CONNECT_SCHEMA =
+  public static final org.apache.kafka.connect.data.Schema USER_EVENT_CONNECT_SCHEMA =
       SchemaBuilder.struct()
           .field("id", org.apache.kafka.connect.data.Schema.INT64_SCHEMA)
           .field("username", org.apache.kafka.connect.data.Schema.OPTIONAL_STRING_SCHEMA);
+
+  public static final org.apache.iceberg.Schema USER_EVENT_SCHEMA =
+      new org.apache.iceberg.Schema(
+          ImmutableList.of(
+              Types.NestedField.required(1, "id", Types.LongType.get()),
+              Types.NestedField.optional(2, "username", Types.StringType.get())),
+          ImmutableSet.of(1));
+
+  public static final PartitionSpec USER_EVENT_SPEC =
+      PartitionSpec.builderFor(USER_EVENT_SCHEMA).build();
 
   public UserEvent(long id, String username) {
     super(id);
@@ -48,13 +57,14 @@ public class UserEvent extends BaseTestEvent {
   }
 
   public String castToString() {
-    return Stream.of(String.valueOf(id()), username()).collect(joining("|")).toString();
+    return String.join("|", String.valueOf(id()), username());
   }
 
   @Override
   protected String serialize(boolean useSchema) {
     try {
-      Struct value = new Struct(EVENT_CONNECT_SCHEMA).put("id", id()).put("username", username());
+      Struct value =
+          new Struct(USER_EVENT_CONNECT_SCHEMA).put("id", id()).put("username", username());
 
       String convertMethod =
           useSchema ? "convertToJsonWithEnvelope" : "convertToJsonWithoutEnvelope";
@@ -63,7 +73,7 @@ public class UserEvent extends BaseTestEvent {
               .hiddenImpl(
                   JsonConverter.class, org.apache.kafka.connect.data.Schema.class, Object.class)
               .build(JSON_CONVERTER)
-              .invoke(UserEvent.EVENT_CONNECT_SCHEMA, value);
+              .invoke(UserEvent.USER_EVENT_CONNECT_SCHEMA, value);
       return TestContext.MAPPER.writeValueAsString(json);
     } catch (JsonProcessingException e) {
       throw new RuntimeException(e);

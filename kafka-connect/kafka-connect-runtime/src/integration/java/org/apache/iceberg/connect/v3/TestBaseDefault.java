@@ -31,7 +31,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
-import org.apache.iceberg.connect.v3.dto.UserEvent;
+import org.apache.iceberg.connect.UserEvent;
 import org.apache.iceberg.connect.v3.dto.UserEventExtended;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
